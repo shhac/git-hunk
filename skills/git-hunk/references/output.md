@@ -45,10 +45,10 @@ Summary is derived in priority order:
 4. **First changed line** content, with `+`/`-` prefix and leading whitespace stripped
 5. Empty string if none of the above apply
 
-## Diff output (`--diff`)
+## Diff output (default)
 
-When `list --diff` is used, each hunk's raw diff content is printed after the
-metadata line.
+By default, each hunk's raw diff content is printed after the metadata line.
+Use `--oneline` to suppress diff content for compact output.
 
 ### Human mode
 
@@ -113,7 +113,7 @@ header and body). Multiple hunks are separated by a blank line:
 
 ### Porcelain mode
 
-Same format as `list --diff --porcelain`: metadata header line, then raw diff
+Same format as `list --porcelain` (without `--oneline`): metadata header line, then raw diff
 lines, then blank line separator:
 
 ```
@@ -180,16 +180,16 @@ For deleted files (`@@ -1,N +0,0 @@`): `start_line=0`, `end_line=0` (unstaged);
 
 ```bash
 # Extract all hashes
-git hunk list --porcelain | cut -f1
+git hunk list --porcelain --oneline | cut -f1
 
 # Extract file paths
-git hunk list --porcelain | cut -f2
+git hunk list --porcelain --oneline | cut -f2
 
 # Filter by file
-git hunk list --porcelain | awk -F'\t' '$2 == "src/main.zig"'
+git hunk list --porcelain --oneline | awk -F'\t' '$2 == "src/main.zig"'
 
 # Get start line of first hunk
-git hunk list --porcelain | head -1 | cut -f3
+git hunk list --porcelain --oneline | head -1 | cut -f3
 ```
 
 ## Staging/unstaging confirmation

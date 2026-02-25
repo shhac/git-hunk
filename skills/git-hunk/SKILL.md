@@ -81,12 +81,13 @@ a3f7c21	src/main.zig	12	18	Add error handling
 b82e0f4	src/main.zig	45	52	Replace old parser
 ```
 
-Include inline diff content:
+Diff content is shown by default. Suppress with `--oneline`:
 
 ```bash
-git hunk list --diff                   # human: indented diff below each hunk
-git hunk list --diff --porcelain       # porcelain: raw diff after metadata line
+git hunk list --oneline                # compact one-line-per-hunk output
+git hunk list --oneline --porcelain    # porcelain: compact one-line records
 git hunk list --no-color               # disable color output
+git hunk list --context 0              # zero context lines (max granularity)
 ```
 
 When there are untracked files, a hint is printed to stderr (human mode,
@@ -112,6 +113,7 @@ git hunk show a3f7 b82e                       # multiple hunks
 git hunk show a3f7c21 --staged                # from staged hunks
 git hunk show a3f7 --file src/main.zig        # restrict match to file
 git hunk show a3f7c21 --porcelain             # machine-readable output
+git hunk show a3f7:3-5                        # preview specific lines
 ```
 
 Human mode prints the unified diff fragment (`---`/`+++` header + `@@` hunk):
@@ -148,6 +150,7 @@ git hunk add a3f7 b82e                       # prefix match (min 4 hex chars)
 git hunk add a3f7c21 --file src/main.zig     # restrict match to file
 git hunk add --all                           # stage all unstaged hunks
 git hunk add --file src/main.zig             # stage all hunks in a file
+git hunk add a3f7:3-5,8                      # stage specific lines from a hunk
 ```
 
 On success, prints confirmation to stdout:
@@ -199,19 +202,19 @@ git hunk add --file src/main.zig
 List hunk hashes only:
 
 ```bash
-git hunk list --porcelain | cut -f1
+git hunk list --porcelain --oneline | cut -f1
 ```
 
 Count hunks per file:
 
 ```bash
-git hunk list --porcelain | cut -f2 | sort | uniq -c
+git hunk list --porcelain --oneline | cut -f2 | sort | uniq -c
 ```
 
 Stage hunks matching a pattern in the summary:
 
 ```bash
-git hunk list --porcelain | grep 'error' | cut -f1 | xargs git hunk add
+git hunk list --porcelain --oneline | grep 'error' | cut -f1 | xargs git hunk add
 ```
 
 ## Prefix matching

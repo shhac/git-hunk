@@ -5,7 +5,7 @@
 List diff hunks with content hashes.
 
 ```
-git-hunk list [--staged] [--file <path>] [--porcelain] [--diff] [--no-color]
+git-hunk list [--staged] [--file <path>] [--porcelain] [--oneline] [--context <n>] [--no-color]
 ```
 
 ### Flags
@@ -15,19 +15,20 @@ git-hunk list [--staged] [--file <path>] [--porcelain] [--diff] [--no-color]
 | `--staged` | Show staged hunks (HEAD vs index) instead of unstaged (index vs worktree) |
 | `--file <path>` | Only show hunks for the given file path. Path must match exactly as shown in diff output. |
 | `--porcelain` | Tab-separated machine-readable output. See [output format](output.md). |
-| `--diff` | Include inline diff content after each hunk. Human mode indents by 4 spaces; porcelain mode prints raw diff lines followed by a blank line separator. |
+| `--oneline` | Compact one-line-per-hunk output without inline diff content. |
+| `--context <n>` | Number of context lines to use in diffs (default: 1). Lower values produce more granular hunks. |
 | `--no-color` | Disable color output. Color is also disabled automatically when stdout is not a TTY, or when the `NO_COLOR` environment variable is set. |
 
 ### Examples
 
 ```bash
-git-hunk list                                    # all unstaged hunks
+git-hunk list                                    # all unstaged hunks (with diffs)
+git-hunk list --oneline                          # compact one-line-per-hunk
 git-hunk list --staged                           # all staged hunks
 git-hunk list --file src/main.zig                # unstaged hunks in one file
 git-hunk list --staged --porcelain               # staged hunks, machine-readable
-git-hunk list --file src/main.zig --porcelain    # combine filters
-git-hunk list --diff                             # include inline diff content
-git-hunk list --diff --porcelain                 # diff content, machine-readable
+git-hunk list --oneline --porcelain              # compact porcelain output
+git-hunk list --context 0                        # zero context (max granularity)
 git-hunk list --no-color                         # disable color output
 ```
 
@@ -46,14 +47,14 @@ git-hunk list --no-color                         # disable color output
 Show the full diff content of specific hunks.
 
 ```
-git-hunk show <sha>... [--staged] [--file <path>] [--porcelain] [--no-color]
+git-hunk show <sha[:lines]>... [--staged] [--file <path>] [--porcelain] [--context <n>] [--no-color]
 ```
 
 ### Arguments
 
 | Argument | Description |
 |----------|-------------|
-| `<sha>...` | One or more SHA hex prefixes (minimum 4 characters). Prefix matching is supported. |
+| `<sha[:lines]>...` | One or more SHA hex prefixes (minimum 4 characters). Prefix matching is supported. Optional `:lines` suffix selects specific hunk-relative lines (e.g., `a3f7:3-5,8`). |
 
 ### Flags
 
@@ -62,6 +63,7 @@ git-hunk show <sha>... [--staged] [--file <path>] [--porcelain] [--no-color]
 | `--staged` | Show hunks from staged diff (HEAD vs index) instead of unstaged (index vs worktree) |
 | `--file <path>` | Restrict hash matching to hunks in this file. |
 | `--porcelain` | Machine-readable output: metadata header line + raw diff lines + blank separator. |
+| `--context <n>` | Number of context lines (default: 1). Must match the value used with `list`. |
 | `--no-color` | Disable color output. Color is also disabled automatically when stdout is not a TTY, or when the `NO_COLOR` environment variable is set. |
 
 ### Examples
@@ -72,6 +74,8 @@ git-hunk show a3f7 b82e                          # show multiple hunks
 git-hunk show a3f7c21 --staged                   # show a staged hunk
 git-hunk show a3f7 --file src/main.zig           # restrict to file
 git-hunk show a3f7c21 --porcelain                # machine-readable output
+git-hunk show a3f7:3-5                           # preview specific lines
+git-hunk show a3f7:3-5,8                         # preview lines 3-5 and 8
 git-hunk show a3f7c21 --no-color                 # disable color output
 ```
 
@@ -103,14 +107,14 @@ Same error types as `add`:
 Stage hunks by content hash.
 
 ```
-git-hunk add [<sha>...] [--file <path>] [--all]
+git-hunk add [<sha[:lines]>...] [--file <path>] [--all] [--context <n>]
 ```
 
 ### Arguments
 
 | Argument | Description |
 |----------|-------------|
-| `<sha>...` | One or more SHA hex prefixes (minimum 4 characters). Prefix matching is supported. Optional when `--all` or `--file` is used. |
+| `<sha[:lines]>...` | One or more SHA hex prefixes (minimum 4 characters). Prefix matching is supported. Optional `:lines` suffix stages specific hunk-relative lines (e.g., `a3f7:3-5,8`). Optional when `--all` or `--file` is used. |
 
 ### Flags
 
@@ -118,6 +122,7 @@ git-hunk add [<sha>...] [--file <path>] [--all]
 |------|-------------|
 | `--file <path>` | Restrict hash matching to hunks in this file. When used without SHAs, stages all hunks in the file. |
 | `--all` | Stage all unstaged hunks. No SHA arguments required. |
+| `--context <n>` | Number of context lines (default: 1). Must match the value used with `list`. |
 
 ### Examples
 
@@ -128,6 +133,7 @@ git-hunk add a3f7c21 b82e0f4 e91d3a6            # stage multiple hunks
 git-hunk add a3f7 --file src/main.zig            # restrict to file
 git-hunk add --all                               # stage all unstaged hunks
 git-hunk add --file src/main.zig                 # stage all hunks in a file
+git-hunk add a3f7:3-5,8                          # stage specific lines from a hunk
 ```
 
 ### Behavior
@@ -158,14 +164,14 @@ git-hunk add --file src/main.zig                 # stage all hunks in a file
 Unstage hunks by content hash.
 
 ```
-git-hunk remove [<sha>...] [--file <path>] [--all]
+git-hunk remove [<sha[:lines]>...] [--file <path>] [--all] [--context <n>]
 ```
 
 ### Arguments
 
 | Argument | Description |
 |----------|-------------|
-| `<sha>...` | One or more SHA hex prefixes (minimum 4 characters) from `git-hunk list --staged`. Optional when `--all` or `--file` is used. |
+| `<sha[:lines]>...` | One or more SHA hex prefixes (minimum 4 characters) from `git-hunk list --staged`. Optional `:lines` suffix unstages specific lines. Optional when `--all` or `--file` is used. |
 
 ### Flags
 
@@ -173,6 +179,7 @@ git-hunk remove [<sha>...] [--file <path>] [--all]
 |------|-------------|
 | `--file <path>` | Restrict hash matching to hunks in this file. When used without SHAs, unstages all hunks in the file. |
 | `--all` | Unstage all staged hunks. No SHA arguments required. |
+| `--context <n>` | Number of context lines (default: 1). Must match the value used with `list`. |
 
 ### Examples
 

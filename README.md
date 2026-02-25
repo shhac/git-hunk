@@ -1,7 +1,7 @@
 # git-hunk
 
 Non-interactive, deterministic hunk staging for git. Enumerate hunks, select by
-foo content hash, stage or unstage them -- no TUI required.
+content hash, stage or unstage them -- no TUI required.
 
 ## Why
 
@@ -36,11 +36,12 @@ git hunk list
 ### List hunks
 
 ```
-git hunk list                          # unstaged hunks
+git hunk list                          # unstaged hunks (includes diff content)
+git hunk list --oneline                # compact one-line-per-hunk output
 git hunk list --staged                 # staged hunks
 git hunk list --file src/main.zig      # filter by file
 git hunk list --porcelain              # machine-readable output
-git hunk list --diff                   # include inline diff content
+git hunk list --context 0              # zero context lines (max granularity)
 git hunk list --no-color               # disable color output
 ```
 
@@ -48,12 +49,18 @@ Example output:
 
 ```
 a3f7c21  src/main.zig                  12-18     Add error handling
+    @@ -12,1 +12,2 @@ fn handleRequest()
+     const result = try parse(input);
+    +if (result == null) return error.Invalid;
+
 b82e0f4  src/main.zig                  45-52     Replace old parser
-e91d3a6  README.md                     3-7       new file
+    @@ -45,1 +45,1 @@
+    -old_parser(input);
+    +new_parser(input);
 ```
 
-Each line shows a 7-character content hash, file path, line range, and optional
-function context or summary.
+Each hunk shows a 7-character content hash, file path, line range, summary, and
+inline diff content. Use `--oneline` for compact output without diffs.
 
 When there are untracked files, a hint is printed to stderr:
 
@@ -69,10 +76,11 @@ git hunk show a3f7 b82e               # show multiple hunks
 git hunk show a3f7c21 --staged        # show a staged hunk
 git hunk show a3f7 --file src/main.zig # restrict match to file
 git hunk show a3f7c21 --porcelain     # machine-readable output
+git hunk show a3f7:3-5                # preview specific lines (hunk-relative)
 ```
 
-Prints the full unified diff content for the specified hunks. Useful for
-inspecting a hunk before staging it.
+Prints the full unified diff content for the specified hunks. With line
+selection syntax (`sha:lines`), shows numbered lines with selection markers.
 
 ### Stage hunks
 
@@ -82,6 +90,7 @@ git hunk add a3f7 b82e                 # stage multiple (prefix match, min 4 cha
 git hunk add a3f7c21 --file src/main.zig   # restrict match to file
 git hunk add --all                     # stage all unstaged hunks
 git hunk add --file src/main.zig       # stage all hunks in a file
+git hunk add a3f7:3-5,8               # stage specific lines from a hunk
 ```
 
 ### Unstage hunks
@@ -96,12 +105,11 @@ git hunk remove --file src/main.zig    # unstage all hunks in a file
 ### Typical workflow
 
 ```
-git hunk list                          # see what changed
-git hunk show a3f7c21                  # inspect a hunk's diff
+git hunk list                          # see what changed (with inline diffs)
 git hunk add a3f7c21                   # stage first hunk
 git hunk add b82e0f4                   # stage second hunk
-git hunk list                          # verify remaining (hashes unchanged)
-git hunk list --staged                 # verify staged
+git hunk list --oneline                # verify remaining (hashes unchanged)
+git hunk list --staged --oneline       # verify staged
 git commit -m "feat: add error handling"
 ```
 
@@ -134,16 +142,15 @@ b82e0f4	src/main.zig	45	52	Replace old parser
 
 ## Diff output
 
-`list --diff` and `show` include inline diff content after hunk metadata.
+`list` shows inline diff content by default. Use `--oneline` to suppress it.
 
-In human mode (`list --diff`), each hunk's diff lines are indented by 4 spaces:
+In human mode, each hunk's diff lines are indented by 4 spaces:
 
 ```
 a3f7c21  src/main.zig                  12-18     Add error handling
-    @@ -12,5 +12,6 @@ fn handleRequest()
+    @@ -12,1 +12,2 @@ fn handleRequest()
      const result = try parse(input);
     +if (result == null) return error.Invalid;
-     return result;
 ```
 
 In porcelain mode, the raw diff lines follow the metadata line verbatim, with
@@ -151,15 +158,60 @@ records separated by a blank line:
 
 ```
 a3f7c21	src/main.zig	12	18	Add error handling
-@@ -12,5 +12,6 @@ fn handleRequest()
+@@ -12,1 +12,2 @@ fn handleRequest()
  const result = try parse(input);
 +if (result == null) return error.Invalid;
- return result;
 
 b82e0f4	src/main.zig	45	52	Replace old parser
-@@ -45,6 +45,7 @@
+@@ -45,1 +45,1 @@
 ...
 ```
+
+## Context lines
+
+By default, git-hunk uses 1 line of context (`-U1`), producing finer-grained
+hunks than git's default of 3. Override with `--context N`:
+
+```
+git hunk list --context 0              # zero context (maximum granularity)
+git hunk list --context 3              # git-compatible context
+```
+
+The `--context` flag is available on all commands (`list`, `show`, `add`,
+`remove`). Context must be consistent within a workflow -- hashes change with
+different context values.
+
+When using `--context 0`, `git apply` is invoked with `--unidiff-zero`
+automatically.
+
+## Line selection
+
+Stage or preview specific lines from a hunk using `sha:line-spec` syntax:
+
+```
+git hunk show a3f7:3-5                 # preview lines 3-5 (hunk-relative)
+git hunk show a3f7:3-5,8               # preview lines 3-5 and 8
+git hunk add a3f7:3-5                  # stage only lines 3-5
+```
+
+Line numbers are 1-based and relative to the hunk body (line 1 is the first
+line after the `@@` header). Use `show` to preview what would be staged before
+running `add`.
+
+When showing a line selection, lines are numbered with `>` markers indicating
+which lines are selected:
+
+```
+--- a/src/main.zig
++++ b/src/main.zig
+  1   @@ -12,3 +12,4 @@ fn handleRequest()
+  2    const result = try parse(input);
+> 3  +if (result == null) return error.Invalid;
+  4    return result;
+```
+
+Unselected `-` lines become context in the patch; unselected `+` lines are
+dropped. This produces a valid partial patch that `git apply` can process.
 
 ## How hashing works
 
@@ -202,6 +254,8 @@ explicitly, or set the `NO_COLOR` environment variable.
 - Prefix matching (minimum 4 hex characters)
 - Ambiguous prefix detection
 - Bulk staging via `--all` or `--file` without SHAs
+- Per-line staging via `sha:line-spec` syntax
+- Configurable context lines via `--context N`
 
 ## License
 
