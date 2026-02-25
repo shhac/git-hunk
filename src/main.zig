@@ -43,6 +43,13 @@ const AddRemoveOptions = struct {
     file_filter: ?[]const u8 = null,
 };
 
+const ShowOptions = struct {
+    sha_prefixes: std.ArrayList([]const u8),
+    file_filter: ?[]const u8 = null,
+    mode: DiffMode = .unstaged,
+    output: OutputMode = .human,
+};
+
 // ============================================================================
 // Entry point
 // ============================================================================
@@ -96,6 +103,14 @@ fn run() !void {
         };
         defer opts.sha_prefixes.deinit(allocator);
         try cmdRemove(allocator, stdout, opts);
+    } else if (std.mem.eql(u8, subcmd, "show")) {
+        var opts = parseShowArgs(allocator, args[2..]) catch {
+            try printUsage(stdout);
+            try stdout.flush();
+            std.process.exit(1);
+        };
+        defer opts.sha_prefixes.deinit(allocator);
+        try cmdShow(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "--version") or std.mem.eql(u8, subcmd, "-V")) {
         try stdout.print("git-hunk {s}\n", .{build_options.version});
     } else if (std.mem.eql(u8, subcmd, "--help") or std.mem.eql(u8, subcmd, "-h") or std.mem.eql(u8, subcmd, "help")) {
@@ -118,6 +133,8 @@ fn printUsage(stdout: *std.Io.Writer) !void {
         \\commands:
         \\  list [--staged] [--file <path>] [--porcelain] [--diff]
         \\                                                List diff hunks
+        \\  show <sha>... [--staged] [--file <path>] [--porcelain]
+        \\                                                Show diff content of hunks
         \\  add <sha>... [--file <path>]                    Stage hunks
         \\  remove <sha>... [--file <path>]                 Unstage hunks
         \\
@@ -159,6 +176,49 @@ fn parseAddRemoveArgs(allocator: Allocator, args: []const [:0]u8) !AddRemoveOpti
             i += 1;
             if (i >= args.len) return error.MissingArgument;
             opts.file_filter = args[i];
+        } else if (std.mem.startsWith(u8, arg, "-")) {
+            return error.UnknownFlag;
+        } else {
+            // SHA prefix — validate it's hex and at least 4 chars
+            if (arg.len < 4) {
+                std.debug.print("error: sha prefix too short (minimum 4 chars): '{s}'\n", .{arg});
+                return error.InvalidArgument;
+            }
+            for (arg) |c| {
+                if (!isHexDigit(c)) {
+                    std.debug.print("error: invalid hex in sha prefix: '{s}'\n", .{arg});
+                    return error.InvalidArgument;
+                }
+            }
+            try opts.sha_prefixes.append(allocator, arg);
+        }
+    }
+
+    if (opts.sha_prefixes.items.len == 0) {
+        std.debug.print("error: at least one <sha> argument required\n", .{});
+        return error.MissingArgument;
+    }
+
+    return opts;
+}
+
+fn parseShowArgs(allocator: Allocator, args: []const [:0]u8) !ShowOptions {
+    var opts: ShowOptions = .{
+        .sha_prefixes = .empty,
+    };
+    errdefer opts.sha_prefixes.deinit(allocator);
+
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        const arg = args[i];
+        if (std.mem.eql(u8, arg, "--file")) {
+            i += 1;
+            if (i >= args.len) return error.MissingArgument;
+            opts.file_filter = args[i];
+        } else if (std.mem.eql(u8, arg, "--staged")) {
+            opts.mode = .staged;
+        } else if (std.mem.eql(u8, arg, "--porcelain")) {
+            opts.output = .porcelain;
         } else if (std.mem.startsWith(u8, arg, "-")) {
             return error.UnknownFlag;
         } else {
@@ -311,6 +371,79 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddRemoveOp
     };
     for (matched.items) |h| {
         try stdout.print("{s} {s}  {s}\n", .{ verb, h.sha_hex[0..7], h.file_path });
+    }
+}
+
+// ============================================================================
+// Show command
+// ============================================================================
+
+fn cmdShow(allocator: Allocator, stdout: *std.Io.Writer, opts: ShowOptions) !void {
+    const diff_output = try runGitDiff(allocator, opts.mode);
+    defer allocator.free(diff_output);
+
+    if (diff_output.len == 0) {
+        const msg: []const u8 = switch (opts.mode) {
+            .unstaged => "no unstaged changes\n",
+            .staged => "no staged changes\n",
+        };
+        std.debug.print("{s}", .{msg});
+        std.process.exit(1);
+    }
+
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var hunks: std.ArrayList(Hunk) = .empty;
+    defer hunks.deinit(arena);
+    try parseDiff(arena, diff_output, opts.mode, &hunks);
+
+    // Resolve each SHA prefix to a hunk, deduplicating by full SHA
+    var matched: std.ArrayList(*const Hunk) = .empty;
+    defer matched.deinit(arena);
+
+    for (opts.sha_prefixes.items) |prefix| {
+        const hunk = findHunkByShaPrefix(hunks.items, prefix, opts.file_filter) catch |err| switch (err) {
+            error.NotFound => {
+                std.debug.print("error: no hunk matching '{s}'\n", .{prefix});
+                std.process.exit(1);
+            },
+            error.AmbiguousPrefix => {
+                std.debug.print("error: ambiguous prefix '{s}' — matches multiple hunks\n", .{prefix});
+                std.process.exit(1);
+            },
+            else => return err,
+        };
+        // Deduplicate: skip if this exact hunk (by full SHA) is already matched
+        var already_matched = false;
+        for (matched.items) |existing| {
+            if (std.mem.eql(u8, &existing.sha_hex, &hunk.sha_hex)) {
+                already_matched = true;
+                break;
+            }
+        }
+        if (!already_matched) {
+            try matched.append(arena, hunk);
+        }
+    }
+
+    // Print each matched hunk
+    for (matched.items) |h| {
+        switch (opts.output) {
+            .human => {
+                try stdout.writeAll(h.patch_header);
+                try stdout.writeAll(h.raw_lines);
+                if (h.raw_lines.len > 0 and h.raw_lines[h.raw_lines.len - 1] != '\n') {
+                    try stdout.writeAll("\n");
+                }
+                try stdout.writeAll("\n");
+            },
+            .porcelain => {
+                try printHunkPorcelain(stdout, h.*, opts.mode);
+                try printDiffPorcelain(stdout, h.*);
+            },
+        }
     }
 }
 
