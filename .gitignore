@@ -25,11 +25,8 @@ CLAUDE.local.md
 .ai-cache/
 design-docs/
 
-# Claude Code directories (except project-specific skills, agents, commands)
-.claude/*
-!.claude/skills/
-!.claude/agents/
-!.claude/commands/
+# Claude Code local settings
+.claude/*.local.json
 
 # Temporary files
 *.tmp
@@ -51,8 +48,8 @@ test-*.sh
 verify-*.sh
 
 # Release builds
-release/
-git-wt-*-macos
-git-wt-*-linux
-git-wt-*.tar.gz
-git-wt-*.zip
+/release/
+git-hunk-*-macos
+git-hunk-*-linux
+git-hunk-*.tar.gz
+git-hunk-*.zip
