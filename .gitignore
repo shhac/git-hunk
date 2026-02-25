@@ -1,0 +1,57 @@
+# Zig build artifacts
+.zig-cache/
+zig-cache/
+zig-out/
+build/
+*.exe
+*.o
+
+# Editor and IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Debug files
+*.pdb
+
+# Local development
+.env
+.env.local
+.env.*.local
+CLAUDE.local.md
+.ai-cache/
+
+# Claude Code directories (except project-specific skills, agents, commands)
+.claude/*
+!.claude/skills/
+!.claude/agents/
+!.claude/commands/
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+
+# Test coverage
+coverage/
+*.gcov
+*.gcda
+*.gcno
+
+# Test directories and scripts
+.e2e-test/
+test-*/
+*-test/
+test-claude-script.sh
+test-*.sh
+verify-*.sh
+
+# Release builds
+release/
+git-wt-*-macos
+git-wt-*-linux
+git-wt-*.tar.gz
+git-wt-*.zip
