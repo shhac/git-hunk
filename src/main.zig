@@ -1437,3 +1437,823 @@ test "parseDiff new file" {
     try std.testing.expectEqualStrings("new.txt", hunks.items[0].file_path);
     try std.testing.expect(hunks.items[0].is_new_file);
 }
+
+// ============================================================================
+// Test helpers
+// ============================================================================
+
+fn testMakeHunk(file_path: []const u8, old_start: u32, old_count: u32, new_start: u32, new_count: u32) Hunk {
+    return .{
+        .file_path = file_path,
+        .old_start = old_start,
+        .old_count = old_count,
+        .new_start = new_start,
+        .new_count = new_count,
+        .context = "",
+        .raw_lines = "",
+        .diff_lines = "+line",
+        .sha_hex = [_]u8{0} ** 40,
+        .is_new_file = false,
+        .is_deleted_file = false,
+        .patch_header = "",
+    };
+}
+
+// ============================================================================
+// Unit tests: parseU32
+// ============================================================================
+
+test "parseU32 basic" {
+    var s: []const u8 = "42rest";
+    const v = parseU32(&s).?;
+    try std.testing.expectEqual(@as(u32, 42), v);
+    try std.testing.expectEqualStrings("rest", s);
+}
+
+test "parseU32 empty returns null" {
+    var s: []const u8 = "";
+    try std.testing.expectEqual(@as(?u32, null), parseU32(&s));
+}
+
+test "parseU32 non-digit returns null" {
+    var s: []const u8 = "abc";
+    try std.testing.expectEqual(@as(?u32, null), parseU32(&s));
+}
+
+test "parseU32 overflow returns null" {
+    var s: []const u8 = "9999999999";
+    try std.testing.expectEqual(@as(?u32, null), parseU32(&s));
+}
+
+// ============================================================================
+// Unit tests: isHexDigit
+// ============================================================================
+
+test "isHexDigit digits" {
+    for ("0123456789") |c| try std.testing.expect(isHexDigit(c));
+}
+
+test "isHexDigit lower hex" {
+    for ("abcdef") |c| try std.testing.expect(isHexDigit(c));
+}
+
+test "isHexDigit upper hex" {
+    for ("ABCDEF") |c| try std.testing.expect(isHexDigit(c));
+}
+
+test "isHexDigit non-hex" {
+    try std.testing.expect(!isHexDigit('g'));
+    try std.testing.expect(!isHexDigit('G'));
+    try std.testing.expect(!isHexDigit(' '));
+    try std.testing.expect(!isHexDigit('-'));
+}
+
+// ============================================================================
+// Unit tests: cUnescape
+// ============================================================================
+
+test "cUnescape no escapes passthrough" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try cUnescape(arena.allocator(), "simple/path.txt");
+    try std.testing.expectEqualStrings("simple/path.txt", result);
+}
+
+test "cUnescape tab" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try cUnescape(arena.allocator(), "a\\tb");
+    try std.testing.expectEqualStrings("a\tb", result);
+}
+
+test "cUnescape newline" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try cUnescape(arena.allocator(), "a\\nb");
+    try std.testing.expectEqualStrings("a\nb", result);
+}
+
+test "cUnescape backslash" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try cUnescape(arena.allocator(), "a\\\\b");
+    try std.testing.expectEqualStrings("a\\b", result);
+}
+
+test "cUnescape quote" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try cUnescape(arena.allocator(), "a\\\"b");
+    try std.testing.expectEqualStrings("a\"b", result);
+}
+
+test "cUnescape octal basic" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    // \101 = octal 65 = 'A'
+    const result = try cUnescape(arena.allocator(), "\\101");
+    try std.testing.expectEqualStrings("A", result);
+}
+
+test "cUnescape octal utf8 path" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    // git encodes non-ASCII: \303\234 = UTF-8 bytes 0xC3 0x9C (Ü)
+    const result = try cUnescape(arena.allocator(), "\\303\\234berstand");
+    try std.testing.expectEqualStrings("\xc3\x9cberstand", result);
+}
+
+// ============================================================================
+// Unit tests: extractDiffPath
+// ============================================================================
+
+test "extractDiffPath new side normal" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try extractDiffPath(arena.allocator(), "+++ b/src/main.zig", .new);
+    try std.testing.expectEqualStrings("src/main.zig", result.?);
+}
+
+test "extractDiffPath old side normal" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try extractDiffPath(arena.allocator(), "--- a/src/main.zig", .old);
+    try std.testing.expectEqualStrings("src/main.zig", result.?);
+}
+
+test "extractDiffPath dev null returns null" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try extractDiffPath(arena.allocator(), "--- /dev/null", .old);
+    try std.testing.expectEqual(@as(?[]const u8, null), result);
+}
+
+test "extractDiffPath quoted path" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try extractDiffPath(arena.allocator(), "+++ \"b/path with spaces.txt\"", .new);
+    try std.testing.expectEqualStrings("path with spaces.txt", result.?);
+}
+
+test "extractDiffPath quoted path with escape" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    // +++ "b/dir\twith\ttabs.txt" — backslash-t in the input → tab in output
+    const result = try extractDiffPath(arena.allocator(), "+++ \"b/dir\\twith\\ttabs.txt\"", .new);
+    try std.testing.expectEqualStrings("dir\twith\ttabs.txt", result.?);
+}
+
+// ============================================================================
+// Unit tests: hunkPatchOrder
+// ============================================================================
+
+test "hunkPatchOrder same file by line" {
+    const a = testMakeHunk("a.txt", 5, 3, 5, 3);
+    const b = testMakeHunk("a.txt", 10, 2, 10, 2);
+    try std.testing.expect(hunkPatchOrder({}, &a, &b));
+    try std.testing.expect(!hunkPatchOrder({}, &b, &a));
+}
+
+test "hunkPatchOrder different files" {
+    const a = testMakeHunk("a.txt", 100, 1, 100, 1);
+    const b = testMakeHunk("b.txt", 1, 1, 1, 1);
+    try std.testing.expect(hunkPatchOrder({}, &a, &b));
+    try std.testing.expect(!hunkPatchOrder({}, &b, &a));
+}
+
+test "hunkPatchOrder equal is not less" {
+    const a = testMakeHunk("a.txt", 5, 3, 5, 3);
+    try std.testing.expect(!hunkPatchOrder({}, &a, &a));
+}
+
+// ============================================================================
+// Unit tests: findHunkByShaPrefix
+// ============================================================================
+
+test "findHunkByShaPrefix exact match" {
+    const sha = computeHunkSha("a.zig", 1, "+line");
+    var h = testMakeHunk("a.zig", 1, 1, 1, 1);
+    h.sha_hex = sha;
+    const hunks = [_]Hunk{h};
+    const found = try findHunkByShaPrefix(&hunks, sha[0..7], null);
+    try std.testing.expectEqualStrings("a.zig", found.file_path);
+}
+
+test "findHunkByShaPrefix not found" {
+    const h = testMakeHunk("a.zig", 1, 1, 1, 1);
+    const hunks = [_]Hunk{h};
+    try std.testing.expectError(error.NotFound, findHunkByShaPrefix(&hunks, "deadbeef", null));
+}
+
+test "findHunkByShaPrefix ambiguous" {
+    const sha = computeHunkSha("a.zig", 1, "+line");
+    var h1 = testMakeHunk("a.zig", 1, 1, 1, 1);
+    h1.sha_hex = sha;
+    var h2 = testMakeHunk("b.zig", 1, 1, 1, 1);
+    h2.sha_hex = sha; // same SHA → same prefix
+    const hunks = [_]Hunk{ h1, h2 };
+    try std.testing.expectError(error.AmbiguousPrefix, findHunkByShaPrefix(&hunks, sha[0..7], null));
+}
+
+test "findHunkByShaPrefix file filter excludes" {
+    const sha = computeHunkSha("a.zig", 1, "+line");
+    var h = testMakeHunk("a.zig", 1, 1, 1, 1);
+    h.sha_hex = sha;
+    const hunks = [_]Hunk{h};
+    try std.testing.expectError(error.NotFound, findHunkByShaPrefix(&hunks, sha[0..7], "b.zig"));
+}
+
+test "findHunkByShaPrefix file filter matches" {
+    const sha = computeHunkSha("a.zig", 1, "+line");
+    var h = testMakeHunk("a.zig", 1, 1, 1, 1);
+    h.sha_hex = sha;
+    const hunks = [_]Hunk{h};
+    const found = try findHunkByShaPrefix(&hunks, sha[0..7], "a.zig");
+    try std.testing.expectEqualStrings("a.zig", found.file_path);
+}
+
+// ============================================================================
+// Unit tests: buildCombinedPatch
+// ============================================================================
+
+test "buildCombinedPatch single hunk" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var h = testMakeHunk("f.txt", 1, 1, 1, 1);
+    h.patch_header = "--- a/f.txt\n+++ b/f.txt\n";
+    h.raw_lines = "@@ -1 +1 @@\n-old\n+new\n";
+    const ptrs = [_]*const Hunk{&h};
+    const patch = try buildCombinedPatch(arena.allocator(), &ptrs);
+    try std.testing.expectEqualStrings(
+        "--- a/f.txt\n+++ b/f.txt\n@@ -1 +1 @@\n-old\n+new\n",
+        patch,
+    );
+}
+
+test "buildCombinedPatch same file deduplicates header" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const header = "--- a/f.txt\n+++ b/f.txt\n";
+    var h1 = testMakeHunk("f.txt", 1, 1, 1, 1);
+    h1.patch_header = header;
+    h1.raw_lines = "@@ -1 +1 @@\n-old1\n+new1\n";
+    var h2 = testMakeHunk("f.txt", 10, 1, 10, 1);
+    h2.patch_header = header;
+    h2.raw_lines = "@@ -10 +10 @@\n-old2\n+new2\n";
+    const ptrs = [_]*const Hunk{ &h1, &h2 };
+    const patch = try buildCombinedPatch(arena.allocator(), &ptrs);
+    try std.testing.expectEqualStrings(
+        "--- a/f.txt\n+++ b/f.txt\n@@ -1 +1 @@\n-old1\n+new1\n@@ -10 +10 @@\n-old2\n+new2\n",
+        patch,
+    );
+}
+
+test "buildCombinedPatch multiple files" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var h1 = testMakeHunk("a.txt", 1, 1, 1, 1);
+    h1.patch_header = "--- a/a.txt\n+++ b/a.txt\n";
+    h1.raw_lines = "@@ -1 +1 @@\n-a\n+A\n";
+    var h2 = testMakeHunk("b.txt", 1, 1, 1, 1);
+    h2.patch_header = "--- a/b.txt\n+++ b/b.txt\n";
+    h2.raw_lines = "@@ -1 +1 @@\n-b\n+B\n";
+    const ptrs = [_]*const Hunk{ &h1, &h2 };
+    const patch = try buildCombinedPatch(arena.allocator(), &ptrs);
+    try std.testing.expectEqualStrings(
+        "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-a\n+A\n--- a/b.txt\n+++ b/b.txt\n@@ -1 +1 @@\n-b\n+B\n",
+        patch,
+    );
+}
+
+test "buildCombinedPatch adds trailing newline" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var h = testMakeHunk("f.txt", 1, 1, 1, 1);
+    h.patch_header = "--- a/f.txt\n+++ b/f.txt\n";
+    h.raw_lines = "@@ -1 +1 @@\n-old\n+new"; // no trailing newline
+    const ptrs = [_]*const Hunk{&h};
+    const patch = try buildCombinedPatch(arena.allocator(), &ptrs);
+    try std.testing.expect(patch[patch.len - 1] == '\n');
+}
+
+// ============================================================================
+// Unit tests: parseListArgs
+// ============================================================================
+
+test "parseListArgs defaults" {
+    const opts = try parseListArgs(&.{});
+    try std.testing.expectEqual(DiffMode.unstaged, opts.mode);
+    try std.testing.expectEqual(OutputMode.human, opts.output);
+    try std.testing.expect(!opts.show_diff);
+    try std.testing.expectEqual(@as(?[]const u8, null), opts.file_filter);
+}
+
+test "parseListArgs staged" {
+    const args = [_][:0]u8{@constCast("--staged")};
+    const opts = try parseListArgs(&args);
+    try std.testing.expectEqual(DiffMode.staged, opts.mode);
+}
+
+test "parseListArgs porcelain" {
+    const args = [_][:0]u8{@constCast("--porcelain")};
+    const opts = try parseListArgs(&args);
+    try std.testing.expectEqual(OutputMode.porcelain, opts.output);
+}
+
+test "parseListArgs diff" {
+    const args = [_][:0]u8{@constCast("--diff")};
+    const opts = try parseListArgs(&args);
+    try std.testing.expect(opts.show_diff);
+}
+
+test "parseListArgs no-color" {
+    const args = [_][:0]u8{@constCast("--no-color")};
+    const opts = try parseListArgs(&args);
+    try std.testing.expect(opts.no_color);
+}
+
+test "parseListArgs file filter" {
+    const args = [_][:0]u8{ @constCast("--file"), @constCast("src/main.zig") };
+    const opts = try parseListArgs(&args);
+    try std.testing.expectEqualStrings("src/main.zig", opts.file_filter.?);
+}
+
+test "parseListArgs file missing arg" {
+    const args = [_][:0]u8{@constCast("--file")};
+    try std.testing.expectError(error.MissingArgument, parseListArgs(&args));
+}
+
+test "parseListArgs unknown flag" {
+    const args = [_][:0]u8{@constCast("--unknown")};
+    try std.testing.expectError(error.UnknownFlag, parseListArgs(&args));
+}
+
+test "parseListArgs all flags combined" {
+    const args = [_][:0]u8{
+        @constCast("--staged"),
+        @constCast("--porcelain"),
+        @constCast("--diff"),
+        @constCast("--no-color"),
+        @constCast("--file"),
+        @constCast("foo.txt"),
+    };
+    const opts = try parseListArgs(&args);
+    try std.testing.expectEqual(DiffMode.staged, opts.mode);
+    try std.testing.expectEqual(OutputMode.porcelain, opts.output);
+    try std.testing.expect(opts.show_diff);
+    try std.testing.expect(opts.no_color);
+    try std.testing.expectEqualStrings("foo.txt", opts.file_filter.?);
+}
+
+// ============================================================================
+// Unit tests: parseAddRemoveArgs
+// ============================================================================
+
+test "parseAddRemoveArgs valid sha" {
+    const allocator = std.testing.allocator;
+    const args = [_][:0]u8{@constCast("abcd1234")};
+    var opts = try parseAddRemoveArgs(allocator, &args);
+    defer opts.sha_prefixes.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), opts.sha_prefixes.items.len);
+    try std.testing.expectEqualStrings("abcd1234", opts.sha_prefixes.items[0]);
+}
+
+test "parseAddRemoveArgs too short sha" {
+    const allocator = std.testing.allocator;
+    const args = [_][:0]u8{@constCast("abc")};
+    try std.testing.expectError(error.InvalidArgument, parseAddRemoveArgs(allocator, &args));
+}
+
+test "parseAddRemoveArgs non-hex sha" {
+    const allocator = std.testing.allocator;
+    const args = [_][:0]u8{@constCast("xyzw1234")};
+    try std.testing.expectError(error.InvalidArgument, parseAddRemoveArgs(allocator, &args));
+}
+
+test "parseAddRemoveArgs missing sha" {
+    const allocator = std.testing.allocator;
+    try std.testing.expectError(error.MissingArgument, parseAddRemoveArgs(allocator, &.{}));
+}
+
+test "parseAddRemoveArgs select all" {
+    const allocator = std.testing.allocator;
+    const args = [_][:0]u8{@constCast("--all")};
+    var opts = try parseAddRemoveArgs(allocator, &args);
+    defer opts.sha_prefixes.deinit(allocator);
+    try std.testing.expect(opts.select_all);
+}
+
+test "parseAddRemoveArgs with file flag" {
+    const allocator = std.testing.allocator;
+    const args = [_][:0]u8{
+        @constCast("abcd1234"),
+        @constCast("--file"),
+        @constCast("src/main.zig"),
+    };
+    var opts = try parseAddRemoveArgs(allocator, &args);
+    defer opts.sha_prefixes.deinit(allocator);
+    try std.testing.expectEqualStrings("src/main.zig", opts.file_filter.?);
+}
+
+test "parseAddRemoveArgs multiple shas" {
+    const allocator = std.testing.allocator;
+    const args = [_][:0]u8{
+        @constCast("abcd1234"),
+        @constCast("ef567890"),
+    };
+    var opts = try parseAddRemoveArgs(allocator, &args);
+    defer opts.sha_prefixes.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 2), opts.sha_prefixes.items.len);
+}
+
+// ============================================================================
+// Unit tests: parseShowArgs
+// ============================================================================
+
+test "parseShowArgs valid sha" {
+    const allocator = std.testing.allocator;
+    const args = [_][:0]u8{@constCast("abcd1234")};
+    var opts = try parseShowArgs(allocator, &args);
+    defer opts.sha_prefixes.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), opts.sha_prefixes.items.len);
+}
+
+test "parseShowArgs staged flag" {
+    const allocator = std.testing.allocator;
+    const args = [_][:0]u8{ @constCast("abcd1234"), @constCast("--staged") };
+    var opts = try parseShowArgs(allocator, &args);
+    defer opts.sha_prefixes.deinit(allocator);
+    try std.testing.expectEqual(DiffMode.staged, opts.mode);
+}
+
+test "parseShowArgs porcelain flag" {
+    const allocator = std.testing.allocator;
+    const args = [_][:0]u8{ @constCast("abcd1234"), @constCast("--porcelain") };
+    var opts = try parseShowArgs(allocator, &args);
+    defer opts.sha_prefixes.deinit(allocator);
+    try std.testing.expectEqual(OutputMode.porcelain, opts.output);
+}
+
+test "parseShowArgs no-color flag" {
+    const allocator = std.testing.allocator;
+    const args = [_][:0]u8{ @constCast("abcd1234"), @constCast("--no-color") };
+    var opts = try parseShowArgs(allocator, &args);
+    defer opts.sha_prefixes.deinit(allocator);
+    try std.testing.expect(opts.no_color);
+}
+
+test "parseShowArgs unknown flag" {
+    const allocator = std.testing.allocator;
+    const args = [_][:0]u8{ @constCast("abcd1234"), @constCast("--unknown") };
+    try std.testing.expectError(error.UnknownFlag, parseShowArgs(allocator, &args));
+}
+
+test "parseShowArgs missing sha" {
+    const allocator = std.testing.allocator;
+    try std.testing.expectError(error.MissingArgument, parseShowArgs(allocator, &.{}));
+}
+
+// ============================================================================
+// Unit tests: firstChangedLine
+// ============================================================================
+
+test "firstChangedLine empty input" {
+    var buf: [64]u8 = undefined;
+    const result = firstChangedLine(&buf, "");
+    try std.testing.expectEqualStrings("", result);
+}
+
+test "firstChangedLine whitespace-only changed line" {
+    var buf: [64]u8 = undefined;
+    // "+   " strips to empty content → skipped; "- " also empty → ""
+    const result = firstChangedLine(&buf, "+   \n-   ");
+    try std.testing.expectEqualStrings("", result);
+}
+
+test "firstChangedLine strips plus and leading spaces" {
+    var buf: [64]u8 = undefined;
+    const result = firstChangedLine(&buf, "+  hello world");
+    try std.testing.expectEqualStrings("hello world", result);
+}
+
+test "firstChangedLine first change wins" {
+    var buf: [64]u8 = undefined;
+    // '-' line comes before '+' line
+    const result = firstChangedLine(&buf, "-removed\n+added");
+    try std.testing.expectEqualStrings("removed", result);
+}
+
+test "firstChangedLine truncates to buffer size" {
+    var buf: [5]u8 = undefined;
+    const result = firstChangedLine(&buf, "+hello world");
+    try std.testing.expectEqualStrings("hello", result);
+}
+
+// ============================================================================
+// Unit tests: hunkSummaryWithFallback
+// ============================================================================
+
+test "hunkSummaryWithFallback uses context" {
+    var buf: [64]u8 = undefined;
+    var h = testMakeHunk("f.txt", 1, 1, 1, 1);
+    h.context = "fn main()";
+    try std.testing.expectEqualStrings("fn main()", hunkSummaryWithFallback(&buf, h));
+}
+
+test "hunkSummaryWithFallback new file" {
+    var buf: [64]u8 = undefined;
+    var h = testMakeHunk("f.txt", 1, 1, 1, 1);
+    h.is_new_file = true;
+    try std.testing.expectEqualStrings("new file", hunkSummaryWithFallback(&buf, h));
+}
+
+test "hunkSummaryWithFallback deleted" {
+    var buf: [64]u8 = undefined;
+    var h = testMakeHunk("f.txt", 1, 1, 1, 1);
+    h.is_deleted_file = true;
+    try std.testing.expectEqualStrings("deleted", hunkSummaryWithFallback(&buf, h));
+}
+
+test "hunkSummaryWithFallback first changed line" {
+    var buf: [64]u8 = undefined;
+    var h = testMakeHunk("f.txt", 1, 1, 1, 1);
+    h.diff_lines = "+hello world";
+    try std.testing.expectEqualStrings("hello world", hunkSummaryWithFallback(&buf, h));
+}
+
+// ============================================================================
+// Unit tests: stableStartLine / stableEndLine
+// ============================================================================
+
+test "stableStartLine unstaged" {
+    const h = testMakeHunk("f.txt", 5, 3, 10, 4);
+    try std.testing.expectEqual(@as(u32, 10), stableStartLine(h, .unstaged));
+}
+
+test "stableStartLine staged" {
+    const h = testMakeHunk("f.txt", 5, 3, 10, 4);
+    try std.testing.expectEqual(@as(u32, 5), stableStartLine(h, .staged));
+}
+
+test "stableEndLine unstaged normal" {
+    const h = testMakeHunk("f.txt", 5, 3, 10, 4);
+    try std.testing.expectEqual(@as(u32, 13), stableEndLine(h, .unstaged)); // 10+4-1=13
+}
+
+test "stableEndLine unstaged zero count" {
+    const h = testMakeHunk("f.txt", 5, 3, 10, 0);
+    try std.testing.expectEqual(@as(u32, 10), stableEndLine(h, .unstaged)); // count=0 → start
+}
+
+test "stableEndLine staged normal" {
+    const h = testMakeHunk("f.txt", 5, 3, 10, 4);
+    try std.testing.expectEqual(@as(u32, 7), stableEndLine(h, .staged)); // 5+3-1=7
+}
+
+test "stableEndLine staged zero count" {
+    const h = testMakeHunk("f.txt", 5, 0, 10, 4);
+    try std.testing.expectEqual(@as(u32, 5), stableEndLine(h, .staged)); // count=0 → start
+}
+
+// ============================================================================
+// Unit tests: output formatters
+// ============================================================================
+
+test "printHunkPorcelain format" {
+    const allocator = std.testing.allocator;
+    var w = std.Io.Writer.Allocating.init(allocator);
+    defer w.deinit();
+
+    const sha = computeHunkSha("a.zig", 1, "+hello");
+    var h = testMakeHunk("a.zig", 1, 1, 1, 1);
+    h.sha_hex = sha;
+    h.diff_lines = "+hello";
+
+    try printHunkPorcelain(&w.writer, h, .unstaged);
+
+    const output = w.writer.buffer[0..w.writer.end];
+    // Format: "{sha7}\t{path}\t{start}\t{end}\t{summary}\n"
+    var expected_buf: [256]u8 = undefined;
+    const expected = try std.fmt.bufPrint(&expected_buf, "{s}\ta.zig\t1\t1\thello\n", .{sha[0..7]});
+    try std.testing.expectEqualStrings(expected, output);
+}
+
+// ============================================================================
+// parseDiff edge cases
+// ============================================================================
+
+test "parseDiff deleted file" {
+    const diff =
+        \\diff --git a/old.txt b/old.txt
+        \\deleted file mode 100644
+        \\index abcdefg..0000000
+        \\--- a/old.txt
+        \\+++ /dev/null
+        \\@@ -1,2 +0,0 @@
+        \\-line 1
+        \\-line 2
+    ;
+
+    const allocator = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var hunks: std.ArrayList(Hunk) = .empty;
+    defer hunks.deinit(arena);
+
+    try parseDiff(arena, diff, .unstaged, &hunks);
+
+    try std.testing.expectEqual(@as(usize, 1), hunks.items.len);
+    try std.testing.expectEqualStrings("old.txt", hunks.items[0].file_path);
+    try std.testing.expect(hunks.items[0].is_deleted_file);
+    try std.testing.expect(std.mem.indexOf(u8, hunks.items[0].patch_header, "deleted file mode") != null);
+}
+
+test "parseDiff binary file skipped" {
+    const diff =
+        \\diff --git a/img.png b/img.png
+        \\index 1234567..abcdefg 100644
+        \\Binary files a/img.png and b/img.png differ
+    ;
+
+    const allocator = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var hunks: std.ArrayList(Hunk) = .empty;
+    defer hunks.deinit(arena);
+
+    try parseDiff(arena, diff, .unstaged, &hunks);
+    try std.testing.expectEqual(@as(usize, 0), hunks.items.len);
+}
+
+test "parseDiff submodule skipped" {
+    const diff =
+        \\diff --git a/libs/sub b/libs/sub
+        \\index abc1234..def5678 160000
+        \\--- a/libs/sub
+        \\+++ b/libs/sub
+        \\@@ -1 +1 @@
+        \\-Subproject commit abc1234
+        \\+Subproject commit def5678
+    ;
+
+    const allocator = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var hunks: std.ArrayList(Hunk) = .empty;
+    defer hunks.deinit(arena);
+
+    try parseDiff(arena, diff, .unstaged, &hunks);
+    try std.testing.expectEqual(@as(usize, 0), hunks.items.len);
+}
+
+test "parseDiff no newline at end of file" {
+    const diff =
+        \\diff --git a/f.txt b/f.txt
+        \\index 1234567..abcdefg 100644
+        \\--- a/f.txt
+        \\+++ b/f.txt
+        \\@@ -1 +1 @@
+        \\-old
+        \\\ No newline at end of file
+        \\+new
+    ;
+
+    const allocator = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var hunks: std.ArrayList(Hunk) = .empty;
+    defer hunks.deinit(arena);
+
+    try parseDiff(arena, diff, .unstaged, &hunks);
+    try std.testing.expectEqual(@as(usize, 1), hunks.items.len);
+    try std.testing.expect(std.mem.indexOf(u8, hunks.items[0].diff_lines, "\\ No newline") != null);
+}
+
+test "parseDiff rename with content" {
+    const diff =
+        \\diff --git a/old.txt b/new.txt
+        \\similarity index 80%
+        \\rename from old.txt
+        \\rename to new.txt
+        \\index 1234567..abcdefg 100644
+        \\--- a/old.txt
+        \\+++ b/new.txt
+        \\@@ -1,3 +1,3 @@
+        \\ context line
+        \\-old content
+        \\+new content
+    ;
+
+    const allocator = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var hunks: std.ArrayList(Hunk) = .empty;
+    defer hunks.deinit(arena);
+
+    try parseDiff(arena, diff, .unstaged, &hunks);
+
+    try std.testing.expectEqual(@as(usize, 1), hunks.items.len);
+    try std.testing.expectEqualStrings("new.txt", hunks.items[0].file_path);
+    try std.testing.expect(std.mem.indexOf(u8, hunks.items[0].patch_header, "rename from") != null);
+    try std.testing.expect(std.mem.indexOf(u8, hunks.items[0].patch_header, "rename to") != null);
+}
+
+test "parseDiff c-quoted path" {
+    const diff =
+        \\diff --git "a/path with spaces.txt" "b/path with spaces.txt"
+        \\index 1234567..abcdefg 100644
+        \\--- "a/path with spaces.txt"
+        \\+++ "b/path with spaces.txt"
+        \\@@ -1 +1 @@
+        \\-old
+        \\+new
+    ;
+
+    const allocator = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var hunks: std.ArrayList(Hunk) = .empty;
+    defer hunks.deinit(arena);
+
+    try parseDiff(arena, diff, .unstaged, &hunks);
+
+    try std.testing.expectEqual(@as(usize, 1), hunks.items.len);
+    try std.testing.expectEqualStrings("path with spaces.txt", hunks.items[0].file_path);
+}
+
+test "parseDiff empty input" {
+    const allocator = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var hunks: std.ArrayList(Hunk) = .empty;
+    defer hunks.deinit(arena);
+
+    try parseDiff(arena, "", .unstaged, &hunks);
+    try std.testing.expectEqual(@as(usize, 0), hunks.items.len);
+}
+
+test "parseDiff mode-only change" {
+    const diff =
+        \\diff --git a/f.sh b/f.sh
+        \\old mode 100644
+        \\new mode 100755
+    ;
+
+    const allocator = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var hunks: std.ArrayList(Hunk) = .empty;
+    defer hunks.deinit(arena);
+
+    try parseDiff(arena, diff, .unstaged, &hunks);
+    try std.testing.expectEqual(@as(usize, 0), hunks.items.len);
+}
+
+test "parseDiff staged mode produces different sha" {
+    const diff =
+        \\diff --git a/hello.txt b/hello.txt
+        \\index abc1234..def5678 100644
+        \\--- a/hello.txt
+        \\+++ b/hello.txt
+        \\@@ -5,3 +10,3 @@
+        \\ line 1
+        \\-old
+        \\+new
+    ;
+
+    const allocator = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var hunks_unstaged: std.ArrayList(Hunk) = .empty;
+    var hunks_staged: std.ArrayList(Hunk) = .empty;
+    defer hunks_unstaged.deinit(arena);
+    defer hunks_staged.deinit(arena);
+
+    try parseDiff(arena, diff, .unstaged, &hunks_unstaged);
+    try parseDiff(arena, diff, .staged, &hunks_staged);
+
+    // Staged uses old_start=5, unstaged uses new_start=10 → different SHAs
+    try std.testing.expect(!std.mem.eql(
+        u8,
+        &hunks_unstaged.items[0].sha_hex,
+        &hunks_staged.items[0].sha_hex,
+    ));
+}
