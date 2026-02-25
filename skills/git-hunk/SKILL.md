@@ -87,7 +87,7 @@ Diff content is shown by default. Suppress with `--oneline`:
 git hunk list --oneline                # compact one-line-per-hunk output
 git hunk list --oneline --porcelain    # porcelain: compact one-line records
 git hunk list --no-color               # disable color output
-git hunk list --context 0              # zero context lines (max granularity)
+git hunk list --context 1              # finer-grained hunks
 ```
 
 When there are untracked files, a hint is printed to stderr (human mode,

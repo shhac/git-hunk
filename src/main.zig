@@ -179,7 +179,7 @@ fn printUsage(stdout: *std.Io.Writer) !void {
         \\                                                Unstage hunks (or selected lines)
         \\
         \\options:
-        \\  --context <n>  Lines of diff context (default: 1)
+        \\  --context <n>  Lines of diff context (default: git's diff.context or 3)
         \\
         \\line selection:
         \\  <sha>:3-5,8    Stage only specific lines from a hunk (1-based, hunk-relative)
@@ -640,7 +640,7 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddRemoveOp
     // Build combined patch and apply
     const patch = try buildCombinedPatch(arena, matched.items);
     const reverse = action == .unstage;
-    try runGitApply(allocator, patch, reverse, opts.context);
+    try runGitApply(allocator, patch, reverse);
 
     // Report what was applied
     const verb: []const u8 = switch (action) {
@@ -908,10 +908,11 @@ fn runGitDiff(allocator: Allocator, mode: DiffMode, context: ?u32) ![]u8 {
         argv_buf[argc] = "--cached";
         argc += 1;
     }
-    var context_buf: [16]u8 = undefined;
-    const ctx = context orelse 1;
-    argv_buf[argc] = std.fmt.bufPrint(&context_buf, "-U{d}", .{ctx}) catch "-U1";
-    argc += 1;
+    if (context) |ctx| {
+        var context_buf: [16]u8 = undefined;
+        argv_buf[argc] = std.fmt.bufPrint(&context_buf, "-U{d}", .{ctx}) catch "-U0";
+        argc += 1;
+    }
     argv_buf[argc] = "--src-prefix=a/";
     argc += 1;
     argv_buf[argc] = "--dst-prefix=b/";
@@ -956,7 +957,7 @@ fn runGitDiff(allocator: Allocator, mode: DiffMode, context: ?u32) ![]u8 {
     return try child_stdout.toOwnedSlice(allocator);
 }
 
-fn runGitApply(allocator: Allocator, patch: []const u8, reverse: bool, context: ?u32) !void {
+fn runGitApply(allocator: Allocator, patch: []const u8, reverse: bool) !void {
     var argv_buf: [6][]const u8 = undefined;
     var argc: usize = 0;
     argv_buf[argc] = "git";
@@ -969,10 +970,8 @@ fn runGitApply(allocator: Allocator, patch: []const u8, reverse: bool, context: 
         argv_buf[argc] = "--reverse";
         argc += 1;
     }
-    if (context != null and context.? == 0) {
-        argv_buf[argc] = "--unidiff-zero";
-        argc += 1;
-    }
+    argv_buf[argc] = "--unidiff-zero";
+    argc += 1;
     const argv: []const []const u8 = argv_buf[0..argc];
 
     var child = std.process.Child.init(argv, allocator);

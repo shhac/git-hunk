@@ -16,7 +16,7 @@ git-hunk list [--staged] [--file <path>] [--porcelain] [--oneline] [--context <n
 | `--file <path>` | Only show hunks for the given file path. Path must match exactly as shown in diff output. |
 | `--porcelain` | Tab-separated machine-readable output. See [output format](output.md). |
 | `--oneline` | Compact one-line-per-hunk output without inline diff content. |
-| `--context <n>` | Number of context lines to use in diffs (default: 1). Lower values produce more granular hunks. |
+| `--context <n>` | Number of context lines to use in diffs (default: git's `diff.context` or 3). Lower values produce more granular hunks. |
 | `--no-color` | Disable color output. Color is also disabled automatically when stdout is not a TTY, or when the `NO_COLOR` environment variable is set. |
 
 ### Examples
@@ -28,7 +28,7 @@ git-hunk list --staged                           # all staged hunks
 git-hunk list --file src/main.zig                # unstaged hunks in one file
 git-hunk list --staged --porcelain               # staged hunks, machine-readable
 git-hunk list --oneline --porcelain              # compact porcelain output
-git-hunk list --context 0                        # zero context (max granularity)
+git-hunk list --context 1                        # finer-grained hunks
 git-hunk list --no-color                         # disable color output
 ```
 
@@ -63,7 +63,7 @@ git-hunk show <sha[:lines]>... [--staged] [--file <path>] [--porcelain] [--conte
 | `--staged` | Show hunks from staged diff (HEAD vs index) instead of unstaged (index vs worktree) |
 | `--file <path>` | Restrict hash matching to hunks in this file. |
 | `--porcelain` | Machine-readable output: metadata header line + raw diff lines + blank separator. |
-| `--context <n>` | Number of context lines (default: 1). Must match the value used with `list`. |
+| `--context <n>` | Number of context lines (default: git's `diff.context` or 3). Must match the value used with `list`. |
 | `--no-color` | Disable color output. Color is also disabled automatically when stdout is not a TTY, or when the `NO_COLOR` environment variable is set. |
 
 ### Examples
@@ -122,7 +122,7 @@ git-hunk add [<sha[:lines]>...] [--file <path>] [--all] [--context <n>]
 |------|-------------|
 | `--file <path>` | Restrict hash matching to hunks in this file. When used without SHAs, stages all hunks in the file. |
 | `--all` | Stage all unstaged hunks. No SHA arguments required. |
-| `--context <n>` | Number of context lines (default: 1). Must match the value used with `list`. |
+| `--context <n>` | Number of context lines (default: git's `diff.context` or 3). Must match the value used with `list`. |
 
 ### Examples
 
@@ -179,7 +179,7 @@ git-hunk remove [<sha[:lines]>...] [--file <path>] [--all] [--context <n>]
 |------|-------------|
 | `--file <path>` | Restrict hash matching to hunks in this file. When used without SHAs, unstages all hunks in the file. |
 | `--all` | Unstage all staged hunks. No SHA arguments required. |
-| `--context <n>` | Number of context lines (default: 1). Must match the value used with `list`. |
+| `--context <n>` | Number of context lines (default: git's `diff.context` or 3). Must match the value used with `list`. |
 
 ### Examples
 

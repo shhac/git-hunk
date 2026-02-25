@@ -41,7 +41,7 @@ git hunk list --oneline                # compact one-line-per-hunk output
 git hunk list --staged                 # staged hunks
 git hunk list --file src/main.zig      # filter by file
 git hunk list --porcelain              # machine-readable output
-git hunk list --context 0              # zero context lines (max granularity)
+git hunk list --context 1              # finer-grained hunks
 git hunk list --no-color               # disable color output
 ```
 
@@ -169,20 +169,17 @@ b82e0f4	src/main.zig	45	52	Replace old parser
 
 ## Context lines
 
-By default, git-hunk uses 1 line of context (`-U1`), producing finer-grained
-hunks than git's default of 3. Override with `--context N`:
+By default, git-hunk respects git's `diff.context` setting (default: 3 lines).
+Override with `--context N`:
 
 ```
+git hunk list --context 1              # finer-grained hunks
 git hunk list --context 0              # zero context (maximum granularity)
-git hunk list --context 3              # git-compatible context
 ```
 
 The `--context` flag is available on all commands (`list`, `show`, `add`,
 `remove`). Context must be consistent within a workflow -- hashes change with
 different context values.
-
-When using `--context 0`, `git apply` is invoked with `--unidiff-zero`
-automatically.
 
 ## Line selection
 
