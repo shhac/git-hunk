@@ -3,6 +3,12 @@ const build_options = @import("build_options");
 const posix = std.posix;
 const Allocator = std.mem.Allocator;
 
+// ANSI color escape codes — only used in human mode when stdout is a TTY
+const COLOR_RESET = "\x1b[0m";
+const COLOR_YELLOW = "\x1b[33m"; // SHA hash
+const COLOR_GREEN = "\x1b[32m"; // added lines (+)
+const COLOR_RED = "\x1b[31m"; // removed lines (-)
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -36,11 +42,13 @@ const ListOptions = struct {
     file_filter: ?[]const u8 = null,
     output: OutputMode = .human,
     show_diff: bool = false,
+    no_color: bool = false,
 };
 
 const AddRemoveOptions = struct {
     sha_prefixes: std.ArrayList([]const u8),
     file_filter: ?[]const u8 = null,
+    select_all: bool = false,
 };
 
 const ShowOptions = struct {
@@ -48,6 +56,7 @@ const ShowOptions = struct {
     file_filter: ?[]const u8 = null,
     mode: DiffMode = .unstaged,
     output: OutputMode = .human,
+    no_color: bool = false,
 };
 
 // ============================================================================
@@ -131,12 +140,12 @@ fn printUsage(stdout: *std.Io.Writer) !void {
         \\usage: git-hunk <command> [<args>]
         \\
         \\commands:
-        \\  list [--staged] [--file <path>] [--porcelain] [--diff]
+        \\  list [--staged] [--file <path>] [--porcelain] [--diff] [--no-color]
         \\                                                List diff hunks
-        \\  show <sha>... [--staged] [--file <path>] [--porcelain]
+        \\  show <sha>... [--staged] [--file <path>] [--porcelain] [--no-color]
         \\                                                Show diff content of hunks
-        \\  add <sha>... [--file <path>]                    Stage hunks
-        \\  remove <sha>... [--file <path>]                 Unstage hunks
+        \\  add [--all] [--file <path>] [<sha>...]          Stage hunks
+        \\  remove [--all] [--file <path>] [<sha>...]       Unstage hunks
         \\
     , .{});
 }
@@ -152,6 +161,8 @@ fn parseListArgs(args: []const [:0]u8) !ListOptions {
             opts.output = .porcelain;
         } else if (std.mem.eql(u8, arg, "--diff")) {
             opts.show_diff = true;
+        } else if (std.mem.eql(u8, arg, "--no-color")) {
+            opts.no_color = true;
         } else if (std.mem.eql(u8, arg, "--file")) {
             i += 1;
             if (i >= args.len) return error.MissingArgument;
@@ -176,6 +187,8 @@ fn parseAddRemoveArgs(allocator: Allocator, args: []const [:0]u8) !AddRemoveOpti
             i += 1;
             if (i >= args.len) return error.MissingArgument;
             opts.file_filter = args[i];
+        } else if (std.mem.eql(u8, arg, "--all")) {
+            opts.select_all = true;
         } else if (std.mem.startsWith(u8, arg, "-")) {
             return error.UnknownFlag;
         } else {
@@ -194,8 +207,8 @@ fn parseAddRemoveArgs(allocator: Allocator, args: []const [:0]u8) !AddRemoveOpti
         }
     }
 
-    if (opts.sha_prefixes.items.len == 0) {
-        std.debug.print("error: at least one <sha> argument required\n", .{});
+    if (opts.sha_prefixes.items.len == 0 and !opts.select_all and opts.file_filter == null) {
+        std.debug.print("error: at least one <sha> argument required (or use --all or --file <path>)\n", .{});
         return error.MissingArgument;
     }
 
@@ -219,6 +232,8 @@ fn parseShowArgs(allocator: Allocator, args: []const [:0]u8) !ShowOptions {
             opts.mode = .staged;
         } else if (std.mem.eql(u8, arg, "--porcelain")) {
             opts.output = .porcelain;
+        } else if (std.mem.eql(u8, arg, "--no-color")) {
+            opts.no_color = true;
         } else if (std.mem.startsWith(u8, arg, "-")) {
             return error.UnknownFlag;
         } else {
@@ -345,21 +360,52 @@ fn cmdList(allocator: Allocator, stdout: *std.Io.Writer, opts: ListOptions) !voi
 
     try parseDiff(arena, diff_output, opts.mode, &hunks);
 
-    // Apply file filter and output
+    // Compute display parameters for human mode
+    const use_color = opts.output == .human and !opts.no_color and
+        std.fs.File.stdout().isTty() and posix.getenv("NO_COLOR") == null;
+    const term_width = if (use_color or opts.output == .human) getTerminalWidth() else 80;
+
+    // Pre-pass: find max file path length for dynamic column width (human mode only)
+    var max_path_len: usize = 0;
+    if (opts.output == .human) {
+        for (hunks.items) |h| {
+            if (opts.file_filter) |filter| {
+                if (!std.mem.eql(u8, h.file_path, filter)) continue;
+            }
+            max_path_len = @max(max_path_len, h.file_path.len);
+        }
+    }
+    const col_width = @max(max_path_len, 20);
+
+    // Apply file filter, output, and count
+    var hunk_count: usize = 0;
+    var file_count: usize = 0;
+    var last_file: []const u8 = "";
+
     for (hunks.items) |h| {
         if (opts.file_filter) |filter| {
             if (!std.mem.eql(u8, h.file_path, filter)) continue;
         }
+        if (!std.mem.eql(u8, h.file_path, last_file)) {
+            file_count += 1;
+            last_file = h.file_path;
+        }
+        hunk_count += 1;
         switch (opts.output) {
-            .human => try printHunkHuman(stdout, h, opts.mode),
+            .human => try printHunkHuman(stdout, h, opts.mode, col_width, term_width, use_color),
             .porcelain => try printHunkPorcelain(stdout, h, opts.mode),
         }
         if (opts.show_diff) {
             switch (opts.output) {
-                .human => try printDiffHuman(stdout, h),
+                .human => try printDiffHuman(stdout, h, use_color),
                 .porcelain => try printDiffPorcelain(stdout, h),
             }
         }
+    }
+
+    // Count summary (human output only, when there are hunks)
+    if (opts.output == .human and hunk_count > 0) {
+        std.debug.print("{d} hunks across {d} files\n", .{ hunk_count, file_count });
     }
 
     // Hint about untracked files (human output, unstaged mode only)
@@ -413,32 +459,43 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddRemoveOp
     defer hunks.deinit(arena);
     try parseDiff(arena, diff_output, diff_mode, &hunks);
 
-    // Resolve each SHA prefix to a hunk, deduplicating by full SHA
+    // Resolve hunks to apply: bulk mode (--all or bare --file) or SHA prefix matching
     var matched: std.ArrayList(*const Hunk) = .empty;
     defer matched.deinit(arena);
 
-    for (opts.sha_prefixes.items) |prefix| {
-        const hunk = findHunkByShaPrefix(hunks.items, prefix, opts.file_filter) catch |err| switch (err) {
-            error.NotFound => {
-                std.debug.print("error: no hunk matching '{s}'\n", .{prefix});
-                std.process.exit(1);
-            },
-            error.AmbiguousPrefix => {
-                std.debug.print("error: ambiguous prefix '{s}' — matches multiple hunks\n", .{prefix});
-                std.process.exit(1);
-            },
-            else => return err,
-        };
-        // Deduplicate: skip if this exact hunk (by full SHA) is already matched
-        var already_matched = false;
-        for (matched.items) |existing| {
-            if (std.mem.eql(u8, &existing.sha_hex, &hunk.sha_hex)) {
-                already_matched = true;
-                break;
+    if (opts.sha_prefixes.items.len == 0) {
+        // Bulk mode: match all hunks, optionally filtered by file
+        for (hunks.items) |*h| {
+            if (opts.file_filter) |filter| {
+                if (!std.mem.eql(u8, h.file_path, filter)) continue;
             }
+            try matched.append(arena, h);
         }
-        if (!already_matched) {
-            try matched.append(arena, hunk);
+    } else {
+        // SHA prefix matching mode
+        for (opts.sha_prefixes.items) |prefix| {
+            const hunk = findHunkByShaPrefix(hunks.items, prefix, opts.file_filter) catch |err| switch (err) {
+                error.NotFound => {
+                    std.debug.print("error: no hunk matching '{s}'\n", .{prefix});
+                    std.process.exit(1);
+                },
+                error.AmbiguousPrefix => {
+                    std.debug.print("error: ambiguous prefix '{s}' — matches multiple hunks\n", .{prefix});
+                    std.process.exit(1);
+                },
+                else => return err,
+            };
+            // Deduplicate: skip if this exact hunk (by full SHA) is already matched
+            var already_matched = false;
+            for (matched.items) |existing| {
+                if (std.mem.eql(u8, &existing.sha_hex, &hunk.sha_hex)) {
+                    already_matched = true;
+                    break;
+                }
+            }
+            if (!already_matched) {
+                try matched.append(arena, hunk);
+            }
         }
     }
 
@@ -514,15 +571,15 @@ fn cmdShow(allocator: Allocator, stdout: *std.Io.Writer, opts: ShowOptions) !voi
         }
     }
 
+    const use_color = opts.output == .human and !opts.no_color and
+        std.fs.File.stdout().isTty() and posix.getenv("NO_COLOR") == null;
+
     // Print each matched hunk
     for (matched.items) |h| {
         switch (opts.output) {
             .human => {
                 try stdout.writeAll(h.patch_header);
-                try stdout.writeAll(h.raw_lines);
-                if (h.raw_lines.len > 0 and h.raw_lines[h.raw_lines.len - 1] != '\n') {
-                    try stdout.writeAll("\n");
-                }
+                try printRawLinesHuman(stdout, h.raw_lines, use_color);
                 try stdout.writeAll("\n");
             },
             .porcelain => {
@@ -1047,15 +1104,48 @@ fn computeHunkSha(file_path: []const u8, stable_line: u32, diff_lines: []const u
 // Output formatting
 // ============================================================================
 
-fn printHunkHuman(stdout: *std.Io.Writer, h: Hunk, mode: DiffMode) !void {
+fn printHunkHuman(stdout: *std.Io.Writer, h: Hunk, mode: DiffMode, col_width: usize, term_width: u16, use_color: bool) !void {
     const short_sha = h.sha_hex[0..7];
-    var summary_buf: [64]u8 = undefined;
+    var summary_buf: [256]u8 = undefined;
     const summary = hunkSummaryWithFallback(&summary_buf, h);
 
     var range_buf: [24]u8 = undefined;
     const range = formatLineRange(&range_buf, h, mode);
 
-    try stdout.print("{s}  {s:<40}  {s:<8}  {s}\n", .{ short_sha, h.file_path, range, summary });
+    // SHA column (7 chars) + 2-space gap
+    if (use_color) {
+        try stdout.writeAll(COLOR_YELLOW);
+        try stdout.writeAll(short_sha);
+        try stdout.writeAll(COLOR_RESET);
+    } else {
+        try stdout.writeAll(short_sha);
+    }
+    try stdout.writeAll("  ");
+
+    // File path column (dynamic width) + gap
+    try stdout.writeAll(h.file_path);
+    const path_pad = col_width + 2 -| h.file_path.len;
+    var pad_i: usize = 0;
+    while (pad_i < path_pad) : (pad_i += 1) try stdout.writeByte(' ');
+
+    // Range column (8 chars padded) + 2-space gap
+    try stdout.print("{s:<8}  ", .{range});
+
+    // Summary column, truncated to fit terminal width
+    // prefix_width = 7(sha) + 2 + col_width + 2 + 8(range) + 2 = col_width + 21
+    const prefix_width: usize = col_width + 21;
+    const available: usize = if (@as(usize, term_width) > prefix_width + 1)
+        @as(usize, term_width) - prefix_width - 1
+    else
+        0;
+    if (available > 1 and summary.len > available) {
+        const trunc = available - 1; // leave 1 column for ellipsis
+        try stdout.writeAll(summary[0..trunc]);
+        try stdout.writeAll("\xe2\x80\xa6"); // U+2026 HORIZONTAL ELLIPSIS
+    } else {
+        try stdout.writeAll(summary);
+    }
+    try stdout.writeByte('\n');
 }
 
 fn printHunkPorcelain(stdout: *std.Io.Writer, h: Hunk, mode: DiffMode) !void {
@@ -1075,13 +1165,37 @@ fn printHunkPorcelain(stdout: *std.Io.Writer, h: Hunk, mode: DiffMode) !void {
     });
 }
 
-fn printDiffHuman(stdout: *std.Io.Writer, h: Hunk) !void {
+fn printDiffHuman(stdout: *std.Io.Writer, h: Hunk, use_color: bool) !void {
     if (h.raw_lines.len == 0) return;
     var iter = std.mem.splitScalar(u8, h.raw_lines, '\n');
     while (iter.next()) |line| {
+        if (use_color and line.len > 0) {
+            const color: []const u8 = if (line[0] == '+') COLOR_GREEN else if (line[0] == '-') COLOR_RED else "";
+            if (color.len > 0) {
+                try stdout.print("    {s}{s}{s}\n", .{ color, line, COLOR_RESET });
+                continue;
+            }
+        }
         try stdout.print("    {s}\n", .{line});
     }
     try stdout.writeAll("\n");
+}
+
+/// Print raw hunk lines (@@-header + body) with optional color for +/- lines.
+/// Used by cmdShow human mode.
+fn printRawLinesHuman(stdout: *std.Io.Writer, raw_lines: []const u8, use_color: bool) !void {
+    if (raw_lines.len == 0) return;
+    var iter = std.mem.splitScalar(u8, raw_lines, '\n');
+    while (iter.next()) |line| {
+        if (use_color and line.len > 0) {
+            const color: []const u8 = if (line[0] == '+') COLOR_GREEN else if (line[0] == '-') COLOR_RED else "";
+            if (color.len > 0) {
+                try stdout.print("{s}{s}{s}\n", .{ color, line, COLOR_RESET });
+                continue;
+            }
+        }
+        try stdout.print("{s}\n", .{line});
+    }
 }
 
 fn printDiffPorcelain(stdout: *std.Io.Writer, h: Hunk) !void {
@@ -1143,6 +1257,15 @@ fn formatLineRange(buf: []u8, h: Hunk, mode: DiffMode) []const u8 {
 // ============================================================================
 // Utility
 // ============================================================================
+
+fn getTerminalWidth() u16 {
+    const stdout_file = std.fs.File.stdout();
+    if (!stdout_file.isTty()) return 80;
+    var wsz: posix.winsize = .{ .row = 0, .col = 0, .xpixel = 0, .ypixel = 0 };
+    const err = posix.system.ioctl(stdout_file.handle, posix.T.IOCGWINSZ, @intFromPtr(&wsz));
+    if (posix.errno(err) == .SUCCESS and wsz.col > 0) return wsz.col;
+    return 80;
+}
 
 fn fatal(comptime format: []const u8, args: anytype) noreturn {
     std.debug.print("error: " ++ format ++ "\n", args);
