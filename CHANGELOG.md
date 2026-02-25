@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.0] - 2026-02-25
+
+### Added
+- `git hunk show <sha>...` command to display full diff content of specific hunks
+- `--diff` flag on `list` command to inline diff body alongside each hunk
+- Untracked file hint: warns when untracked files exist (use `git add -N` to include)
+- `--staged` and `--porcelain` flags on `show` command
+- Porcelain multi-line record format for `--diff` and `show` output
+
 ## [0.1.0] - 2026-02-25
 
 ### Added
