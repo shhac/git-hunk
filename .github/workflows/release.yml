@@ -27,10 +27,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Setup Zig
-        uses: mlugg/setup-zig@v2
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
         with:
           version: '0.15.2'
 
@@ -48,7 +48,7 @@ jobs:
           cd ../..
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: git-hunk-${{ matrix.platform }}
           path: git-hunk-${{ matrix.platform }}.tar.gz
@@ -59,12 +59,12 @@ jobs:
     needs: build-release
     steps:
       - name: Download x86_64 artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: git-hunk-x86_64-macos
 
       - name: Download aarch64 artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: git-hunk-aarch64-macos
 
@@ -81,7 +81,7 @@ jobs:
           tar -czf git-hunk-macos-universal.tar.gz git-hunk
 
       - name: Upload universal artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: git-hunk-macos-universal
           path: git-hunk-macos-universal.tar.gz
@@ -94,10 +94,10 @@ jobs:
       contents: write
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
 
       - name: Prepare release files
         run: |
@@ -121,7 +121,7 @@ jobs:
           fi
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
         with:
           files: release/*.tar.gz
           body_path: release-notes.md
