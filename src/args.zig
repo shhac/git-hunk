@@ -54,6 +54,8 @@ pub fn parseAddRemoveArgs(allocator: Allocator, args: []const [:0]u8) !AddRemove
             opts.file_filter = args[i];
         } else if (std.mem.eql(u8, arg, "--all")) {
             opts.select_all = true;
+        } else if (std.mem.eql(u8, arg, "--no-color")) {
+            opts.no_color = true;
         } else if (std.mem.eql(u8, arg, "--context")) {
             i += 1;
             if (i >= args.len) return error.MissingArgument;
@@ -340,6 +342,14 @@ test "parseAddRemoveArgs select all" {
     var opts = try parseAddRemoveArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expect(opts.select_all);
+}
+
+test "parseAddRemoveArgs no-color" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("--all"), @constCast("--no-color") };
+    var opts = try parseAddRemoveArgs(allocator, &args_arr);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expect(opts.no_color);
 }
 
 test "parseAddRemoveArgs with file flag" {

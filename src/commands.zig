@@ -188,15 +188,19 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddRemoveOp
     try git.runGitApply(allocator, patch, reverse);
 
     // Report what was applied
+    const use_color = !opts.no_color and
+        std.fs.File.stdout().isTty() and posix.getenv("NO_COLOR") == null;
     const verb: []const u8 = switch (action) {
         .stage => "staged",
         .unstage => "unstaged",
     };
     for (matched.items) |m| {
-        if (m.line_spec != null) {
-            try stdout.print("{s} {s}  {s} (partial)\n", .{ verb, m.hunk.sha_hex[0..7], m.hunk.file_path });
+        const sha = m.hunk.sha_hex[0..7];
+        const suffix: []const u8 = if (m.line_spec != null) " (partial)" else "";
+        if (use_color) {
+            try stdout.print("{s} {s}{s}{s}  {s}{s}\n", .{ verb, format.COLOR_YELLOW, sha, format.COLOR_RESET, m.hunk.file_path, suffix });
         } else {
-            try stdout.print("{s} {s}  {s}\n", .{ verb, m.hunk.sha_hex[0..7], m.hunk.file_path });
+            try stdout.print("{s} {s}  {s}{s}\n", .{ verb, sha, m.hunk.file_path, suffix });
         }
     }
 }

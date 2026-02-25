@@ -63,6 +63,7 @@ pub const AddRemoveOptions = struct {
     sha_args: std.ArrayList(ShaArg),
     file_filter: ?[]const u8 = null,
     select_all: bool = false,
+    no_color: bool = false,
     context: ?u32 = null,
 };
 
