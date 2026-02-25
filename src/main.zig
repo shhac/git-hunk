@@ -1,4 +1,5 @@
 const std = @import("std");
+const build_options = @import("build_options");
 const posix = std.posix;
 const Allocator = std.mem.Allocator;
 
@@ -94,6 +95,8 @@ fn run() !void {
         };
         defer opts.sha_prefixes.deinit(allocator);
         try cmdRemove(allocator, stdout, opts);
+    } else if (std.mem.eql(u8, subcmd, "--version") or std.mem.eql(u8, subcmd, "-V")) {
+        try stdout.print("git-hunk {s}\n", .{build_options.version});
     } else if (std.mem.eql(u8, subcmd, "--help") or std.mem.eql(u8, subcmd, "-h") or std.mem.eql(u8, subcmd, "help")) {
         try printUsage(stdout);
     } else {
@@ -106,7 +109,9 @@ fn run() !void {
 }
 
 fn printUsage(stdout: *std.Io.Writer) !void {
+    try stdout.print("git-hunk {s}\n", .{build_options.version});
     try stdout.print(
+        \\
         \\usage: git-hunk <command> [<args>]
         \\
         \\commands:

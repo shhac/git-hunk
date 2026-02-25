@@ -4,6 +4,10 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const version_option = b.option([]const u8, "version", "Version string") orelse "0.1.0";
+    const build_options = b.addOptions();
+    build_options.addOption([]const u8, "version", version_option);
+
     const exe = b.addExecutable(.{
         .name = "git-hunk",
         .root_module = b.createModule(.{
@@ -12,6 +16,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
+    exe.root_module.addOptions("build_options", build_options);
 
     b.installArtifact(exe);
 
