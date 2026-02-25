@@ -33,6 +33,32 @@ const Hunk = struct {
     patch_header: []const u8,
 };
 
+const LineRange = struct {
+    start: u32, // 1-based, inclusive
+    end: u32, // 1-based, inclusive
+};
+
+const LineSpec = struct {
+    ranges: []const LineRange,
+
+    fn containsLine(self: LineSpec, line: u32) bool {
+        for (self.ranges) |r| {
+            if (line >= r.start and line <= r.end) return true;
+        }
+        return false;
+    }
+};
+
+const ShaArg = struct {
+    prefix: []const u8,
+    line_spec: ?LineSpec, // null = whole hunk
+};
+
+const MatchedHunk = struct {
+    hunk: *const Hunk,
+    line_spec: ?LineSpec,
+};
+
 const DiffMode = enum { unstaged, staged };
 
 const OutputMode = enum { human, porcelain };
@@ -47,14 +73,14 @@ const ListOptions = struct {
 };
 
 const AddRemoveOptions = struct {
-    sha_prefixes: std.ArrayList([]const u8),
+    sha_args: std.ArrayList(ShaArg),
     file_filter: ?[]const u8 = null,
     select_all: bool = false,
     context: ?u32 = null,
 };
 
 const ShowOptions = struct {
-    sha_prefixes: std.ArrayList([]const u8),
+    sha_args: std.ArrayList(ShaArg),
     file_filter: ?[]const u8 = null,
     mode: DiffMode = .unstaged,
     output: OutputMode = .human,
@@ -105,7 +131,7 @@ fn run() !void {
             try stdout.flush();
             std.process.exit(1);
         };
-        defer opts.sha_prefixes.deinit(allocator);
+        defer deinitShaArgs(allocator, &opts.sha_args);
         try cmdAdd(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "remove")) {
         var opts = parseAddRemoveArgs(allocator, args[2..]) catch {
@@ -113,7 +139,7 @@ fn run() !void {
             try stdout.flush();
             std.process.exit(1);
         };
-        defer opts.sha_prefixes.deinit(allocator);
+        defer deinitShaArgs(allocator, &opts.sha_args);
         try cmdRemove(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "show")) {
         var opts = parseShowArgs(allocator, args[2..]) catch {
@@ -121,7 +147,7 @@ fn run() !void {
             try stdout.flush();
             std.process.exit(1);
         };
-        defer opts.sha_prefixes.deinit(allocator);
+        defer deinitShaArgs(allocator, &opts.sha_args);
         try cmdShow(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "--version") or std.mem.eql(u8, subcmd, "-V")) {
         try stdout.print("git-hunk {s}\n", .{build_options.version});
@@ -145,15 +171,18 @@ fn printUsage(stdout: *std.Io.Writer) !void {
         \\commands:
         \\  list [--staged] [--file <path>] [--porcelain] [--oneline] [--no-color] [--context <n>]
         \\                                                List diff hunks
-        \\  show <sha>... [--staged] [--file <path>] [--porcelain] [--no-color] [--context <n>]
+        \\  show <sha[:lines]>... [--staged] [--file <path>] [--porcelain] [--no-color] [--context <n>]
         \\                                                Show diff content of hunks
-        \\  add [--all] [--file <path>] [--context <n>] [<sha>...]
-        \\                                                Stage hunks
-        \\  remove [--all] [--file <path>] [--context <n>] [<sha>...]
-        \\                                                Unstage hunks
+        \\  add [--all] [--file <path>] [--context <n>] [<sha[:lines]>...]
+        \\                                                Stage hunks (or selected lines)
+        \\  remove [--all] [--file <path>] [--context <n>] [<sha[:lines]>...]
+        \\                                                Unstage hunks (or selected lines)
         \\
         \\options:
         \\  --context <n>  Lines of diff context (default: 1)
+        \\
+        \\line selection:
+        \\  <sha>:3-5,8    Stage only specific lines from a hunk (1-based, hunk-relative)
         \\
     , .{});
 }
@@ -188,9 +217,9 @@ fn parseListArgs(args: []const [:0]u8) !ListOptions {
 
 fn parseAddRemoveArgs(allocator: Allocator, args: []const [:0]u8) !AddRemoveOptions {
     var opts: AddRemoveOptions = .{
-        .sha_prefixes = .empty,
+        .sha_args = .empty,
     };
-    errdefer opts.sha_prefixes.deinit(allocator);
+    errdefer deinitShaArgs(allocator, &opts.sha_args);
 
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
@@ -208,22 +237,12 @@ fn parseAddRemoveArgs(allocator: Allocator, args: []const [:0]u8) !AddRemoveOpti
         } else if (std.mem.startsWith(u8, arg, "-")) {
             return error.UnknownFlag;
         } else {
-            // SHA prefix — validate it's hex and at least 4 chars
-            if (arg.len < 4) {
-                std.debug.print("error: sha prefix too short (minimum 4 chars): '{s}'\n", .{arg});
-                return error.InvalidArgument;
-            }
-            for (arg) |c| {
-                if (!isHexDigit(c)) {
-                    std.debug.print("error: invalid hex in sha prefix: '{s}'\n", .{arg});
-                    return error.InvalidArgument;
-                }
-            }
-            try opts.sha_prefixes.append(allocator, arg);
+            const sha_arg = parseShaArg(allocator, arg) catch return error.InvalidArgument;
+            try opts.sha_args.append(allocator, sha_arg);
         }
     }
 
-    if (opts.sha_prefixes.items.len == 0 and !opts.select_all and opts.file_filter == null) {
+    if (opts.sha_args.items.len == 0 and !opts.select_all and opts.file_filter == null) {
         std.debug.print("error: at least one <sha> argument required (or use --all or --file <path>)\n", .{});
         return error.MissingArgument;
     }
@@ -233,9 +252,9 @@ fn parseAddRemoveArgs(allocator: Allocator, args: []const [:0]u8) !AddRemoveOpti
 
 fn parseShowArgs(allocator: Allocator, args: []const [:0]u8) !ShowOptions {
     var opts: ShowOptions = .{
-        .sha_prefixes = .empty,
+        .sha_args = .empty,
     };
-    errdefer opts.sha_prefixes.deinit(allocator);
+    errdefer deinitShaArgs(allocator, &opts.sha_args);
 
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
@@ -257,22 +276,12 @@ fn parseShowArgs(allocator: Allocator, args: []const [:0]u8) !ShowOptions {
         } else if (std.mem.startsWith(u8, arg, "-")) {
             return error.UnknownFlag;
         } else {
-            // SHA prefix — validate it's hex and at least 4 chars
-            if (arg.len < 4) {
-                std.debug.print("error: sha prefix too short (minimum 4 chars): '{s}'\n", .{arg});
-                return error.InvalidArgument;
-            }
-            for (arg) |c| {
-                if (!isHexDigit(c)) {
-                    std.debug.print("error: invalid hex in sha prefix: '{s}'\n", .{arg});
-                    return error.InvalidArgument;
-                }
-            }
-            try opts.sha_prefixes.append(allocator, arg);
+            const sha_arg = parseShaArg(allocator, arg) catch return error.InvalidArgument;
+            try opts.sha_args.append(allocator, sha_arg);
         }
     }
 
-    if (opts.sha_prefixes.items.len == 0) {
+    if (opts.sha_args.items.len == 0) {
         std.debug.print("error: at least one <sha> argument required\n", .{});
         return error.MissingArgument;
     }
@@ -282,6 +291,100 @@ fn parseShowArgs(allocator: Allocator, args: []const [:0]u8) !ShowOptions {
 
 fn isHexDigit(c: u8) bool {
     return (c >= '0' and c <= '9') or (c >= 'a' and c <= 'f') or (c >= 'A' and c <= 'F');
+}
+
+fn deinitShaArgs(allocator: Allocator, sha_args: *std.ArrayList(ShaArg)) void {
+    for (sha_args.items) |arg| {
+        if (arg.line_spec) |ls| {
+            allocator.free(ls.ranges);
+        }
+    }
+    sha_args.deinit(allocator);
+}
+
+/// Parse a SHA argument with optional line spec: "abc1234" or "abc1234:3-5,8"
+fn parseShaArg(allocator: Allocator, arg: []const u8) !ShaArg {
+    // Split on first ':'
+    const colon_pos = std.mem.indexOfScalar(u8, arg, ':');
+    const sha_part = if (colon_pos) |pos| arg[0..pos] else arg;
+    const line_part: ?[]const u8 = if (colon_pos) |pos| arg[pos + 1 ..] else null;
+
+    // Validate SHA prefix
+    if (sha_part.len < 4) {
+        std.debug.print("error: sha prefix too short (minimum 4 chars): '{s}'\n", .{sha_part});
+        return error.InvalidArgument;
+    }
+    for (sha_part) |c| {
+        if (!isHexDigit(c)) {
+            std.debug.print("error: invalid hex in sha prefix: '{s}'\n", .{sha_part});
+            return error.InvalidArgument;
+        }
+    }
+
+    // Parse optional line spec
+    const line_spec: ?LineSpec = if (line_part) |spec| blk: {
+        if (spec.len == 0) {
+            std.debug.print("error: empty line spec after ':' in '{s}'\n", .{arg});
+            return error.InvalidArgument;
+        }
+        break :blk try parseLineSpec(allocator, spec);
+    } else null;
+
+    return .{ .prefix = sha_part, .line_spec = line_spec };
+}
+
+/// Parse a comma-separated line spec like "3-5,8,12-15"
+fn parseLineSpec(allocator: Allocator, spec: []const u8) !LineSpec {
+    var ranges: std.ArrayList(LineRange) = .empty;
+    errdefer ranges.deinit(allocator);
+
+    var iter = std.mem.splitScalar(u8, spec, ',');
+    while (iter.next()) |part| {
+        if (part.len == 0) {
+            std.debug.print("error: empty range in line spec\n", .{});
+            return error.InvalidArgument;
+        }
+        if (std.mem.indexOfScalar(u8, part, '-')) |dash_pos| {
+            if (dash_pos == 0 or dash_pos == part.len - 1) {
+                std.debug.print("error: invalid range '{s}' in line spec\n", .{part});
+                return error.InvalidArgument;
+            }
+            const start = std.fmt.parseInt(u32, part[0..dash_pos], 10) catch {
+                std.debug.print("error: invalid number in line spec range '{s}'\n", .{part});
+                return error.InvalidArgument;
+            };
+            const end_val = std.fmt.parseInt(u32, part[dash_pos + 1 ..], 10) catch {
+                std.debug.print("error: invalid number in line spec range '{s}'\n", .{part});
+                return error.InvalidArgument;
+            };
+            if (start == 0 or end_val == 0) {
+                std.debug.print("error: line numbers must be >= 1 in '{s}'\n", .{part});
+                return error.InvalidArgument;
+            }
+            if (start > end_val) {
+                std.debug.print("error: range start > end in '{s}'\n", .{part});
+                return error.InvalidArgument;
+            }
+            try ranges.append(allocator, .{ .start = start, .end = end_val });
+        } else {
+            const val = std.fmt.parseInt(u32, part, 10) catch {
+                std.debug.print("error: invalid number '{s}' in line spec\n", .{part});
+                return error.InvalidArgument;
+            };
+            if (val == 0) {
+                std.debug.print("error: line numbers must be >= 1\n", .{});
+                return error.InvalidArgument;
+            }
+            try ranges.append(allocator, .{ .start = val, .end = val });
+        }
+    }
+
+    if (ranges.items.len == 0) {
+        std.debug.print("error: empty line spec\n", .{});
+        return error.InvalidArgument;
+    }
+
+    return .{ .ranges = try ranges.toOwnedSlice(allocator) };
 }
 
 /// C-unescape a git quoted path (handles \t, \n, \\, \", and \ooo octal).
@@ -480,47 +583,59 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddRemoveOp
     try parseDiff(arena, diff_output, diff_mode, &hunks);
 
     // Resolve hunks to apply: bulk mode (--all or bare --file) or SHA prefix matching
-    var matched: std.ArrayList(*const Hunk) = .empty;
+    var matched: std.ArrayList(MatchedHunk) = .empty;
     defer matched.deinit(arena);
 
-    if (opts.sha_prefixes.items.len == 0) {
+    if (opts.sha_args.items.len == 0) {
         // Bulk mode: match all hunks, optionally filtered by file
         for (hunks.items) |*h| {
             if (opts.file_filter) |filter| {
                 if (!std.mem.eql(u8, h.file_path, filter)) continue;
             }
-            try matched.append(arena, h);
+            try matched.append(arena, .{ .hunk = h, .line_spec = null });
         }
     } else {
         // SHA prefix matching mode
-        for (opts.sha_prefixes.items) |prefix| {
-            const hunk = findHunkByShaPrefix(hunks.items, prefix, opts.file_filter) catch |err| switch (err) {
+        for (opts.sha_args.items) |sha_arg| {
+            const hunk = findHunkByShaPrefix(hunks.items, sha_arg.prefix, opts.file_filter) catch |err| switch (err) {
                 error.NotFound => {
-                    std.debug.print("error: no hunk matching '{s}'\n", .{prefix});
+                    std.debug.print("error: no hunk matching '{s}'\n", .{sha_arg.prefix});
                     std.process.exit(1);
                 },
                 error.AmbiguousPrefix => {
-                    std.debug.print("error: ambiguous prefix '{s}' — matches multiple hunks\n", .{prefix});
+                    std.debug.print("error: ambiguous prefix '{s}' — matches multiple hunks\n", .{sha_arg.prefix});
                     std.process.exit(1);
                 },
                 else => return err,
             };
-            // Deduplicate: skip if this exact hunk (by full SHA) is already matched
-            var already_matched = false;
-            for (matched.items) |existing| {
-                if (std.mem.eql(u8, &existing.sha_hex, &hunk.sha_hex)) {
-                    already_matched = true;
+            // Deduplicate: merge line specs for same hunk, or skip if already whole-hunk
+            var found_existing = false;
+            for (matched.items) |*existing| {
+                if (std.mem.eql(u8, &existing.hunk.sha_hex, &hunk.sha_hex)) {
+                    // Merge: if either has no line_spec, result is whole hunk
+                    if (existing.line_spec == null or sha_arg.line_spec == null) {
+                        existing.line_spec = null;
+                    } else {
+                        // Merge ranges by concatenation
+                        const old_ranges = existing.line_spec.?.ranges;
+                        const new_ranges = sha_arg.line_spec.?.ranges;
+                        const merged = try arena.alloc(LineRange, old_ranges.len + new_ranges.len);
+                        @memcpy(merged[0..old_ranges.len], old_ranges);
+                        @memcpy(merged[old_ranges.len..], new_ranges);
+                        existing.line_spec = .{ .ranges = merged };
+                    }
+                    found_existing = true;
                     break;
                 }
             }
-            if (!already_matched) {
-                try matched.append(arena, hunk);
+            if (!found_existing) {
+                try matched.append(arena, .{ .hunk = hunk, .line_spec = sha_arg.line_spec });
             }
         }
     }
 
     // Sort hunks by file path and line order for a valid combined patch
-    std.mem.sort(*const Hunk, matched.items, {}, hunkPatchOrder);
+    std.mem.sort(MatchedHunk, matched.items, {}, matchedHunkPatchOrder);
 
     // Build combined patch and apply
     const patch = try buildCombinedPatch(arena, matched.items);
@@ -532,8 +647,12 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddRemoveOp
         .stage => "staged",
         .unstage => "unstaged",
     };
-    for (matched.items) |h| {
-        try stdout.print("{s} {s}  {s}\n", .{ verb, h.sha_hex[0..7], h.file_path });
+    for (matched.items) |m| {
+        if (m.line_spec != null) {
+            try stdout.print("{s} {s}  {s} (partial)\n", .{ verb, m.hunk.sha_hex[0..7], m.hunk.file_path });
+        } else {
+            try stdout.print("{s} {s}  {s}\n", .{ verb, m.hunk.sha_hex[0..7], m.hunk.file_path });
+        }
     }
 }
 
@@ -562,32 +681,42 @@ fn cmdShow(allocator: Allocator, stdout: *std.Io.Writer, opts: ShowOptions) !voi
     defer hunks.deinit(arena);
     try parseDiff(arena, diff_output, opts.mode, &hunks);
 
-    // Resolve each SHA prefix to a hunk, deduplicating by full SHA
-    var matched: std.ArrayList(*const Hunk) = .empty;
+    // Resolve each SHA arg to a hunk, deduplicating by full SHA
+    var matched: std.ArrayList(MatchedHunk) = .empty;
     defer matched.deinit(arena);
 
-    for (opts.sha_prefixes.items) |prefix| {
-        const hunk = findHunkByShaPrefix(hunks.items, prefix, opts.file_filter) catch |err| switch (err) {
+    for (opts.sha_args.items) |sha_arg| {
+        const hunk = findHunkByShaPrefix(hunks.items, sha_arg.prefix, opts.file_filter) catch |err| switch (err) {
             error.NotFound => {
-                std.debug.print("error: no hunk matching '{s}'\n", .{prefix});
+                std.debug.print("error: no hunk matching '{s}'\n", .{sha_arg.prefix});
                 std.process.exit(1);
             },
             error.AmbiguousPrefix => {
-                std.debug.print("error: ambiguous prefix '{s}' — matches multiple hunks\n", .{prefix});
+                std.debug.print("error: ambiguous prefix '{s}' — matches multiple hunks\n", .{sha_arg.prefix});
                 std.process.exit(1);
             },
             else => return err,
         };
-        // Deduplicate: skip if this exact hunk (by full SHA) is already matched
-        var already_matched = false;
-        for (matched.items) |existing| {
-            if (std.mem.eql(u8, &existing.sha_hex, &hunk.sha_hex)) {
-                already_matched = true;
+        // Deduplicate with line spec merging
+        var found_existing = false;
+        for (matched.items) |*existing| {
+            if (std.mem.eql(u8, &existing.hunk.sha_hex, &hunk.sha_hex)) {
+                if (existing.line_spec == null or sha_arg.line_spec == null) {
+                    existing.line_spec = null;
+                } else {
+                    const old_ranges = existing.line_spec.?.ranges;
+                    const new_ranges = sha_arg.line_spec.?.ranges;
+                    const merged = try arena.alloc(LineRange, old_ranges.len + new_ranges.len);
+                    @memcpy(merged[0..old_ranges.len], old_ranges);
+                    @memcpy(merged[old_ranges.len..], new_ranges);
+                    existing.line_spec = .{ .ranges = merged };
+                }
+                found_existing = true;
                 break;
             }
         }
-        if (!already_matched) {
-            try matched.append(arena, hunk);
+        if (!found_existing) {
+            try matched.append(arena, .{ .hunk = hunk, .line_spec = sha_arg.line_spec });
         }
     }
 
@@ -595,16 +724,20 @@ fn cmdShow(allocator: Allocator, stdout: *std.Io.Writer, opts: ShowOptions) !voi
         std.fs.File.stdout().isTty() and posix.getenv("NO_COLOR") == null;
 
     // Print each matched hunk
-    for (matched.items) |h| {
+    for (matched.items) |m| {
         switch (opts.output) {
             .human => {
-                try stdout.writeAll(h.patch_header);
-                try printRawLinesHuman(stdout, h.raw_lines, use_color);
+                try stdout.writeAll(m.hunk.patch_header);
+                if (m.line_spec) |ls| {
+                    try printRawLinesWithLineNumbers(stdout, m.hunk.raw_lines, ls, use_color);
+                } else {
+                    try printRawLinesHuman(stdout, m.hunk.raw_lines, use_color);
+                }
                 try stdout.writeAll("\n");
             },
             .porcelain => {
-                try printHunkPorcelain(stdout, h.*, opts.mode);
-                try printDiffPorcelain(stdout, h.*);
+                try printHunkPorcelain(stdout, m.hunk.*, opts.mode);
+                try printDiffPorcelain(stdout, m.hunk.*);
             },
         }
     }
@@ -624,25 +757,140 @@ fn findHunkByShaPrefix(hunks: []const Hunk, prefix: []const u8, file_filter: ?[]
     return match orelse error.NotFound;
 }
 
-fn buildCombinedPatch(arena: Allocator, hunks: []const *const Hunk) ![]const u8 {
+fn matchedHunkPatchOrder(_: void, a: MatchedHunk, b: MatchedHunk) bool {
+    const path_order = std.mem.order(u8, a.hunk.file_path, b.hunk.file_path);
+    if (path_order != .eq) return path_order == .lt;
+    return a.hunk.old_start < b.hunk.old_start;
+}
+
+fn buildCombinedPatch(arena: Allocator, matches: []const MatchedHunk) ![]const u8 {
     var patch: std.ArrayList(u8) = .empty;
 
     // Group hunks by patch_header to combine hunks from the same file
     // under a single header. We iterate in order and track the last header.
     var last_header: []const u8 = "";
-    for (hunks) |h| {
-        if (!std.mem.eql(u8, h.patch_header, last_header)) {
-            try patch.appendSlice(arena, h.patch_header);
-            last_header = h.patch_header;
+    for (matches) |m| {
+        if (!std.mem.eql(u8, m.hunk.patch_header, last_header)) {
+            try patch.appendSlice(arena, m.hunk.patch_header);
+            last_header = m.hunk.patch_header;
         }
-        try patch.appendSlice(arena, h.raw_lines);
+        if (m.line_spec) |ls| {
+            const filtered = try buildFilteredHunkPatch(arena, m.hunk, ls);
+            try patch.appendSlice(arena, filtered);
+        } else {
+            try patch.appendSlice(arena, m.hunk.raw_lines);
+        }
         // Ensure trailing newline
-        if (h.raw_lines.len > 0 and h.raw_lines[h.raw_lines.len - 1] != '\n') {
+        if (patch.items.len > 0 and patch.items[patch.items.len - 1] != '\n') {
             try patch.append(arena, '\n');
         }
     }
 
     return patch.items;
+}
+
+/// Build a filtered hunk patch containing only selected lines.
+/// Deselected '-' lines become context; deselected '+' lines are dropped.
+/// Returns new raw_lines with a rewritten @@ header.
+fn buildFilteredHunkPatch(arena: Allocator, h: *const Hunk, line_spec: LineSpec) ![]const u8 {
+    var result: std.ArrayList(u8) = .empty;
+    var filtered_body: std.ArrayList(u8) = .empty;
+
+    // Manual newline iteration to avoid trailing empty element from splitScalar
+    // Skip the @@ header line
+    var pos: usize = 0;
+    if (std.mem.indexOfScalar(u8, h.raw_lines, '\n')) |nl| {
+        pos = nl + 1;
+    } else {
+        return h.raw_lines; // degenerate: no body
+    }
+
+    var new_old_count: u32 = 0;
+    var new_new_count: u32 = 0;
+    var line_num: u32 = 1;
+    var prev_kept = true;
+    var has_changes = false;
+
+    while (pos < h.raw_lines.len) {
+        const end = std.mem.indexOfScalarPos(u8, h.raw_lines, pos, '\n') orelse h.raw_lines.len;
+        const line = h.raw_lines[pos..end];
+        pos = if (end < h.raw_lines.len) end + 1 else h.raw_lines.len;
+
+        if (line.len == 0) {
+            // Empty context line (git sometimes strips trailing space from blank lines)
+            try filtered_body.append(arena, '\n');
+            new_old_count += 1;
+            new_new_count += 1;
+            line_num += 1;
+            prev_kept = true;
+            continue;
+        }
+
+        const first = line[0];
+        if (first == ' ') {
+            // Context: always keep
+            try filtered_body.appendSlice(arena, line);
+            try filtered_body.append(arena, '\n');
+            new_old_count += 1;
+            new_new_count += 1;
+            line_num += 1;
+            prev_kept = true;
+        } else if (first == '-') {
+            if (line_spec.containsLine(line_num)) {
+                // Selected removal: keep as -
+                try filtered_body.appendSlice(arena, line);
+                try filtered_body.append(arena, '\n');
+                new_old_count += 1;
+                has_changes = true;
+            } else {
+                // Deselected removal: convert to context line
+                try filtered_body.append(arena, ' ');
+                try filtered_body.appendSlice(arena, line[1..]);
+                try filtered_body.append(arena, '\n');
+                new_old_count += 1;
+                new_new_count += 1;
+            }
+            line_num += 1;
+            prev_kept = true;
+        } else if (first == '+') {
+            if (line_spec.containsLine(line_num)) {
+                // Selected addition: keep as +
+                try filtered_body.appendSlice(arena, line);
+                try filtered_body.append(arena, '\n');
+                new_new_count += 1;
+                has_changes = true;
+                prev_kept = true;
+            } else {
+                // Deselected addition: drop entirely
+                prev_kept = false;
+            }
+            line_num += 1;
+        } else if (first == '\\') {
+            // "\ No newline at end of file" — keep if previous line was kept
+            if (prev_kept) {
+                try filtered_body.appendSlice(arena, line);
+                try filtered_body.append(arena, '\n');
+            }
+        }
+    }
+
+    if (!has_changes) {
+        std.debug.print("error: no changes in selected lines of hunk {s}\n", .{h.sha_hex[0..7]});
+        std.process.exit(1);
+    }
+
+    // Build the @@ header
+    try result.writer(arena).print("@@ -{d},{d} +{d},{d} @@", .{ h.old_start, new_old_count, h.new_start, new_new_count });
+    if (h.context.len > 0) {
+        try result.append(arena, ' ');
+        try result.appendSlice(arena, h.context);
+    }
+    try result.append(arena, '\n');
+
+    // Append the filtered body
+    try result.appendSlice(arena, filtered_body.items);
+
+    return result.items;
 }
 
 // ============================================================================
@@ -1248,6 +1496,107 @@ fn printRawLinesHuman(stdout: *std.Io.Writer, raw_lines: []const u8, use_color: 
     }
 }
 
+/// Print raw hunk lines with line numbers and selection markers.
+/// Used by cmdShow when a line spec is present.
+fn printRawLinesWithLineNumbers(stdout: *std.Io.Writer, raw_lines: []const u8, line_spec: LineSpec, use_color: bool) !void {
+    if (raw_lines.len == 0) return;
+
+    // First pass: count body lines to determine line number width
+    var total_body_lines: u32 = 0;
+    {
+        var count_iter = std.mem.splitScalar(u8, raw_lines, '\n');
+        _ = count_iter.next(); // skip @@ header
+        while (count_iter.next()) |line| {
+            if (line.len == 0) {
+                total_body_lines += 1;
+            } else if (line[0] == ' ' or line[0] == '+' or line[0] == '-') {
+                total_body_lines += 1;
+            }
+        }
+    }
+
+    // Determine digit width for line numbers
+    var num_width: usize = 1;
+    {
+        var n = total_body_lines;
+        while (n >= 10) {
+            num_width += 1;
+            n /= 10;
+        }
+    }
+
+    const COLOR_BOLD = "\x1b[1m";
+
+    // Second pass: print with line numbers
+    var iter = std.mem.splitScalar(u8, raw_lines, '\n');
+    // Print the @@ header without line number
+    if (iter.next()) |header_line| {
+        if (use_color) {
+            try stdout.print("\x1b[36m{s}{s}\n", .{ header_line, COLOR_RESET });
+        } else {
+            try stdout.print("{s}\n", .{header_line});
+        }
+    }
+
+    var num_buf: [16]u8 = undefined;
+    var line_num: u32 = 1;
+    while (iter.next()) |line| {
+        if (line.len == 0) {
+            // Empty context line
+            const selected = line_spec.containsLine(line_num);
+            const marker: u8 = if (selected) '>' else ' ';
+            const num_str = formatNumPadded(&num_buf, line_num, num_width);
+            try stdout.print("{c}{s}:\n", .{ marker, num_str });
+            line_num += 1;
+            continue;
+        }
+
+        const first = line[0];
+        if (first == ' ' or first == '+' or first == '-') {
+            const selected = line_spec.containsLine(line_num);
+            const marker: u8 = if (selected) '>' else ' ';
+            const num_str = formatNumPadded(&num_buf, line_num, num_width);
+            if (use_color and (first == '+' or first == '-')) {
+                const color: []const u8 = if (first == '+') COLOR_GREEN else COLOR_RED;
+                if (selected) {
+                    try stdout.print("{s}{c}{s}:{s}{s}{s}\n", .{ COLOR_BOLD, marker, num_str, color, line, COLOR_RESET });
+                } else {
+                    try stdout.print("{c}{s}:{s}{s}{s}\n", .{ marker, num_str, color, line, COLOR_RESET });
+                }
+            } else {
+                if (selected and use_color) {
+                    try stdout.print("{s}{c}{s}:{s}{s}\n", .{ COLOR_BOLD, marker, num_str, line, COLOR_RESET });
+                } else {
+                    try stdout.print("{c}{s}:{s}\n", .{ marker, num_str, line });
+                }
+            }
+            line_num += 1;
+        } else if (first == '\\') {
+            // \ marker — no line number, print with padding
+            const pad = num_width + 2; // marker + num_width + ':'
+            var p: usize = 0;
+            while (p < pad) : (p += 1) try stdout.writeByte(' ');
+            try stdout.print("{s}\n", .{line});
+        } else {
+            try stdout.print("{s}\n", .{line});
+        }
+    }
+}
+
+/// Format a number right-aligned in a fixed-width field.
+fn formatNumPadded(buf: []u8, num: u32, width: usize) []const u8 {
+    // Format the number
+    var tmp: [12]u8 = undefined;
+    const num_str = std.fmt.bufPrint(&tmp, "{d}", .{num}) catch return "";
+    const pad_len = if (width > num_str.len) width - num_str.len else 0;
+    const total = pad_len + num_str.len;
+    if (total > buf.len) return num_str;
+    // Fill padding spaces
+    @memset(buf[0..pad_len], ' ');
+    @memcpy(buf[pad_len..total], num_str);
+    return buf[0..total];
+}
+
 fn printDiffPorcelain(stdout: *std.Io.Writer, h: Hunk) !void {
     if (h.raw_lines.len == 0) return;
     try stdout.writeAll(h.raw_lines);
@@ -1732,8 +2081,8 @@ test "buildCombinedPatch single hunk" {
     var h = testMakeHunk("f.txt", 1, 1, 1, 1);
     h.patch_header = "--- a/f.txt\n+++ b/f.txt\n";
     h.raw_lines = "@@ -1 +1 @@\n-old\n+new\n";
-    const ptrs = [_]*const Hunk{&h};
-    const patch = try buildCombinedPatch(arena.allocator(), &ptrs);
+    const matches = [_]MatchedHunk{.{ .hunk = &h, .line_spec = null }};
+    const patch = try buildCombinedPatch(arena.allocator(), &matches);
     try std.testing.expectEqualStrings(
         "--- a/f.txt\n+++ b/f.txt\n@@ -1 +1 @@\n-old\n+new\n",
         patch,
@@ -1750,8 +2099,11 @@ test "buildCombinedPatch same file deduplicates header" {
     var h2 = testMakeHunk("f.txt", 10, 1, 10, 1);
     h2.patch_header = header;
     h2.raw_lines = "@@ -10 +10 @@\n-old2\n+new2\n";
-    const ptrs = [_]*const Hunk{ &h1, &h2 };
-    const patch = try buildCombinedPatch(arena.allocator(), &ptrs);
+    const matches = [_]MatchedHunk{
+        .{ .hunk = &h1, .line_spec = null },
+        .{ .hunk = &h2, .line_spec = null },
+    };
+    const patch = try buildCombinedPatch(arena.allocator(), &matches);
     try std.testing.expectEqualStrings(
         "--- a/f.txt\n+++ b/f.txt\n@@ -1 +1 @@\n-old1\n+new1\n@@ -10 +10 @@\n-old2\n+new2\n",
         patch,
@@ -1767,8 +2119,11 @@ test "buildCombinedPatch multiple files" {
     var h2 = testMakeHunk("b.txt", 1, 1, 1, 1);
     h2.patch_header = "--- a/b.txt\n+++ b/b.txt\n";
     h2.raw_lines = "@@ -1 +1 @@\n-b\n+B\n";
-    const ptrs = [_]*const Hunk{ &h1, &h2 };
-    const patch = try buildCombinedPatch(arena.allocator(), &ptrs);
+    const matches = [_]MatchedHunk{
+        .{ .hunk = &h1, .line_spec = null },
+        .{ .hunk = &h2, .line_spec = null },
+    };
+    const patch = try buildCombinedPatch(arena.allocator(), &matches);
     try std.testing.expectEqualStrings(
         "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-a\n+A\n--- a/b.txt\n+++ b/b.txt\n@@ -1 +1 @@\n-b\n+B\n",
         patch,
@@ -1781,9 +2136,25 @@ test "buildCombinedPatch adds trailing newline" {
     var h = testMakeHunk("f.txt", 1, 1, 1, 1);
     h.patch_header = "--- a/f.txt\n+++ b/f.txt\n";
     h.raw_lines = "@@ -1 +1 @@\n-old\n+new"; // no trailing newline
-    const ptrs = [_]*const Hunk{&h};
-    const patch = try buildCombinedPatch(arena.allocator(), &ptrs);
+    const matches = [_]MatchedHunk{.{ .hunk = &h, .line_spec = null }};
+    const patch = try buildCombinedPatch(arena.allocator(), &matches);
     try std.testing.expect(patch[patch.len - 1] == '\n');
+}
+
+test "buildCombinedPatch with line spec filter" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var h = testMakeHunk("f.txt", 1, 3, 1, 3);
+    h.patch_header = "--- a/f.txt\n+++ b/f.txt\n";
+    h.raw_lines = "@@ -1,3 +1,3 @@\n ctx\n-old\n+new\n ctx2\n";
+    const ranges = [_]LineRange{.{ .start = 2, .end = 3 }};
+    const matches = [_]MatchedHunk{.{ .hunk = &h, .line_spec = .{ .ranges = &ranges } }};
+    const patch = try buildCombinedPatch(arena.allocator(), &matches);
+    // Selecting all changes produces same counts as original
+    try std.testing.expectEqualStrings(
+        "--- a/f.txt\n+++ b/f.txt\n@@ -1,3 +1,3 @@\n ctx\n-old\n+new\n ctx2\n",
+        patch,
+    );
 }
 
 // ============================================================================
@@ -1890,9 +2261,10 @@ test "parseAddRemoveArgs valid sha" {
     const allocator = std.testing.allocator;
     const args = [_][:0]u8{@constCast("abcd1234")};
     var opts = try parseAddRemoveArgs(allocator, &args);
-    defer opts.sha_prefixes.deinit(allocator);
-    try std.testing.expectEqual(@as(usize, 1), opts.sha_prefixes.items.len);
-    try std.testing.expectEqualStrings("abcd1234", opts.sha_prefixes.items[0]);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expectEqual(@as(usize, 1), opts.sha_args.items.len);
+    try std.testing.expectEqualStrings("abcd1234", opts.sha_args.items[0].prefix);
+    try std.testing.expectEqual(@as(?LineSpec, null), opts.sha_args.items[0].line_spec);
 }
 
 test "parseAddRemoveArgs too short sha" {
@@ -1916,7 +2288,7 @@ test "parseAddRemoveArgs select all" {
     const allocator = std.testing.allocator;
     const args = [_][:0]u8{@constCast("--all")};
     var opts = try parseAddRemoveArgs(allocator, &args);
-    defer opts.sha_prefixes.deinit(allocator);
+    defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expect(opts.select_all);
 }
 
@@ -1928,7 +2300,7 @@ test "parseAddRemoveArgs with file flag" {
         @constCast("src/main.zig"),
     };
     var opts = try parseAddRemoveArgs(allocator, &args);
-    defer opts.sha_prefixes.deinit(allocator);
+    defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expectEqualStrings("src/main.zig", opts.file_filter.?);
 }
 
@@ -1939,15 +2311,15 @@ test "parseAddRemoveArgs multiple shas" {
         @constCast("ef567890"),
     };
     var opts = try parseAddRemoveArgs(allocator, &args);
-    defer opts.sha_prefixes.deinit(allocator);
-    try std.testing.expectEqual(@as(usize, 2), opts.sha_prefixes.items.len);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expectEqual(@as(usize, 2), opts.sha_args.items.len);
 }
 
 test "parseAddRemoveArgs context" {
     const allocator = std.testing.allocator;
     const args = [_][:0]u8{ @constCast("--all"), @constCast("--context"), @constCast("1") };
     var opts = try parseAddRemoveArgs(allocator, &args);
-    defer opts.sha_prefixes.deinit(allocator);
+    defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expectEqual(@as(?u32, 1), opts.context);
 }
 
@@ -1965,15 +2337,15 @@ test "parseShowArgs valid sha" {
     const allocator = std.testing.allocator;
     const args = [_][:0]u8{@constCast("abcd1234")};
     var opts = try parseShowArgs(allocator, &args);
-    defer opts.sha_prefixes.deinit(allocator);
-    try std.testing.expectEqual(@as(usize, 1), opts.sha_prefixes.items.len);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expectEqual(@as(usize, 1), opts.sha_args.items.len);
 }
 
 test "parseShowArgs staged flag" {
     const allocator = std.testing.allocator;
     const args = [_][:0]u8{ @constCast("abcd1234"), @constCast("--staged") };
     var opts = try parseShowArgs(allocator, &args);
-    defer opts.sha_prefixes.deinit(allocator);
+    defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expectEqual(DiffMode.staged, opts.mode);
 }
 
@@ -1981,7 +2353,7 @@ test "parseShowArgs porcelain flag" {
     const allocator = std.testing.allocator;
     const args = [_][:0]u8{ @constCast("abcd1234"), @constCast("--porcelain") };
     var opts = try parseShowArgs(allocator, &args);
-    defer opts.sha_prefixes.deinit(allocator);
+    defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expectEqual(OutputMode.porcelain, opts.output);
 }
 
@@ -1989,7 +2361,7 @@ test "parseShowArgs no-color flag" {
     const allocator = std.testing.allocator;
     const args = [_][:0]u8{ @constCast("abcd1234"), @constCast("--no-color") };
     var opts = try parseShowArgs(allocator, &args);
-    defer opts.sha_prefixes.deinit(allocator);
+    defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expect(opts.no_color);
 }
 
@@ -2008,7 +2380,7 @@ test "parseShowArgs context" {
     const allocator = std.testing.allocator;
     const args = [_][:0]u8{ @constCast("abcd1234"), @constCast("--context"), @constCast("2") };
     var opts = try parseShowArgs(allocator, &args);
-    defer opts.sha_prefixes.deinit(allocator);
+    defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expectEqual(@as(?u32, 2), opts.context);
 }
 
@@ -2016,6 +2388,205 @@ test "parseShowArgs context missing arg" {
     const allocator = std.testing.allocator;
     const args = [_][:0]u8{ @constCast("abcd1234"), @constCast("--context") };
     try std.testing.expectError(error.MissingArgument, parseShowArgs(allocator, &args));
+}
+
+// ============================================================================
+// Unit tests: parseShaArg
+// ============================================================================
+
+test "parseShaArg plain sha" {
+    const allocator = std.testing.allocator;
+    const arg = try parseShaArg(allocator, "abcd1234");
+    try std.testing.expectEqualStrings("abcd1234", arg.prefix);
+    try std.testing.expectEqual(@as(?LineSpec, null), arg.line_spec);
+}
+
+test "parseShaArg sha with single line" {
+    const allocator = std.testing.allocator;
+    const arg = try parseShaArg(allocator, "abcd1234:5");
+    defer allocator.free(arg.line_spec.?.ranges);
+    try std.testing.expectEqualStrings("abcd1234", arg.prefix);
+    try std.testing.expectEqual(@as(usize, 1), arg.line_spec.?.ranges.len);
+    try std.testing.expectEqual(@as(u32, 5), arg.line_spec.?.ranges[0].start);
+    try std.testing.expectEqual(@as(u32, 5), arg.line_spec.?.ranges[0].end);
+}
+
+test "parseShaArg sha with range" {
+    const allocator = std.testing.allocator;
+    const arg = try parseShaArg(allocator, "abcd1234:3-7");
+    defer allocator.free(arg.line_spec.?.ranges);
+    try std.testing.expectEqualStrings("abcd1234", arg.prefix);
+    try std.testing.expectEqual(@as(u32, 3), arg.line_spec.?.ranges[0].start);
+    try std.testing.expectEqual(@as(u32, 7), arg.line_spec.?.ranges[0].end);
+}
+
+test "parseShaArg sha with multiple ranges" {
+    const allocator = std.testing.allocator;
+    const arg = try parseShaArg(allocator, "abcd1234:1-3,5,8-10");
+    defer allocator.free(arg.line_spec.?.ranges);
+    try std.testing.expectEqual(@as(usize, 3), arg.line_spec.?.ranges.len);
+    try std.testing.expectEqual(@as(u32, 1), arg.line_spec.?.ranges[0].start);
+    try std.testing.expectEqual(@as(u32, 3), arg.line_spec.?.ranges[0].end);
+    try std.testing.expectEqual(@as(u32, 5), arg.line_spec.?.ranges[1].start);
+    try std.testing.expectEqual(@as(u32, 5), arg.line_spec.?.ranges[1].end);
+    try std.testing.expectEqual(@as(u32, 8), arg.line_spec.?.ranges[2].start);
+    try std.testing.expectEqual(@as(u32, 10), arg.line_spec.?.ranges[2].end);
+}
+
+test "parseShaArg sha too short with line spec" {
+    const allocator = std.testing.allocator;
+    try std.testing.expectError(error.InvalidArgument, parseShaArg(allocator, "abc:1-3"));
+}
+
+test "parseShaArg empty line spec" {
+    const allocator = std.testing.allocator;
+    try std.testing.expectError(error.InvalidArgument, parseShaArg(allocator, "abcd1234:"));
+}
+
+test "parseShaArg zero line number" {
+    const allocator = std.testing.allocator;
+    try std.testing.expectError(error.InvalidArgument, parseShaArg(allocator, "abcd1234:0"));
+}
+
+test "parseShaArg range start > end" {
+    const allocator = std.testing.allocator;
+    try std.testing.expectError(error.InvalidArgument, parseShaArg(allocator, "abcd1234:5-3"));
+}
+
+test "parseShaArg invalid number in line spec" {
+    const allocator = std.testing.allocator;
+    try std.testing.expectError(error.InvalidArgument, parseShaArg(allocator, "abcd1234:abc"));
+}
+
+// ============================================================================
+// Unit tests: LineSpec.containsLine
+// ============================================================================
+
+test "LineSpec.containsLine single range" {
+    const ranges = [_]LineRange{.{ .start = 3, .end = 7 }};
+    const spec = LineSpec{ .ranges = &ranges };
+    try std.testing.expect(!spec.containsLine(2));
+    try std.testing.expect(spec.containsLine(3));
+    try std.testing.expect(spec.containsLine(5));
+    try std.testing.expect(spec.containsLine(7));
+    try std.testing.expect(!spec.containsLine(8));
+}
+
+test "LineSpec.containsLine multiple ranges" {
+    const ranges = [_]LineRange{
+        .{ .start = 1, .end = 3 },
+        .{ .start = 7, .end = 7 },
+    };
+    const spec = LineSpec{ .ranges = &ranges };
+    try std.testing.expect(spec.containsLine(1));
+    try std.testing.expect(spec.containsLine(3));
+    try std.testing.expect(!spec.containsLine(4));
+    try std.testing.expect(spec.containsLine(7));
+    try std.testing.expect(!spec.containsLine(8));
+}
+
+// ============================================================================
+// Unit tests: buildFilteredHunkPatch
+// ============================================================================
+
+test "buildFilteredHunkPatch select one addition" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var h = testMakeHunk("f.txt", 1, 3, 1, 3);
+    h.raw_lines = "@@ -1,3 +1,3 @@\n context\n-removed\n+added\n context2\n";
+    const ranges = [_]LineRange{.{ .start = 3, .end = 3 }}; // select only +added
+    const result = try buildFilteredHunkPatch(arena.allocator(), &h, .{ .ranges = &ranges });
+    // -removed becomes context, +added stays
+    // old: context(1) + removed-as-context(2) + context2(3) = 3
+    // new: context(1) + removed-as-context(2) + added(3) + context2(4) = 4
+    try std.testing.expectEqualStrings(
+        "@@ -1,3 +1,4 @@\n context\n removed\n+added\n context2\n",
+        result,
+    );
+}
+
+test "buildFilteredHunkPatch select one removal" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var h = testMakeHunk("f.txt", 1, 3, 1, 3);
+    h.raw_lines = "@@ -1,3 +1,3 @@\n context\n-removed\n+added\n context2\n";
+    const ranges = [_]LineRange{.{ .start = 2, .end = 2 }}; // select only -removed
+    const result = try buildFilteredHunkPatch(arena.allocator(), &h, .{ .ranges = &ranges });
+    // -removed stays, +added dropped
+    // old: context(1) + removed(2) + context2(3) = 3
+    // new: context(1) + context2(2) = 2
+    try std.testing.expectEqualStrings(
+        "@@ -1,3 +1,2 @@\n context\n-removed\n context2\n",
+        result,
+    );
+}
+
+test "buildFilteredHunkPatch select replacement pair" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var h = testMakeHunk("f.txt", 1, 3, 1, 3);
+    h.raw_lines = "@@ -1,3 +1,3 @@\n context\n-old\n+new\n";
+    const ranges = [_]LineRange{.{ .start = 2, .end = 3 }}; // select both - and +
+    const result = try buildFilteredHunkPatch(arena.allocator(), &h, .{ .ranges = &ranges });
+    // Both kept: old = context(1) + old(2) = 2, new = context(1) + new(2) = 2
+    try std.testing.expectEqualStrings(
+        "@@ -1,2 +1,2 @@\n context\n-old\n+new\n",
+        result,
+    );
+}
+
+test "buildFilteredHunkPatch preserves func context" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var h = testMakeHunk("f.txt", 10, 3, 10, 3);
+    h.context = "fn main()";
+    h.raw_lines = "@@ -10,3 +10,3 @@ fn main()\n context\n-old\n+new\n";
+    const ranges = [_]LineRange{.{ .start = 2, .end = 3 }};
+    const result = try buildFilteredHunkPatch(arena.allocator(), &h, .{ .ranges = &ranges });
+    try std.testing.expect(std.mem.startsWith(u8, result, "@@ -10,2 +10,2 @@ fn main()\n"));
+}
+
+test "buildFilteredHunkPatch multiple changes partial select" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var h = testMakeHunk("f.txt", 1, 5, 1, 5);
+    h.raw_lines = "@@ -1,5 +1,5 @@\n ctx1\n-rem1\n+add1\n ctx2\n-rem2\n+add2\n";
+    // Select only first replacement (lines 2-3), not second (lines 5-6)
+    const ranges = [_]LineRange{.{ .start = 2, .end = 3 }};
+    const result = try buildFilteredHunkPatch(arena.allocator(), &h, .{ .ranges = &ranges });
+    // rem1 kept as -, add1 kept as +, rem2 becomes context, add2 dropped
+    // old: ctx1(1) + rem1(2) + ctx2(3) + rem2-as-ctx(4) = 4
+    // new: ctx1(1) + add1(2) + ctx2(3) + rem2-as-ctx(4) = 4
+    try std.testing.expectEqualStrings(
+        "@@ -1,4 +1,4 @@\n ctx1\n-rem1\n+add1\n ctx2\n rem2\n",
+        result,
+    );
+}
+
+// ============================================================================
+// Unit tests: parseAddRemoveArgs with line spec
+// ============================================================================
+
+test "parseAddRemoveArgs sha with line spec" {
+    const allocator = std.testing.allocator;
+    const args = [_][:0]u8{@constCast("abcd1234:3-5")};
+    var opts = try parseAddRemoveArgs(allocator, &args);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expectEqual(@as(usize, 1), opts.sha_args.items.len);
+    try std.testing.expectEqualStrings("abcd1234", opts.sha_args.items[0].prefix);
+    try std.testing.expect(opts.sha_args.items[0].line_spec != null);
+    try std.testing.expectEqual(@as(u32, 3), opts.sha_args.items[0].line_spec.?.ranges[0].start);
+    try std.testing.expectEqual(@as(u32, 5), opts.sha_args.items[0].line_spec.?.ranges[0].end);
+}
+
+test "parseShowArgs sha with line spec" {
+    const allocator = std.testing.allocator;
+    const args = [_][:0]u8{@constCast("abcd1234:1-3,7")};
+    var opts = try parseShowArgs(allocator, &args);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expectEqual(@as(usize, 1), opts.sha_args.items.len);
+    try std.testing.expect(opts.sha_args.items[0].line_spec != null);
+    try std.testing.expectEqual(@as(usize, 2), opts.sha_args.items[0].line_spec.?.ranges.len);
 }
 
 // ============================================================================
