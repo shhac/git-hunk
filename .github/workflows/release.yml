@@ -1,0 +1,131 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-release:
+    name: Build Release for ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - platform: x86_64-macos
+            os: macos-latest
+            target: x86_64-macos
+          - platform: aarch64-macos
+            os: macos-latest
+            target: aarch64-macos
+          - platform: x86_64-linux
+            os: ubuntu-latest
+            target: x86_64-linux
+          - platform: aarch64-linux
+            os: ubuntu-latest
+            target: aarch64-linux
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: '0.15.2'
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Build for ${{ matrix.platform }}
+        run: zig build -Doptimize=ReleaseFast -Dtarget=${{ matrix.target }} -Dversion=${{ steps.version.outputs.VERSION }}
+
+      - name: Create tarball
+        run: |
+          cd zig-out/bin
+          tar -czf ../../git-hunk-${{ matrix.platform }}.tar.gz git-hunk
+          cd ../..
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: git-hunk-${{ matrix.platform }}
+          path: git-hunk-${{ matrix.platform }}.tar.gz
+
+  create-universal-macos:
+    name: Create Universal macOS Binary
+    runs-on: macos-latest
+    needs: build-release
+    steps:
+      - name: Download x86_64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: git-hunk-x86_64-macos
+
+      - name: Download aarch64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: git-hunk-aarch64-macos
+
+      - name: Extract binaries
+        run: |
+          tar -xzf git-hunk-x86_64-macos.tar.gz
+          mv git-hunk git-hunk-x86_64
+          tar -xzf git-hunk-aarch64-macos.tar.gz
+          mv git-hunk git-hunk-aarch64
+
+      - name: Create universal binary
+        run: |
+          lipo -create -output git-hunk git-hunk-x86_64 git-hunk-aarch64
+          tar -czf git-hunk-macos-universal.tar.gz git-hunk
+
+      - name: Upload universal artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: git-hunk-macos-universal
+          path: git-hunk-macos-universal.tar.gz
+
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build-release, create-universal-macos]
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Prepare release files
+        run: |
+          mkdir -p release
+          find . -name "*.tar.gz" -exec cp {} release/ \;
+          ls -lh release/
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Extract changelog for this version
+        id: changelog
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          awk "/## \[${VERSION#v}\]/{flag=1; next} /## \[/{flag=0} flag" CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "Release $VERSION" > release-notes.md
+            echo "" >> release-notes.md
+            echo "See [CHANGELOG.md](CHANGELOG.md) for details." >> release-notes.md
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*.tar.gz
+          body_path: release-notes.md
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
