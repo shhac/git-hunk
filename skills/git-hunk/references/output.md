@@ -40,9 +40,9 @@ For deleted files: `0-0` (no new-side lines).
 Summary is derived in priority order:
 
 1. **Function context** from the `@@` header (e.g., `Add error handling`, `fn main()`)
-2. **First changed line** content, with `+`/`-` prefix and leading whitespace stripped
-3. **`new file`** for new files
-4. **`deleted`** for deleted files
+2. **`new file`** for new files
+3. **`deleted`** for deleted files
+4. **First changed line** content, with `+`/`-` prefix and leading whitespace stripped
 5. Empty string if none of the above apply
 
 ## Diff output (`--diff`)

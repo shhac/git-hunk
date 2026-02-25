@@ -366,7 +366,7 @@ fn cmdList(allocator: Allocator, stdout: *std.Io.Writer, opts: ListOptions) !voi
     if (opts.output == .human and opts.mode == .unstaged) {
         const untracked = countUntrackedFiles(allocator) catch 0;
         if (untracked > 0) {
-            std.debug.print("hint: {d} untracked file(s) not shown — use 'git add -N <file>' to include\n", .{untracked});
+            std.debug.print("hint: {d} untracked file(s) not shown -- use 'git add -N <file>' to include\n", .{untracked});
         }
     }
 }
