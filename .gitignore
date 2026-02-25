@@ -23,6 +23,7 @@ build/
 .env.*.local
 CLAUDE.local.md
 .ai-cache/
+design-docs/
 
 # Claude Code directories (except project-specific skills, agents, commands)
 .claude/*

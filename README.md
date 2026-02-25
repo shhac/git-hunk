@@ -85,20 +85,24 @@ git commit -m "feat: add error handling"
 or alignment padding:
 
 ```
-sha\tfile\told_start\tnew_start\tsummary
+sha\tfile\tstart_line\tend_line\tsummary
 ```
 
 Fields:
 - `sha` -- 7-character content hash
 - `file` -- file path
-- `old_start` -- start line on the old (pre-image) side
-- `new_start` -- start line on the new (post-image) side
-- `summary` -- function context, "new file", "deleted", or empty
+- `start_line` -- first line of the hunk range
+- `end_line` -- last line of the hunk range
+- `summary` -- function context, first changed line, "new file", or "deleted"
+
+Line ranges are mode-aware: for unstaged hunks they refer to worktree lines, for
+staged hunks they refer to HEAD lines. This ensures hashes and ranges remain
+stable as other hunks are staged or unstaged.
 
 Example:
 
 ```
-a3f7c21	src/main.zig	12	12	Add error handling
+a3f7c21	src/main.zig	12	18	Add error handling
 b82e0f4	src/main.zig	45	52	Replace old parser
 ```
 
