@@ -35,6 +35,7 @@ const ListOptions = struct {
     mode: DiffMode = .unstaged,
     file_filter: ?[]const u8 = null,
     output: OutputMode = .human,
+    show_diff: bool = false,
 };
 
 const AddRemoveOptions = struct {
@@ -115,7 +116,8 @@ fn printUsage(stdout: *std.Io.Writer) !void {
         \\usage: git-hunk <command> [<args>]
         \\
         \\commands:
-        \\  list [--staged] [--file <path>] [--porcelain]   List diff hunks
+        \\  list [--staged] [--file <path>] [--porcelain] [--diff]
+        \\                                                List diff hunks
         \\  add <sha>... [--file <path>]                    Stage hunks
         \\  remove <sha>... [--file <path>]                 Unstage hunks
         \\
@@ -131,6 +133,8 @@ fn parseListArgs(args: []const [:0]u8) !ListOptions {
             opts.mode = .staged;
         } else if (std.mem.eql(u8, arg, "--porcelain")) {
             opts.output = .porcelain;
+        } else if (std.mem.eql(u8, arg, "--diff")) {
+            opts.show_diff = true;
         } else if (std.mem.eql(u8, arg, "--file")) {
             i += 1;
             if (i >= args.len) return error.MissingArgument;
@@ -214,6 +218,12 @@ fn cmdList(allocator: Allocator, stdout: *std.Io.Writer, opts: ListOptions) !voi
         switch (opts.output) {
             .human => try printHunkHuman(stdout, h, opts.mode),
             .porcelain => try printHunkPorcelain(stdout, h, opts.mode),
+        }
+        if (opts.show_diff) {
+            switch (opts.output) {
+                .human => try printDiffHuman(stdout, h),
+                .porcelain => try printDiffPorcelain(stdout, h),
+            }
         }
     }
 }
@@ -748,6 +758,24 @@ fn printHunkPorcelain(stdout: *std.Io.Writer, h: Hunk, mode: DiffMode) !void {
         end_line,
         summary,
     });
+}
+
+fn printDiffHuman(stdout: *std.Io.Writer, h: Hunk) !void {
+    if (h.raw_lines.len == 0) return;
+    var iter = std.mem.splitScalar(u8, h.raw_lines, '\n');
+    while (iter.next()) |line| {
+        try stdout.print("    {s}\n", .{line});
+    }
+    try stdout.writeAll("\n");
+}
+
+fn printDiffPorcelain(stdout: *std.Io.Writer, h: Hunk) !void {
+    if (h.raw_lines.len == 0) return;
+    try stdout.writeAll(h.raw_lines);
+    if (h.raw_lines[h.raw_lines.len - 1] != '\n') {
+        try stdout.writeAll("\n");
+    }
+    try stdout.writeAll("\n");
 }
 
 fn stableStartLine(h: Hunk, mode: DiffMode) u32 {
