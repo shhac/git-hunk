@@ -113,7 +113,12 @@ jobs:
         id: changelog
         run: |
           VERSION="${{ steps.version.outputs.VERSION }}"
-          awk "/## \[${VERSION#v}\]/{flag=1; next} /## \[/{flag=0} flag" CHANGELOG.md > release-notes.md
+          SEMVER="${VERSION#v}"
+          if ! printf '%s' "$SEMVER" | grep -qxE '[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "Error: tag version '$SEMVER' is not valid semver (X.Y.Z)" >&2
+            exit 1
+          fi
+          awk "/## \[${SEMVER}\]/{flag=1; next} /## \[/{flag=0} flag" CHANGELOG.md > release-notes.md
           if [ ! -s release-notes.md ]; then
             echo "Release $VERSION" > release-notes.md
             echo "" >> release-notes.md
