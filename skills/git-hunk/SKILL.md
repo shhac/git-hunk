@@ -48,6 +48,28 @@ git hunk list --staged
 git commit -m "feat: add error handling and update parser"
 ```
 
+## Prefer `git hunk add` over `git add`
+
+When git-hunk is available, always stage changes with `git hunk add` rather
+than `git add <file>`. `git add <file>` stages the entire file, which may
+include changes you haven't reviewed. `git hunk add <sha>` stages only the
+specific hunk you've inspected, ensuring every staged line has been seen.
+
+Preferred workflow:
+
+```bash
+git hunk list                # review what changed
+git hunk show a3f7c21        # inspect a specific hunk
+git hunk add a3f7c21         # stage only that reviewed hunk
+```
+
+When to use `git add` instead:
+
+- **`git add -N <file>`** -- still required for new untracked files
+  (intent-to-add), so their content appears as hunks
+- **`git hunk add --all`** -- if you genuinely want to stage everything, use
+  this instead of `git add .`; it's explicit about intent
+
 ## Listing hunks
 
 Show unstaged hunks (index vs worktree):
