@@ -249,6 +249,81 @@ fn isHexDigit(c: u8) bool {
     return (c >= '0' and c <= '9') or (c >= 'a' and c <= 'f') or (c >= 'A' and c <= 'F');
 }
 
+/// C-unescape a git quoted path (handles \t, \n, \\, \", and \ooo octal).
+/// Returns the input unchanged if no backslashes are present.
+fn cUnescape(arena: Allocator, input: []const u8) ![]const u8 {
+    if (std.mem.indexOfScalar(u8, input, '\\') == null) return input;
+
+    var result: std.ArrayList(u8) = .empty;
+    var i: usize = 0;
+    while (i < input.len) {
+        if (input[i] == '\\' and i + 1 < input.len) {
+            i += 1;
+            switch (input[i]) {
+                'n' => try result.append(arena, '\n'),
+                't' => try result.append(arena, '\t'),
+                '\\' => try result.append(arena, '\\'),
+                '"' => try result.append(arena, '"'),
+                'a' => try result.append(arena, 0x07),
+                'b' => try result.append(arena, 0x08),
+                'f' => try result.append(arena, 0x0c),
+                'r' => try result.append(arena, '\r'),
+                'v' => try result.append(arena, 0x0b),
+                '0'...'3' => {
+                    // Octal escape: up to 3 digits (max \377)
+                    var val: u8 = input[i] - '0';
+                    if (i + 1 < input.len and input[i + 1] >= '0' and input[i + 1] <= '7') {
+                        i += 1;
+                        val = val * 8 + (input[i] - '0');
+                        if (i + 1 < input.len and input[i + 1] >= '0' and input[i + 1] <= '7') {
+                            i += 1;
+                            val = val * 8 + (input[i] - '0');
+                        }
+                    }
+                    try result.append(arena, val);
+                },
+                else => {
+                    try result.append(arena, '\\');
+                    try result.append(arena, input[i]);
+                },
+            }
+        } else {
+            try result.append(arena, input[i]);
+        }
+        i += 1;
+    }
+    return result.items;
+}
+
+/// Extract file path from a ---/+++ diff line, handling both normal and C-quoted paths.
+/// Returns null for /dev/null lines or unrecognized formats.
+fn extractDiffPath(arena: Allocator, line: []const u8, comptime side: enum { old, new }) !?[]const u8 {
+    const normal_prefix = if (side == .old) "--- a/" else "+++ b/";
+    const quoted_prefix = if (side == .old) "--- \"a/" else "+++ \"b/";
+
+    if (std.mem.startsWith(u8, line, normal_prefix)) {
+        return line[normal_prefix.len..];
+    }
+
+    if (std.mem.startsWith(u8, line, quoted_prefix)) {
+        var path = line[quoted_prefix.len..];
+        // Remove trailing quote
+        if (path.len > 0 and path[path.len - 1] == '"') {
+            path = path[0 .. path.len - 1];
+        }
+        return try cUnescape(arena, path);
+    }
+
+    return null; // /dev/null or unrecognized
+}
+
+/// Compare hunks for sorting: by file path, then by old_start (line order within file).
+fn hunkPatchOrder(_: void, a: *const Hunk, b: *const Hunk) bool {
+    const path_order = std.mem.order(u8, a.file_path, b.file_path);
+    if (path_order != .eq) return path_order == .lt;
+    return a.old_start < b.old_start;
+}
+
 // ============================================================================
 // List command
 // ============================================================================
@@ -366,6 +441,9 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddRemoveOp
             try matched.append(arena, hunk);
         }
     }
+
+    // Sort hunks by file path and line order for a valid combined patch
+    std.mem.sort(*const Hunk, matched.items, {}, hunkPatchOrder);
 
     // Build combined patch and apply
     const patch = try buildCombinedPatch(arena, matched.items);
@@ -639,23 +717,35 @@ fn parseDiff(arena: Allocator, diff: []const u8, mode: DiffMode, hunks: *std.Arr
         var is_new_file = false;
         var is_deleted_file = false;
         var is_binary = false;
+        var is_submodule = false;
+        var file_mode: []const u8 = "100644";
+        var rename_from: ?[]const u8 = null;
+        var rename_to: ?[]const u8 = null;
 
         while (i < lines.len) {
             const line = lines[i];
             if (std.mem.startsWith(u8, line, "new file mode ")) {
                 is_new_file = true;
+                file_mode = line["new file mode ".len..];
             } else if (std.mem.startsWith(u8, line, "deleted file mode ")) {
                 is_deleted_file = true;
+                file_mode = line["deleted file mode ".len..];
             } else if (std.mem.startsWith(u8, line, "Binary files ")) {
                 is_binary = true;
+            } else if (std.mem.startsWith(u8, line, "rename from ")) {
+                rename_from = line["rename from ".len..];
+            } else if (std.mem.startsWith(u8, line, "rename to ")) {
+                rename_to = line["rename to ".len..];
+            } else if (std.mem.startsWith(u8, line, "index ")) {
+                // Detect submodule mode (160000)
+                if (std.mem.endsWith(u8, line, " 160000")) {
+                    is_submodule = true;
+                }
             } else if (std.mem.startsWith(u8, line, "old mode ") or
                 std.mem.startsWith(u8, line, "new mode ") or
                 std.mem.startsWith(u8, line, "similarity index ") or
-                std.mem.startsWith(u8, line, "rename from ") or
-                std.mem.startsWith(u8, line, "rename to ") or
                 std.mem.startsWith(u8, line, "copy from ") or
-                std.mem.startsWith(u8, line, "copy to ") or
-                std.mem.startsWith(u8, line, "index "))
+                std.mem.startsWith(u8, line, "copy to "))
             {
                 // Extended header, continue
             } else {
@@ -664,7 +754,7 @@ fn parseDiff(arena: Allocator, diff: []const u8, mode: DiffMode, hunks: *std.Arr
             i += 1;
         }
 
-        if (is_binary) continue;
+        if (is_binary or is_submodule) continue;
 
         // Expect ---/+++ lines
         if (i >= lines.len or !std.mem.startsWith(u8, lines[i], "--- ")) continue;
@@ -675,19 +765,11 @@ fn parseDiff(arena: Allocator, diff: []const u8, mode: DiffMode, hunks: *std.Arr
         const plus_line = lines[i];
         i += 1;
 
-        // Extract file path
-        var file_path: []const u8 = undefined;
-        if (is_deleted_file) {
-            // For deletions, use --- path
-            if (std.mem.startsWith(u8, minus_line, "--- a/")) {
-                file_path = minus_line["--- a/".len..];
-            } else continue;
-        } else {
-            // For everything else, use +++ path
-            if (std.mem.startsWith(u8, plus_line, "+++ b/")) {
-                file_path = plus_line["+++ b/".len..];
-            } else continue;
-        }
+        // Extract file path (handles both normal and C-quoted paths)
+        const file_path = if (is_deleted_file)
+            (try extractDiffPath(arena, minus_line, .old)) orelse continue
+        else
+            (try extractDiffPath(arena, plus_line, .new)) orelse continue;
 
         // Build patch header
         var patch_header: []const u8 = undefined;
@@ -697,10 +779,28 @@ fn parseDiff(arena: Allocator, diff: []const u8, mode: DiffMode, hunks: *std.Arr
             try ph.appendSlice(arena, diff_git_line);
             try ph.append(arena, '\n');
             if (is_new_file) {
-                try ph.appendSlice(arena, "new file mode 100644\n");
+                try ph.appendSlice(arena, "new file mode ");
             } else {
-                try ph.appendSlice(arena, "deleted file mode 100644\n");
+                try ph.appendSlice(arena, "deleted file mode ");
             }
+            try ph.appendSlice(arena, file_mode);
+            try ph.append(arena, '\n');
+            try ph.appendSlice(arena, minus_line);
+            try ph.append(arena, '\n');
+            try ph.appendSlice(arena, plus_line);
+            try ph.append(arena, '\n');
+            patch_header = ph.items;
+        } else if (rename_from != null and rename_to != null) {
+            // Renames need diff --git header + rename metadata
+            var ph: std.ArrayList(u8) = .empty;
+            try ph.appendSlice(arena, diff_git_line);
+            try ph.append(arena, '\n');
+            try ph.appendSlice(arena, "rename from ");
+            try ph.appendSlice(arena, rename_from.?);
+            try ph.append(arena, '\n');
+            try ph.appendSlice(arena, "rename to ");
+            try ph.appendSlice(arena, rename_to.?);
+            try ph.append(arena, '\n');
             try ph.appendSlice(arena, minus_line);
             try ph.append(arena, '\n');
             try ph.appendSlice(arena, plus_line);
