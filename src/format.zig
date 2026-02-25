@@ -46,10 +46,16 @@ pub fn printHunkHuman(stdout: *std.Io.Writer, h: Hunk, mode: DiffMode, col_width
         @as(usize, term_width) - prefix_width - 1
     else
         0;
-    if (available > 1 and summary.len > available) {
-        const trunc = available - 1; // leave 1 column for ellipsis
-        try stdout.writeAll(summary[0..trunc]);
-        try stdout.writeAll("\xe2\x80\xa6"); // U+2026 HORIZONTAL ELLIPSIS
+    if (available == 0) {
+        // No space for summary — skip to avoid overflow/wrapping
+    } else if (summary.len > available) {
+        const trunc = available -| 1; // leave 1 column for ellipsis if possible
+        if (trunc > 0) {
+            try stdout.writeAll(summary[0..trunc]);
+            try stdout.writeAll("\xe2\x80\xa6"); // U+2026 HORIZONTAL ELLIPSIS
+        } else {
+            try stdout.writeAll(summary[0..available]);
+        }
     } else {
         try stdout.writeAll(summary);
     }
@@ -264,11 +270,22 @@ fn formatLineRange(buf: []u8, h: Hunk, mode: DiffMode) []const u8 {
 }
 
 pub fn getTerminalWidth() u16 {
+    const min_width: u16 = 40;
+
     const stdout_file = std.fs.File.stdout();
-    if (!stdout_file.isTty()) return 80;
-    var wsz: posix.winsize = .{ .row = 0, .col = 0, .xpixel = 0, .ypixel = 0 };
-    const err = posix.system.ioctl(stdout_file.handle, posix.T.IOCGWINSZ, @intFromPtr(&wsz));
-    if (posix.errno(err) == .SUCCESS and wsz.col > 0) return wsz.col;
+    if (stdout_file.isTty()) {
+        var wsz: posix.winsize = .{ .row = 0, .col = 0, .xpixel = 0, .ypixel = 0 };
+        const err = posix.system.ioctl(stdout_file.handle, posix.T.IOCGWINSZ, @intFromPtr(&wsz));
+        if (posix.errno(err) == .SUCCESS and wsz.col > 0) return @max(wsz.col, min_width);
+    }
+
+    // Fallback: check COLUMNS env var (useful in CI/agent contexts where stdout isn't a TTY)
+    if (posix.getenv("COLUMNS")) |cols_str| {
+        if (std.fmt.parseInt(u16, cols_str, 10)) |cols| {
+            if (cols > 0) return @max(cols, min_width);
+        } else |_| {}
+    }
+
     return 80;
 }
 

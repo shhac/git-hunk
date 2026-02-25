@@ -47,7 +47,9 @@ pub fn cmdList(allocator: Allocator, stdout: *std.Io.Writer, opts: ListOptions) 
             max_path_len = @max(max_path_len, h.file_path.len);
         }
     }
-    const col_width = @max(max_path_len, 20);
+    // Clamp col_width so prefix (col_width + 21) doesn't exceed terminal width
+    const max_col: usize = if (@as(usize, term_width) > 25) @as(usize, term_width) - 25 else 20;
+    const col_width = @min(@max(max_path_len, 20), max_col);
 
     // Apply file filter, output, and count
     var hunk_count: usize = 0;
@@ -202,6 +204,14 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddRemoveOp
         } else {
             try stdout.print("{s} {s}  {s}{s}\n", .{ verb, sha, m.hunk.file_path, suffix });
         }
+    }
+
+    // Summary count on stderr (visible even when stdout is piped)
+    const count = matched.items.len;
+    if (count == 1) {
+        std.debug.print("1 hunk {s}\n", .{verb});
+    } else {
+        std.debug.print("{d} hunks {s}\n", .{ count, verb });
     }
 }
 
