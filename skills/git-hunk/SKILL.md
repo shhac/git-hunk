@@ -11,9 +11,13 @@ description: |
 
 # git-hunk
 
-`git-hunk` is a CLI binary that provides non-interactive, deterministic hunk
-staging for git. When installed on PATH, it's invoked as `git hunk <subcommand>`.
-No dependencies beyond git.
+`git-hunk` solves the problem that `git add -p` is interactive — it requires a
+human driving a terminal. LLM agents, shell scripts, and CI pipelines can't use
+it. `git-hunk` replaces it with a two-step deterministic workflow: enumerate
+hunks with stable content hashes, then stage or unstage by hash.
+
+Installed on PATH, it's invoked as `git hunk <subcommand>`. No dependencies
+beyond git.
 
 ## Typical workflow
 
