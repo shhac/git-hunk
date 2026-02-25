@@ -65,7 +65,7 @@ fn run() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var stdout_buffer: [4096]u8 = undefined;
+    var stdout_buffer: [64 * 1024]u8 = undefined;
     var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
     const stdout = &stdout_writer.interface;
 
@@ -585,12 +585,18 @@ fn runGitDiff(allocator: Allocator, mode: DiffMode) ![]u8 {
     try child.spawn();
 
     var child_stdout: std.ArrayList(u8) = .empty;
-    defer child_stdout.deinit(allocator);
+    errdefer child_stdout.deinit(allocator);
     var child_stderr: std.ArrayList(u8) = .empty;
     defer child_stderr.deinit(allocator);
 
     const max_bytes = 10 * 1024 * 1024; // 10 MB
-    try child.collectOutput(allocator, &child_stdout, &child_stderr, max_bytes);
+    child.collectOutput(allocator, &child_stdout, &child_stderr, max_bytes) catch |err| {
+        if (err == error.StreamTooLong) {
+            std.debug.print("error: diff output exceeds 10 MB -- use --file to narrow scope\n", .{});
+            std.process.exit(1);
+        }
+        return err;
+    };
     const term = try child.wait();
 
     switch (term) {
@@ -605,9 +611,7 @@ fn runGitDiff(allocator: Allocator, mode: DiffMode) ![]u8 {
         else => fatal("git diff terminated abnormally", .{}),
     }
 
-    const owned = try allocator.alloc(u8, child_stdout.items.len);
-    @memcpy(owned, child_stdout.items);
-    return owned;
+    return try child_stdout.toOwnedSlice(allocator);
 }
 
 fn runGitApply(allocator: Allocator, patch: []const u8, reverse: bool) !void {
