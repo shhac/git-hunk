@@ -31,7 +31,7 @@ git add file.txt
 git commit -m "init" -q
 echo "hello changed" > file.txt
 
-LINE="$("$GIT_HUNK" list --porcelain)"
+LINE="$("$GIT_HUNK" list --porcelain --oneline | head -1)"
 [[ -n "$LINE" ]] || fail "test 1: expected output from list --porcelain"
 
 SHA="$(echo "$LINE" | cut -f1)"
@@ -53,7 +53,7 @@ pass "test 2: add stages hunk"
 # ============================================================================
 # Test 3: remove (unstage) a hunk by SHA
 # ============================================================================
-STAGED_SHA="$("$GIT_HUNK" list --staged --porcelain | cut -f1)"
+STAGED_SHA="$("$GIT_HUNK" list --staged --porcelain --oneline | cut -f1)"
 [[ -n "$STAGED_SHA" ]] || fail "test 3: no staged hunk found"
 "$GIT_HUNK" remove "$STAGED_SHA" > /dev/null
 STILL_STAGED="$(git diff --cached file.txt | wc -l | tr -d ' ')"
@@ -65,7 +65,7 @@ pass "test 3: remove unstages hunk"
 # ============================================================================
 echo "brand new content" > new_file.txt
 git add -N new_file.txt   # intent-to-add: shows in git diff
-LINE4="$("$GIT_HUNK" list --porcelain | grep "new_file.txt" || true)"
+LINE4="$("$GIT_HUNK" list --porcelain --oneline | grep "new_file.txt" || true)"
 [[ -n "$LINE4" ]] || fail "test 4: new file hunk not listed (try git add -N)"
 SHA4="$(echo "$LINE4" | cut -f1)"
 [[ ${#SHA4} -eq 7 ]] || fail "test 4: new file SHA not 7 chars"
@@ -77,7 +77,7 @@ pass "test 4: new file with intent-to-add listed"
 git add file.txt
 git commit -m "stage modified" -q
 git rm file.txt -q
-DEL_LINE="$("$GIT_HUNK" list --staged --porcelain | grep "file.txt" || true)"
+DEL_LINE="$("$GIT_HUNK" list --staged --porcelain --oneline | grep "file.txt" || true)"
 [[ -n "$DEL_LINE" ]] || fail "test 5: deleted file not in staged list"
 pass "test 5: deleted file in staged list"
 
@@ -94,8 +94,8 @@ git commit -m "add alpha beta" -q
 echo "alpha changed" > alpha.txt
 echo "beta changed" > beta.txt
 
-ALL_OUTPUT="$("$GIT_HUNK" list --porcelain)"
-FILTERED="$("$GIT_HUNK" list --porcelain --file alpha.txt)"
+ALL_OUTPUT="$("$GIT_HUNK" list --porcelain --oneline)"
+FILTERED="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt)"
 [[ -n "$FILTERED" ]] || fail "test 6: no output with --file alpha.txt"
 # All filtered lines must reference alpha.txt
 while IFS= read -r line; do

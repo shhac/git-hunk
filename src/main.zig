@@ -41,7 +41,7 @@ const ListOptions = struct {
     mode: DiffMode = .unstaged,
     file_filter: ?[]const u8 = null,
     output: OutputMode = .human,
-    show_diff: bool = false,
+    oneline: bool = false,
     no_color: bool = false,
     context: ?u32 = null,
 };
@@ -143,7 +143,7 @@ fn printUsage(stdout: *std.Io.Writer) !void {
         \\usage: git-hunk <command> [<args>]
         \\
         \\commands:
-        \\  list [--staged] [--file <path>] [--porcelain] [--diff] [--no-color] [--context <n>]
+        \\  list [--staged] [--file <path>] [--porcelain] [--oneline] [--no-color] [--context <n>]
         \\                                                List diff hunks
         \\  show <sha>... [--staged] [--file <path>] [--porcelain] [--no-color] [--context <n>]
         \\                                                Show diff content of hunks
@@ -167,8 +167,8 @@ fn parseListArgs(args: []const [:0]u8) !ListOptions {
             opts.mode = .staged;
         } else if (std.mem.eql(u8, arg, "--porcelain")) {
             opts.output = .porcelain;
-        } else if (std.mem.eql(u8, arg, "--diff")) {
-            opts.show_diff = true;
+        } else if (std.mem.eql(u8, arg, "--oneline")) {
+            opts.oneline = true;
         } else if (std.mem.eql(u8, arg, "--no-color")) {
             opts.no_color = true;
         } else if (std.mem.eql(u8, arg, "--file")) {
@@ -415,7 +415,7 @@ fn cmdList(allocator: Allocator, stdout: *std.Io.Writer, opts: ListOptions) !voi
             .human => try printHunkHuman(stdout, h, opts.mode, col_width, term_width, use_color),
             .porcelain => try printHunkPorcelain(stdout, h, opts.mode),
         }
-        if (opts.show_diff) {
+        if (!opts.oneline) {
             switch (opts.output) {
                 .human => try printDiffHuman(stdout, h, use_color),
                 .porcelain => try printDiffPorcelain(stdout, h),
@@ -1794,7 +1794,7 @@ test "parseListArgs defaults" {
     const opts = try parseListArgs(&.{});
     try std.testing.expectEqual(DiffMode.unstaged, opts.mode);
     try std.testing.expectEqual(OutputMode.human, opts.output);
-    try std.testing.expect(!opts.show_diff);
+    try std.testing.expect(!opts.oneline);
     try std.testing.expectEqual(@as(?[]const u8, null), opts.file_filter);
 }
 
@@ -1810,10 +1810,10 @@ test "parseListArgs porcelain" {
     try std.testing.expectEqual(OutputMode.porcelain, opts.output);
 }
 
-test "parseListArgs diff" {
-    const args = [_][:0]u8{@constCast("--diff")};
+test "parseListArgs oneline" {
+    const args = [_][:0]u8{@constCast("--oneline")};
     const opts = try parseListArgs(&args);
-    try std.testing.expect(opts.show_diff);
+    try std.testing.expect(opts.oneline);
 }
 
 test "parseListArgs no-color" {
@@ -1842,7 +1842,7 @@ test "parseListArgs all flags combined" {
     const args = [_][:0]u8{
         @constCast("--staged"),
         @constCast("--porcelain"),
-        @constCast("--diff"),
+        @constCast("--oneline"),
         @constCast("--no-color"),
         @constCast("--file"),
         @constCast("foo.txt"),
@@ -1850,7 +1850,7 @@ test "parseListArgs all flags combined" {
     const opts = try parseListArgs(&args);
     try std.testing.expectEqual(DiffMode.staged, opts.mode);
     try std.testing.expectEqual(OutputMode.porcelain, opts.output);
-    try std.testing.expect(opts.show_diff);
+    try std.testing.expect(opts.oneline);
     try std.testing.expect(opts.no_color);
     try std.testing.expectEqualStrings("foo.txt", opts.file_filter.?);
 }
