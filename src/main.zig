@@ -904,12 +904,17 @@ fn parseDiff(arena: Allocator, diff: []const u8, mode: DiffMode, hunks: *std.Arr
 
 /// Given a slice that points into `haystack`, return its start offset.
 fn sliceStart(haystack: []const u8, slice: []const u8) usize {
-    return @intFromPtr(slice.ptr) - @intFromPtr(haystack.ptr);
+    std.debug.assert(@intFromPtr(slice.ptr) >= @intFromPtr(haystack.ptr));
+    const offset = @intFromPtr(slice.ptr) - @intFromPtr(haystack.ptr);
+    std.debug.assert(offset <= haystack.len);
+    return offset;
 }
 
 /// Given a slice that points into `haystack`, return the end offset (past last byte).
 fn sliceEnd(haystack: []const u8, slice: []const u8) usize {
-    return sliceStart(haystack, slice) + slice.len;
+    const end = sliceStart(haystack, slice) + slice.len;
+    std.debug.assert(end <= haystack.len);
+    return end;
 }
 
 const HunkHeader = struct {
@@ -976,7 +981,12 @@ fn parseU32(s: *[]const u8) ?u32 {
     var consumed: usize = 0;
     for (s.*) |c| {
         if (c < '0' or c > '9') break;
-        val = val *% 10 +% (c - '0');
+        const digit: u32 = c - '0';
+        const mul = @mulWithOverflow(val, @as(u32, 10));
+        if (mul[1] != 0) return null;
+        const add = @addWithOverflow(mul[0], digit);
+        if (add[1] != 0) return null;
+        val = add[0];
         consumed += 1;
     }
     if (consumed == 0) return null;
