@@ -286,6 +286,14 @@ fn cmdList(allocator: Allocator, stdout: *std.Io.Writer, opts: ListOptions) !voi
             }
         }
     }
+
+    // Hint about untracked files (human output, unstaged mode only)
+    if (opts.output == .human and opts.mode == .unstaged) {
+        const untracked = countUntrackedFiles(allocator) catch 0;
+        if (untracked > 0) {
+            std.debug.print("hint: {d} untracked file(s) not shown — use 'git add -N <file>' to include\n", .{untracked});
+        }
+    }
 }
 
 // ============================================================================
@@ -564,6 +572,41 @@ fn runGitApply(allocator: Allocator, patch: []const u8, reverse: bool) !void {
         },
         else => fatal("git apply terminated abnormally", .{}),
     }
+}
+
+fn countUntrackedFiles(allocator: Allocator) !u32 {
+    const argv: []const []const u8 = &.{ "git", "ls-files", "--others", "--exclude-standard" };
+
+    var child = std.process.Child.init(argv, allocator);
+    child.stdout_behavior = .Pipe;
+    child.stderr_behavior = .Pipe;
+
+    try child.spawn();
+
+    var child_stdout: std.ArrayList(u8) = .empty;
+    defer child_stdout.deinit(allocator);
+    var child_stderr: std.ArrayList(u8) = .empty;
+    defer child_stderr.deinit(allocator);
+
+    const max_bytes = 1 * 1024 * 1024; // 1 MB
+    try child.collectOutput(allocator, &child_stdout, &child_stderr, max_bytes);
+    const term = try child.wait();
+
+    switch (term) {
+        .Exited => |code| {
+            if (code != 0) return 0; // Best-effort: silently ignore errors
+        },
+        else => return 0,
+    }
+
+    const output = std.mem.trimRight(u8, child_stdout.items, "\n");
+    if (output.len == 0) return 0;
+
+    var count: u32 = 1;
+    for (output) |c| {
+        if (c == '\n') count += 1;
+    }
+    return count;
 }
 
 // ============================================================================
