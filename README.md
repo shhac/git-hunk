@@ -40,6 +40,7 @@ git hunk list                          # unstaged hunks
 git hunk list --staged                 # staged hunks
 git hunk list --file src/main.zig      # filter by file
 git hunk list --porcelain              # machine-readable output
+git hunk list --diff                   # include inline diff content
 ```
 
 Example output:
@@ -52,6 +53,25 @@ e91d3a6  README.md                     3-7       new file
 
 Each line shows a 7-character content hash, file path, line range, and optional
 function context or summary.
+
+When there are untracked files, a hint is printed to stderr:
+
+```
+hint: 3 untracked file(s) not shown -- use 'git add -N <file>' to include
+```
+
+### Show hunk content
+
+```
+git hunk show a3f7c21                  # show diff for one hunk
+git hunk show a3f7 b82e               # show multiple hunks
+git hunk show a3f7c21 --staged        # show a staged hunk
+git hunk show a3f7 --file src/main.zig # restrict match to file
+git hunk show a3f7c21 --porcelain     # machine-readable output
+```
+
+Prints the full unified diff content for the specified hunks. Useful for
+inspecting a hunk before staging it.
 
 ### Stage hunks
 
@@ -72,6 +92,7 @@ git hunk remove a3f7 b82e             # unstage multiple
 
 ```
 git hunk list                          # see what changed
+git hunk show a3f7c21                  # inspect a hunk's diff
 git hunk add a3f7c21                   # stage first hunk
 git hunk add b82e0f4                   # stage second hunk
 git hunk list                          # verify remaining (hashes unchanged)
@@ -104,6 +125,35 @@ Example:
 ```
 a3f7c21	src/main.zig	12	18	Add error handling
 b82e0f4	src/main.zig	45	52	Replace old parser
+```
+
+## Diff output
+
+`list --diff` and `show` include inline diff content after hunk metadata.
+
+In human mode (`list --diff`), each hunk's diff lines are indented by 4 spaces:
+
+```
+a3f7c21  src/main.zig                  12-18     Add error handling
+    @@ -12,5 +12,6 @@ fn handleRequest()
+     const result = try parse(input);
+    +if (result == null) return error.Invalid;
+     return result;
+```
+
+In porcelain mode, the raw diff lines follow the metadata line verbatim, with
+records separated by a blank line:
+
+```
+a3f7c21	src/main.zig	12	18	Add error handling
+@@ -12,5 +12,6 @@ fn handleRequest()
+ const result = try parse(input);
++if (result == null) return error.Invalid;
+ return result;
+
+b82e0f4	src/main.zig	45	52	Replace old parser
+@@ -45,6 +45,7 @@
+...
 ```
 
 ## How hashing works

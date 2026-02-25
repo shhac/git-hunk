@@ -45,6 +45,97 @@ Summary is derived in priority order:
 4. **`deleted`** for deleted files
 5. Empty string if none of the above apply
 
+## Diff output (`--diff`)
+
+When `list --diff` is used, each hunk's raw diff content is printed after the
+metadata line.
+
+### Human mode
+
+Diff lines are indented by 4 spaces, followed by a blank line:
+
+```
+a3f7c21  src/main.zig                              12-18     Add error handling
+    @@ -12,5 +12,6 @@ fn handleRequest()
+     const result = try parse(input);
+    +if (result == null) return error.Invalid;
+     return result;
+
+b82e0f4  src/main.zig                              45-52     Replace old parser
+    @@ -45,6 +45,7 @@
+    ...
+```
+
+### Porcelain mode
+
+Raw diff lines follow the metadata line verbatim (no indentation). Records are
+separated by a blank line:
+
+```
+a3f7c21	src/main.zig	12	18	Add error handling
+@@ -12,5 +12,6 @@ fn handleRequest()
+ const result = try parse(input);
++if (result == null) return error.Invalid;
+ return result;
+
+b82e0f4	src/main.zig	45	52	Replace old parser
+@@ -45,6 +45,7 @@
+...
+```
+
+Blank lines are safe as record separators because unified diff hunk body lines
+always start with ` `, `+`, `-`, or `\`.
+
+## Show output
+
+`show` prints the full diff content for specific hunks.
+
+### Human mode
+
+Prints the patch header (`---`/`+++` lines) followed by `raw_lines` (the `@@`
+header and body). Multiple hunks are separated by a blank line:
+
+```
+--- a/src/main.zig
++++ b/src/main.zig
+@@ -12,5 +12,6 @@ fn handleRequest()
+ const result = try parse(input);
++if (result == null) return error.Invalid;
+ return result;
+
+--- a/src/main.zig
++++ b/src/main.zig
+@@ -45,6 +45,7 @@
+-old_parser(input);
++new_parser(input);
+ return result;
+```
+
+### Porcelain mode
+
+Same format as `list --diff --porcelain`: metadata header line, then raw diff
+lines, then blank line separator:
+
+```
+a3f7c21	src/main.zig	12	18	Add error handling
+@@ -12,5 +12,6 @@ fn handleRequest()
+ const result = try parse(input);
++if (result == null) return error.Invalid;
+ return result;
+
+```
+
+## Untracked file hint
+
+In human mode when listing unstaged hunks, if there are untracked files a hint
+is printed to stderr:
+
+```
+hint: 3 untracked file(s) not shown -- use 'git add -N <file>' to include
+```
+
+This does not appear in porcelain mode, staged mode, or `show` output.
+
 ## Porcelain (`--porcelain`)
 
 Tab-separated fields, one hunk per line. No headers, no alignment padding.

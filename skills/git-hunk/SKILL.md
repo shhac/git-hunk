@@ -32,6 +32,9 @@ git hunk list
 # b82e0f4  src/main.zig                  45-52     Replace old parser
 # e91d3a6  lib/utils.zig                 3-7       new file
 
+# Inspect a hunk before staging
+git hunk show a3f7c21
+
 # Stage specific hunks by hash
 git hunk add a3f7c21
 
@@ -78,10 +81,59 @@ a3f7c21	src/main.zig	12	18	Add error handling
 b82e0f4	src/main.zig	45	52	Replace old parser
 ```
 
+Include inline diff content:
+
+```bash
+git hunk list --diff                   # human: indented diff below each hunk
+git hunk list --diff --porcelain       # porcelain: raw diff after metadata line
+```
+
+When there are untracked files, a hint is printed to stderr (human mode,
+unstaged only):
+
+```
+hint: 3 untracked file(s) not shown -- use 'git add -N <file>' to include
+```
+
 Flags combine freely:
 
 ```bash
 git hunk list --staged --file src/main.zig --porcelain
+```
+
+## Showing hunk content
+
+Inspect the full diff content of specific hunks before staging:
+
+```bash
+git hunk show a3f7c21                         # one hunk
+git hunk show a3f7 b82e                       # multiple hunks
+git hunk show a3f7c21 --staged                # from staged hunks
+git hunk show a3f7 --file src/main.zig        # restrict match to file
+git hunk show a3f7c21 --porcelain             # machine-readable output
+```
+
+Human mode prints the unified diff fragment (`---`/`+++` header + `@@` hunk):
+
+```
+--- a/src/main.zig
++++ b/src/main.zig
+@@ -12,5 +12,6 @@ fn handleRequest()
+ const result = try parse(input);
++if (result == null) return error.Invalid;
+ return result;
+```
+
+Porcelain mode prints the metadata header line followed by raw diff lines,
+with records separated by a blank line:
+
+```
+a3f7c21	src/main.zig	12	18	Add error handling
+@@ -12,5 +12,6 @@ fn handleRequest()
+ const result = try parse(input);
++if (result == null) return error.Invalid;
+ return result;
+
 ```
 
 ## Staging hunks
