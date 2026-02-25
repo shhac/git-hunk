@@ -36,6 +36,11 @@ const ListOptions = struct {
     output: OutputMode = .human,
 };
 
+const AddRemoveOptions = struct {
+    sha_prefixes: std.ArrayList([]const u8),
+    file_filter: ?[]const u8 = null,
+};
+
 // ============================================================================
 // Entry point
 // ============================================================================
@@ -74,9 +79,21 @@ fn run() !void {
         };
         try cmdList(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "add")) {
-        try stdout.print("add: not yet implemented\n", .{});
+        var opts = parseAddRemoveArgs(allocator, args[2..]) catch {
+            try printUsage(stdout);
+            try stdout.flush();
+            std.process.exit(1);
+        };
+        defer opts.sha_prefixes.deinit(allocator);
+        try cmdAdd(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "remove")) {
-        try stdout.print("remove: not yet implemented\n", .{});
+        var opts = parseAddRemoveArgs(allocator, args[2..]) catch {
+            try printUsage(stdout);
+            try stdout.flush();
+            std.process.exit(1);
+        };
+        defer opts.sha_prefixes.deinit(allocator);
+        try cmdRemove(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "--help") or std.mem.eql(u8, subcmd, "-h") or std.mem.eql(u8, subcmd, "help")) {
         try printUsage(stdout);
     } else {
@@ -120,6 +137,49 @@ fn parseListArgs(args: []const [:0]u8) !ListOptions {
     return opts;
 }
 
+fn parseAddRemoveArgs(allocator: Allocator, args: []const [:0]u8) !AddRemoveOptions {
+    var opts: AddRemoveOptions = .{
+        .sha_prefixes = .empty,
+    };
+    errdefer opts.sha_prefixes.deinit(allocator);
+
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        const arg = args[i];
+        if (std.mem.eql(u8, arg, "--file")) {
+            i += 1;
+            if (i >= args.len) return error.MissingArgument;
+            opts.file_filter = args[i];
+        } else if (std.mem.startsWith(u8, arg, "-")) {
+            return error.UnknownFlag;
+        } else {
+            // SHA prefix — validate it's hex and at least 4 chars
+            if (arg.len < 4) {
+                std.debug.print("error: sha prefix too short (minimum 4 chars): '{s}'\n", .{arg});
+                return error.InvalidArgument;
+            }
+            for (arg) |c| {
+                if (!isHexDigit(c)) {
+                    std.debug.print("error: invalid hex in sha prefix: '{s}'\n", .{arg});
+                    return error.InvalidArgument;
+                }
+            }
+            try opts.sha_prefixes.append(allocator, arg);
+        }
+    }
+
+    if (opts.sha_prefixes.items.len == 0) {
+        std.debug.print("error: at least one <sha> argument required\n", .{});
+        return error.MissingArgument;
+    }
+
+    return opts;
+}
+
+fn isHexDigit(c: u8) bool {
+    return (c >= '0' and c <= '9') or (c >= 'a' and c <= 'f') or (c >= 'A' and c <= 'F');
+}
+
 // ============================================================================
 // List command
 // ============================================================================
@@ -151,6 +211,117 @@ fn cmdList(allocator: Allocator, stdout: *std.Io.Writer, opts: ListOptions) !voi
             .porcelain => try printHunkPorcelain(stdout, h),
         }
     }
+}
+
+// ============================================================================
+// Add / Remove commands
+// ============================================================================
+
+fn cmdAdd(allocator: Allocator, stdout: *std.Io.Writer, opts: AddRemoveOptions) !void {
+    try cmdApplyHunks(allocator, stdout, opts, .stage);
+}
+
+fn cmdRemove(allocator: Allocator, stdout: *std.Io.Writer, opts: AddRemoveOptions) !void {
+    try cmdApplyHunks(allocator, stdout, opts, .unstage);
+}
+
+const ApplyAction = enum { stage, unstage };
+
+fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddRemoveOptions, action: ApplyAction) !void {
+    // For staging: diff unstaged hunks (index vs worktree)
+    // For unstaging: diff staged hunks (HEAD vs index)
+    const diff_mode: DiffMode = switch (action) {
+        .stage => .unstaged,
+        .unstage => .staged,
+    };
+
+    const diff_output = try runGitDiff(allocator, diff_mode);
+    defer allocator.free(diff_output);
+
+    if (diff_output.len == 0) {
+        const msg = switch (action) {
+            .stage => "no unstaged changes\n",
+            .unstage => "no staged changes\n",
+        };
+        std.debug.print("{s}", .{msg});
+        std.process.exit(1);
+    }
+
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var hunks: std.ArrayList(Hunk) = .empty;
+    defer hunks.deinit(arena);
+    try parseDiff(arena, diff_output, diff_mode, &hunks);
+
+    // Resolve each SHA prefix to a hunk
+    var matched: std.ArrayList(*const Hunk) = .empty;
+    defer matched.deinit(arena);
+
+    for (opts.sha_prefixes.items) |prefix| {
+        const hunk = findHunkByShaPrefix(hunks.items, prefix, opts.file_filter) catch |err| switch (err) {
+            error.NotFound => {
+                std.debug.print("error: no hunk matching '{s}'\n", .{prefix});
+                std.process.exit(1);
+            },
+            error.AmbiguousPrefix => {
+                std.debug.print("error: ambiguous prefix '{s}' — matches multiple hunks\n", .{prefix});
+                std.process.exit(1);
+            },
+            else => return err,
+        };
+        try matched.append(arena, hunk);
+    }
+
+    // Build combined patch and apply
+    const patch = try buildCombinedPatch(arena, matched.items);
+    const reverse = action == .unstage;
+    try runGitApply(allocator, patch, reverse);
+
+    // Report what was applied
+    const verb: []const u8 = switch (action) {
+        .stage => "staged",
+        .unstage => "unstaged",
+    };
+    for (matched.items) |h| {
+        try stdout.print("{s} {s}  {s}\n", .{ verb, h.sha_hex[0..7], h.file_path });
+    }
+}
+
+fn findHunkByShaPrefix(hunks: []const Hunk, prefix: []const u8, file_filter: ?[]const u8) !*const Hunk {
+    var match: ?*const Hunk = null;
+    for (hunks) |*h| {
+        if (file_filter) |filter| {
+            if (!std.mem.eql(u8, h.file_path, filter)) continue;
+        }
+        if (std.mem.startsWith(u8, &h.sha_hex, prefix)) {
+            if (match != null) return error.AmbiguousPrefix;
+            match = h;
+        }
+    }
+    return match orelse error.NotFound;
+}
+
+fn buildCombinedPatch(arena: Allocator, hunks: []const *const Hunk) ![]const u8 {
+    var patch: std.ArrayList(u8) = .empty;
+
+    // Group hunks by patch_header to combine hunks from the same file
+    // under a single header. We iterate in order and track the last header.
+    var last_header: []const u8 = "";
+    for (hunks) |h| {
+        if (!std.mem.eql(u8, h.patch_header, last_header)) {
+            try patch.appendSlice(arena, h.patch_header);
+            last_header = h.patch_header;
+        }
+        try patch.appendSlice(arena, h.raw_lines);
+        // Ensure trailing newline
+        if (h.raw_lines.len > 0 and h.raw_lines[h.raw_lines.len - 1] != '\n') {
+            try patch.append(arena, '\n');
+        }
+    }
+
+    return patch.items;
 }
 
 // ============================================================================
@@ -193,6 +364,48 @@ fn runGitDiff(allocator: Allocator, mode: DiffMode) ![]u8 {
     const owned = try allocator.alloc(u8, child_stdout.items.len);
     @memcpy(owned, child_stdout.items);
     return owned;
+}
+
+fn runGitApply(allocator: Allocator, patch: []const u8, reverse: bool) !void {
+    const argv: []const []const u8 = if (reverse)
+        &.{ "git", "apply", "--cached", "--reverse" }
+    else
+        &.{ "git", "apply", "--cached" };
+
+    var child = std.process.Child.init(argv, allocator);
+    child.stdin_behavior = .Pipe;
+    child.stdout_behavior = .Pipe;
+    child.stderr_behavior = .Pipe;
+
+    try child.spawn();
+
+    // Write patch to stdin, then close
+    const stdin_file = child.stdin.?;
+    stdin_file.writeAll(patch) catch {};
+    stdin_file.close();
+    child.stdin = null;
+
+    var child_stdout: std.ArrayList(u8) = .empty;
+    defer child_stdout.deinit(allocator);
+    var child_stderr: std.ArrayList(u8) = .empty;
+    defer child_stderr.deinit(allocator);
+
+    const max_bytes = 1 * 1024 * 1024;
+    try child.collectOutput(allocator, &child_stdout, &child_stderr, max_bytes);
+    const term = try child.wait();
+
+    switch (term) {
+        .Exited => |code| {
+            if (code != 0) {
+                if (child_stderr.items.len > 0) {
+                    std.debug.print("{s}", .{child_stderr.items});
+                }
+                std.debug.print("error: patch did not apply cleanly — re-run 'list' and try again\n", .{});
+                std.process.exit(1);
+            }
+        },
+        else => fatal("git apply terminated abnormally", .{}),
+    }
 }
 
 // ============================================================================
