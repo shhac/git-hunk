@@ -207,8 +207,8 @@ fn cmdList(allocator: Allocator, stdout: *std.Io.Writer, opts: ListOptions) !voi
             if (!std.mem.eql(u8, h.file_path, filter)) continue;
         }
         switch (opts.output) {
-            .human => try printHunkHuman(stdout, h, hunks.items),
-            .porcelain => try printHunkPorcelain(stdout, h),
+            .human => try printHunkHuman(stdout, h, opts.mode),
+            .porcelain => try printHunkPorcelain(stdout, h, opts.mode),
         }
     }
 }
@@ -255,7 +255,7 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddRemoveOp
     defer hunks.deinit(arena);
     try parseDiff(arena, diff_output, diff_mode, &hunks);
 
-    // Resolve each SHA prefix to a hunk
+    // Resolve each SHA prefix to a hunk, deduplicating by full SHA
     var matched: std.ArrayList(*const Hunk) = .empty;
     defer matched.deinit(arena);
 
@@ -271,7 +271,17 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddRemoveOp
             },
             else => return err,
         };
-        try matched.append(arena, hunk);
+        // Deduplicate: skip if this exact hunk (by full SHA) is already matched
+        var already_matched = false;
+        for (matched.items) |existing| {
+            if (std.mem.eql(u8, &existing.sha_hex, &hunk.sha_hex)) {
+                already_matched = true;
+                break;
+            }
+        }
+        if (!already_matched) {
+            try matched.append(arena, hunk);
+        }
     }
 
     // Build combined patch and apply
@@ -707,43 +717,79 @@ fn computeHunkSha(file_path: []const u8, stable_line: u32, diff_lines: []const u
 // Output formatting
 // ============================================================================
 
-fn printHunkHuman(stdout: *std.Io.Writer, h: Hunk, all: []const Hunk) !void {
-    _ = all; // Could use for dynamic column widths later
-
+fn printHunkHuman(stdout: *std.Io.Writer, h: Hunk, mode: DiffMode) !void {
     const short_sha = h.sha_hex[0..7];
-    const summary = hunkSummary(h);
+    var summary_buf: [64]u8 = undefined;
+    const summary = hunkSummaryWithFallback(&summary_buf, h);
 
     var range_buf: [24]u8 = undefined;
-    const range = formatLineRange(&range_buf, h);
+    const range = formatLineRange(&range_buf, h, mode);
 
     try stdout.print("{s}  {s:<40}  {s:<8}  {s}\n", .{ short_sha, h.file_path, range, summary });
 }
 
-fn printHunkPorcelain(stdout: *std.Io.Writer, h: Hunk) !void {
+fn printHunkPorcelain(stdout: *std.Io.Writer, h: Hunk, mode: DiffMode) !void {
     const short_sha = h.sha_hex[0..7];
-    const summary = hunkSummary(h);
+    var summary_buf: [64]u8 = undefined;
+    const summary = hunkSummaryWithFallback(&summary_buf, h);
+
+    const start_line = stableStartLine(h, mode);
+    const end_line = stableEndLine(h, mode);
 
     try stdout.print("{s}\t{s}\t{d}\t{d}\t{s}\n", .{
         short_sha,
         h.file_path,
-        h.old_start,
-        h.new_start,
+        start_line,
+        end_line,
         summary,
     });
 }
 
-fn hunkSummary(h: Hunk) []const u8 {
+fn stableStartLine(h: Hunk, mode: DiffMode) u32 {
+    return switch (mode) {
+        .unstaged => h.new_start,
+        .staged => h.old_start,
+    };
+}
+
+fn stableEndLine(h: Hunk, mode: DiffMode) u32 {
+    return switch (mode) {
+        .unstaged => if (h.new_count > 0) h.new_start + h.new_count - 1 else h.new_start,
+        .staged => if (h.old_count > 0) h.old_start + h.old_count - 1 else h.old_start,
+    };
+}
+
+fn hunkSummaryWithFallback(buf: []u8, h: Hunk) []const u8 {
     if (h.context.len > 0) return h.context;
     if (h.is_new_file) return "new file";
     if (h.is_deleted_file) return "deleted";
-    // No function context; return empty — the hash, file, and line range
-    // are sufficient for identification.
+    // No function context — extract first changed line as summary
+    return firstChangedLine(buf, h.diff_lines);
+}
+
+fn firstChangedLine(buf: []u8, diff_lines: []const u8) []const u8 {
+    var iter = std.mem.splitScalar(u8, diff_lines, '\n');
+    while (iter.next()) |line| {
+        if (line.len > 1 and (line[0] == '+' or line[0] == '-')) {
+            // Strip the +/- prefix and trim leading whitespace
+            var content = line[1..];
+            while (content.len > 0 and content[0] == ' ') {
+                content = content[1..];
+            }
+            if (content.len == 0) continue;
+            // Truncate to buffer size - keep room for nul safety
+            const max_len = @min(content.len, buf.len);
+            @memcpy(buf[0..max_len], content[0..max_len]);
+            return buf[0..max_len];
+        }
+    }
     return "";
 }
 
-fn formatLineRange(buf: []u8, h: Hunk) []const u8 {
-    const end_line = if (h.new_count > 0) h.new_start + h.new_count - 1 else h.new_start;
-    return std.fmt.bufPrint(buf, "{d}-{d}", .{ h.new_start, end_line }) catch "";
+fn formatLineRange(buf: []u8, h: Hunk, mode: DiffMode) []const u8 {
+    const start = stableStartLine(h, mode);
+    const end = stableEndLine(h, mode);
+    return std.fmt.bufPrint(buf, "{d}-{d}", .{ start, end }) catch "";
 }
 
 // ============================================================================
