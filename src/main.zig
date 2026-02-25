@@ -43,12 +43,14 @@ const ListOptions = struct {
     output: OutputMode = .human,
     show_diff: bool = false,
     no_color: bool = false,
+    context: ?u32 = null,
 };
 
 const AddRemoveOptions = struct {
     sha_prefixes: std.ArrayList([]const u8),
     file_filter: ?[]const u8 = null,
     select_all: bool = false,
+    context: ?u32 = null,
 };
 
 const ShowOptions = struct {
@@ -57,6 +59,7 @@ const ShowOptions = struct {
     mode: DiffMode = .unstaged,
     output: OutputMode = .human,
     no_color: bool = false,
+    context: ?u32 = null,
 };
 
 // ============================================================================
@@ -140,12 +143,17 @@ fn printUsage(stdout: *std.Io.Writer) !void {
         \\usage: git-hunk <command> [<args>]
         \\
         \\commands:
-        \\  list [--staged] [--file <path>] [--porcelain] [--diff] [--no-color]
+        \\  list [--staged] [--file <path>] [--porcelain] [--diff] [--no-color] [--context <n>]
         \\                                                List diff hunks
-        \\  show <sha>... [--staged] [--file <path>] [--porcelain] [--no-color]
+        \\  show <sha>... [--staged] [--file <path>] [--porcelain] [--no-color] [--context <n>]
         \\                                                Show diff content of hunks
-        \\  add [--all] [--file <path>] [<sha>...]          Stage hunks
-        \\  remove [--all] [--file <path>] [<sha>...]       Unstage hunks
+        \\  add [--all] [--file <path>] [--context <n>] [<sha>...]
+        \\                                                Stage hunks
+        \\  remove [--all] [--file <path>] [--context <n>] [<sha>...]
+        \\                                                Unstage hunks
+        \\
+        \\options:
+        \\  --context <n>  Lines of diff context (default: 1)
         \\
     , .{});
 }
@@ -167,6 +175,10 @@ fn parseListArgs(args: []const [:0]u8) !ListOptions {
             i += 1;
             if (i >= args.len) return error.MissingArgument;
             opts.file_filter = args[i];
+        } else if (std.mem.eql(u8, arg, "--context")) {
+            i += 1;
+            if (i >= args.len) return error.MissingArgument;
+            opts.context = std.fmt.parseInt(u32, args[i], 10) catch return error.InvalidArgument;
         } else {
             return error.UnknownFlag;
         }
@@ -189,6 +201,10 @@ fn parseAddRemoveArgs(allocator: Allocator, args: []const [:0]u8) !AddRemoveOpti
             opts.file_filter = args[i];
         } else if (std.mem.eql(u8, arg, "--all")) {
             opts.select_all = true;
+        } else if (std.mem.eql(u8, arg, "--context")) {
+            i += 1;
+            if (i >= args.len) return error.MissingArgument;
+            opts.context = std.fmt.parseInt(u32, args[i], 10) catch return error.InvalidArgument;
         } else if (std.mem.startsWith(u8, arg, "-")) {
             return error.UnknownFlag;
         } else {
@@ -234,6 +250,10 @@ fn parseShowArgs(allocator: Allocator, args: []const [:0]u8) !ShowOptions {
             opts.output = .porcelain;
         } else if (std.mem.eql(u8, arg, "--no-color")) {
             opts.no_color = true;
+        } else if (std.mem.eql(u8, arg, "--context")) {
+            i += 1;
+            if (i >= args.len) return error.MissingArgument;
+            opts.context = std.fmt.parseInt(u32, args[i], 10) catch return error.InvalidArgument;
         } else if (std.mem.startsWith(u8, arg, "-")) {
             return error.UnknownFlag;
         } else {
@@ -344,7 +364,7 @@ fn hunkPatchOrder(_: void, a: *const Hunk, b: *const Hunk) bool {
 // ============================================================================
 
 fn cmdList(allocator: Allocator, stdout: *std.Io.Writer, opts: ListOptions) !void {
-    const diff_output = try runGitDiff(allocator, opts.mode);
+    const diff_output = try runGitDiff(allocator, opts.mode, opts.context);
     defer allocator.free(diff_output);
 
     if (diff_output.len == 0) return;
@@ -439,7 +459,7 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddRemoveOp
         .unstage => .staged,
     };
 
-    const diff_output = try runGitDiff(allocator, diff_mode);
+    const diff_output = try runGitDiff(allocator, diff_mode, opts.context);
     defer allocator.free(diff_output);
 
     if (diff_output.len == 0) {
@@ -505,7 +525,7 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddRemoveOp
     // Build combined patch and apply
     const patch = try buildCombinedPatch(arena, matched.items);
     const reverse = action == .unstage;
-    try runGitApply(allocator, patch, reverse);
+    try runGitApply(allocator, patch, reverse, opts.context);
 
     // Report what was applied
     const verb: []const u8 = switch (action) {
@@ -522,7 +542,7 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddRemoveOp
 // ============================================================================
 
 fn cmdShow(allocator: Allocator, stdout: *std.Io.Writer, opts: ShowOptions) !void {
-    const diff_output = try runGitDiff(allocator, opts.mode);
+    const diff_output = try runGitDiff(allocator, opts.mode, opts.context);
     defer allocator.free(diff_output);
 
     if (diff_output.len == 0) {
@@ -629,11 +649,28 @@ fn buildCombinedPatch(arena: Allocator, hunks: []const *const Hunk) ![]const u8 
 // Git interaction
 // ============================================================================
 
-fn runGitDiff(allocator: Allocator, mode: DiffMode) ![]u8 {
-    const argv: []const []const u8 = switch (mode) {
-        .unstaged => &.{ "git", "diff", "--src-prefix=a/", "--dst-prefix=b/", "--no-color" },
-        .staged => &.{ "git", "diff", "--cached", "--src-prefix=a/", "--dst-prefix=b/", "--no-color" },
-    };
+fn runGitDiff(allocator: Allocator, mode: DiffMode, context: ?u32) ![]u8 {
+    var argv_buf: [8][]const u8 = undefined;
+    var argc: usize = 0;
+    argv_buf[argc] = "git";
+    argc += 1;
+    argv_buf[argc] = "diff";
+    argc += 1;
+    if (mode == .staged) {
+        argv_buf[argc] = "--cached";
+        argc += 1;
+    }
+    var context_buf: [16]u8 = undefined;
+    const ctx = context orelse 1;
+    argv_buf[argc] = std.fmt.bufPrint(&context_buf, "-U{d}", .{ctx}) catch "-U1";
+    argc += 1;
+    argv_buf[argc] = "--src-prefix=a/";
+    argc += 1;
+    argv_buf[argc] = "--dst-prefix=b/";
+    argc += 1;
+    argv_buf[argc] = "--no-color";
+    argc += 1;
+    const argv: []const []const u8 = argv_buf[0..argc];
 
     var child = std.process.Child.init(argv, allocator);
     child.stdout_behavior = .Pipe;
@@ -671,11 +708,24 @@ fn runGitDiff(allocator: Allocator, mode: DiffMode) ![]u8 {
     return try child_stdout.toOwnedSlice(allocator);
 }
 
-fn runGitApply(allocator: Allocator, patch: []const u8, reverse: bool) !void {
-    const argv: []const []const u8 = if (reverse)
-        &.{ "git", "apply", "--cached", "--reverse" }
-    else
-        &.{ "git", "apply", "--cached" };
+fn runGitApply(allocator: Allocator, patch: []const u8, reverse: bool, context: ?u32) !void {
+    var argv_buf: [6][]const u8 = undefined;
+    var argc: usize = 0;
+    argv_buf[argc] = "git";
+    argc += 1;
+    argv_buf[argc] = "apply";
+    argc += 1;
+    argv_buf[argc] = "--cached";
+    argc += 1;
+    if (reverse) {
+        argv_buf[argc] = "--reverse";
+        argc += 1;
+    }
+    if (context != null and context.? == 0) {
+        argv_buf[argc] = "--unidiff-zero";
+        argc += 1;
+    }
+    const argv: []const []const u8 = argv_buf[0..argc];
 
     var child = std.process.Child.init(argv, allocator);
     child.stdin_behavior = .Pipe;
@@ -1805,6 +1855,33 @@ test "parseListArgs all flags combined" {
     try std.testing.expectEqualStrings("foo.txt", opts.file_filter.?);
 }
 
+test "parseListArgs context" {
+    const args = [_][:0]u8{ @constCast("--context"), @constCast("0") };
+    const opts = try parseListArgs(&args);
+    try std.testing.expectEqual(@as(?u32, 0), opts.context);
+}
+
+test "parseListArgs context value" {
+    const args = [_][:0]u8{ @constCast("--context"), @constCast("5") };
+    const opts = try parseListArgs(&args);
+    try std.testing.expectEqual(@as(?u32, 5), opts.context);
+}
+
+test "parseListArgs context missing arg" {
+    const args = [_][:0]u8{@constCast("--context")};
+    try std.testing.expectError(error.MissingArgument, parseListArgs(&args));
+}
+
+test "parseListArgs context invalid" {
+    const args = [_][:0]u8{ @constCast("--context"), @constCast("abc") };
+    try std.testing.expectError(error.InvalidArgument, parseListArgs(&args));
+}
+
+test "parseListArgs context default null" {
+    const opts = try parseListArgs(&.{});
+    try std.testing.expectEqual(@as(?u32, null), opts.context);
+}
+
 // ============================================================================
 // Unit tests: parseAddRemoveArgs
 // ============================================================================
@@ -1866,6 +1943,20 @@ test "parseAddRemoveArgs multiple shas" {
     try std.testing.expectEqual(@as(usize, 2), opts.sha_prefixes.items.len);
 }
 
+test "parseAddRemoveArgs context" {
+    const allocator = std.testing.allocator;
+    const args = [_][:0]u8{ @constCast("--all"), @constCast("--context"), @constCast("1") };
+    var opts = try parseAddRemoveArgs(allocator, &args);
+    defer opts.sha_prefixes.deinit(allocator);
+    try std.testing.expectEqual(@as(?u32, 1), opts.context);
+}
+
+test "parseAddRemoveArgs context missing arg" {
+    const allocator = std.testing.allocator;
+    const args = [_][:0]u8{ @constCast("--all"), @constCast("--context") };
+    try std.testing.expectError(error.MissingArgument, parseAddRemoveArgs(allocator, &args));
+}
+
 // ============================================================================
 // Unit tests: parseShowArgs
 // ============================================================================
@@ -1911,6 +2002,20 @@ test "parseShowArgs unknown flag" {
 test "parseShowArgs missing sha" {
     const allocator = std.testing.allocator;
     try std.testing.expectError(error.MissingArgument, parseShowArgs(allocator, &.{}));
+}
+
+test "parseShowArgs context" {
+    const allocator = std.testing.allocator;
+    const args = [_][:0]u8{ @constCast("abcd1234"), @constCast("--context"), @constCast("2") };
+    var opts = try parseShowArgs(allocator, &args);
+    defer opts.sha_prefixes.deinit(allocator);
+    try std.testing.expectEqual(@as(?u32, 2), opts.context);
+}
+
+test "parseShowArgs context missing arg" {
+    const allocator = std.testing.allocator;
+    const args = [_][:0]u8{ @constCast("abcd1234"), @constCast("--context") };
+    try std.testing.expectError(error.MissingArgument, parseShowArgs(allocator, &args));
 }
 
 // ============================================================================

@@ -1,7 +1,7 @@
 # git-hunk
 
 Non-interactive, deterministic hunk staging for git. Enumerate hunks, select by
-content hash, stage or unstage them -- no TUI required.
+foo content hash, stage or unstage them -- no TUI required.
 
 ## Why
 
