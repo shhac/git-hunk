@@ -695,27 +695,49 @@ fn countUntrackedFiles(allocator: Allocator) !u32 {
 // Diff parser — index-based, two-pass approach
 // ============================================================================
 
-fn parseDiff(arena: Allocator, diff: []const u8, mode: DiffMode, hunks: *std.ArrayList(Hunk)) !void {
-    // Split into lines (keeping slices into original buffer)
-    var line_list: std.ArrayList([]const u8) = .empty;
-    defer line_list.deinit(arena);
+const DiffCursor = struct {
+    buf: []const u8,
+    pos: usize,
 
-    var iter = std.mem.splitScalar(u8, diff, '\n');
-    while (iter.next()) |line| {
-        try line_list.append(arena, line);
+    fn init(buf: []const u8) DiffCursor {
+        return .{ .buf = buf, .pos = 0 };
     }
-    const lines = line_list.items;
 
-    var i: usize = 0;
-    while (i < lines.len) {
+    /// Returns the current line without consuming it.
+    fn peek(self: *const DiffCursor) ?[]const u8 {
+        if (self.pos >= self.buf.len) return null;
+        const end = std.mem.indexOfScalarPos(u8, self.buf, self.pos, '\n') orelse self.buf.len;
+        return self.buf[self.pos..end];
+    }
+
+    /// Returns the line after the current line, without consuming either.
+    fn peekNext(self: *const DiffCursor) ?[]const u8 {
+        if (self.pos >= self.buf.len) return null;
+        const cur_end = std.mem.indexOfScalarPos(u8, self.buf, self.pos, '\n') orelse return null;
+        const next_start = cur_end + 1;
+        if (next_start >= self.buf.len) return null;
+        const next_end = std.mem.indexOfScalarPos(u8, self.buf, next_start, '\n') orelse self.buf.len;
+        return self.buf[next_start..next_end];
+    }
+
+    /// Advances past the current line and its newline.
+    fn advance(self: *DiffCursor) void {
+        if (self.pos >= self.buf.len) return;
+        const end = std.mem.indexOfScalarPos(u8, self.buf, self.pos, '\n') orelse self.buf.len;
+        self.pos = if (end < self.buf.len) end + 1 else self.buf.len;
+    }
+};
+
+fn parseDiff(arena: Allocator, diff: []const u8, mode: DiffMode, hunks: *std.ArrayList(Hunk)) !void {
+    var cursor = DiffCursor.init(diff);
+
+    while (cursor.peek() != null) {
         // Look for "diff --git" to start a new file section
-        if (!std.mem.startsWith(u8, lines[i], "diff --git ")) {
-            i += 1;
-            continue;
-        }
+        const outer_line = cursor.peek().?;
+        cursor.advance();
+        if (!std.mem.startsWith(u8, outer_line, "diff --git ")) continue;
 
-        const diff_git_line = lines[i];
-        i += 1;
+        const diff_git_line = outer_line;
 
         // Parse extended headers
         var is_new_file = false;
@@ -726,8 +748,7 @@ fn parseDiff(arena: Allocator, diff: []const u8, mode: DiffMode, hunks: *std.Arr
         var rename_from: ?[]const u8 = null;
         var rename_to: ?[]const u8 = null;
 
-        while (i < lines.len) {
-            const line = lines[i];
+        while (cursor.peek()) |line| {
             if (std.mem.startsWith(u8, line, "new file mode ")) {
                 is_new_file = true;
                 file_mode = line["new file mode ".len..];
@@ -755,19 +776,19 @@ fn parseDiff(arena: Allocator, diff: []const u8, mode: DiffMode, hunks: *std.Arr
             } else {
                 break; // Not an extended header
             }
-            i += 1;
+            cursor.advance();
         }
 
         if (is_binary or is_submodule) continue;
 
         // Expect ---/+++ lines
-        if (i >= lines.len or !std.mem.startsWith(u8, lines[i], "--- ")) continue;
-        const minus_line = lines[i];
-        i += 1;
+        const minus_line = cursor.peek() orelse continue;
+        if (!std.mem.startsWith(u8, minus_line, "--- ")) continue;
+        cursor.advance();
 
-        if (i >= lines.len or !std.mem.startsWith(u8, lines[i], "+++ ")) continue;
-        const plus_line = lines[i];
-        i += 1;
+        const plus_line = cursor.peek() orelse continue;
+        if (!std.mem.startsWith(u8, plus_line, "+++ ")) continue;
+        cursor.advance();
 
         // Extract file path (handles both normal and C-quoted paths)
         const file_path = if (is_deleted_file)
@@ -820,30 +841,33 @@ fn parseDiff(arena: Allocator, diff: []const u8, mode: DiffMode, hunks: *std.Arr
         }
 
         // Parse hunks for this file
-        while (i < lines.len and std.mem.startsWith(u8, lines[i], "@@ ")) {
-            const hunk_header_line = lines[i];
-            const header = parseHunkHeader(hunk_header_line) orelse {
-                i += 1;
-                continue;
-            };
-            i += 1;
+        while (cursor.peek()) |hdr| {
+            if (!std.mem.startsWith(u8, hdr, "@@ ")) break;
+            cursor.advance();
+            const hunk_header_line = hdr;
+            const header = parseHunkHeader(hunk_header_line) orelse continue;
 
-            // Collect body lines and diff_lines
-            const body_start = i;
+            // Collect body lines and diff_lines.
+            // last_line_end tracks sliceEnd of the last consumed line; initialized to the
+            // @@ line itself so raw_end is correct when no body lines are consumed.
             var diff_lines_buf: std.ArrayList(u8) = .empty;
+            var last_line_end = sliceEnd(diff, hunk_header_line);
 
-            while (i < lines.len) {
-                const bline = lines[i];
+            while (cursor.peek()) |bline| {
                 if (bline.len == 0) {
                     // Could be empty context line (space prefix stripped?) or end of diff.
                     // Check next line to decide.
-                    if (i + 1 < lines.len and
-                        (std.mem.startsWith(u8, lines[i + 1], " ") or
-                        std.mem.startsWith(u8, lines[i + 1], "+") or
-                        std.mem.startsWith(u8, lines[i + 1], "-") or
-                        std.mem.startsWith(u8, lines[i + 1], "\\")))
-                    {
-                        i += 1;
+                    const next_line = cursor.peekNext();
+                    const is_body = if (next_line) |nl|
+                        std.mem.startsWith(u8, nl, " ") or
+                        std.mem.startsWith(u8, nl, "+") or
+                        std.mem.startsWith(u8, nl, "-") or
+                        std.mem.startsWith(u8, nl, "\\")
+                    else
+                        false;
+                    if (is_body) {
+                        last_line_end = sliceEnd(diff, bline);
+                        cursor.advance();
                         continue;
                     }
                     break;
@@ -857,7 +881,8 @@ fn parseDiff(arena: Allocator, diff: []const u8, mode: DiffMode, hunks: *std.Arr
                         }
                         try diff_lines_buf.appendSlice(arena, bline);
                     }
-                    i += 1;
+                    last_line_end = sliceEnd(diff, bline);
+                    cursor.advance();
                     continue;
                 }
 
@@ -866,7 +891,8 @@ fn parseDiff(arena: Allocator, diff: []const u8, mode: DiffMode, hunks: *std.Arr
                         try diff_lines_buf.append(arena, '\n');
                     }
                     try diff_lines_buf.appendSlice(arena, bline);
-                    i += 1;
+                    last_line_end = sliceEnd(diff, bline);
+                    cursor.advance();
                     continue;
                 }
 
@@ -879,8 +905,7 @@ fn parseDiff(arena: Allocator, diff: []const u8, mode: DiffMode, hunks: *std.Arr
 
             // Compute raw_lines (from @@ line through end of body)
             const raw_start = sliceStart(diff, hunk_header_line);
-            const raw_end = if (i > body_start) sliceEnd(diff, lines[i - 1]) else sliceEnd(diff, hunk_header_line);
-            const raw_lines = diff[raw_start..raw_end];
+            const raw_lines = diff[raw_start..last_line_end];
 
             const sha = computeHunkSha(file_path, header.stable_line(mode), diff_lines_buf.items);
 
