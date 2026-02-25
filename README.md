@@ -41,6 +41,7 @@ git hunk list --staged                 # staged hunks
 git hunk list --file src/main.zig      # filter by file
 git hunk list --porcelain              # machine-readable output
 git hunk list --diff                   # include inline diff content
+git hunk list --no-color               # disable color output
 ```
 
 Example output:
@@ -79,6 +80,8 @@ inspecting a hunk before staging it.
 git hunk add a3f7c21                   # stage one hunk
 git hunk add a3f7 b82e                 # stage multiple (prefix match, min 4 chars)
 git hunk add a3f7c21 --file src/main.zig   # restrict match to file
+git hunk add --all                     # stage all unstaged hunks
+git hunk add --file src/main.zig       # stage all hunks in a file
 ```
 
 ### Unstage hunks
@@ -86,6 +89,8 @@ git hunk add a3f7c21 --file src/main.zig   # restrict match to file
 ```
 git hunk remove a3f7c21               # unstage from index
 git hunk remove a3f7 b82e             # unstage multiple
+git hunk remove --all                  # unstage everything
+git hunk remove --file src/main.zig    # unstage all hunks in a file
 ```
 
 ### Typical workflow
@@ -175,14 +180,28 @@ remains constant as other hunks in the same file are staged or unstaged. This
 means you can list hashes, stage some hunks, and the remaining hashes stay the
 same.
 
+## Color output
+
+In human mode, output is colorized when stdout is a TTY:
+
+- SHA hashes in yellow
+- Added lines (`+`) in green
+- Removed lines (`-`) in red
+
+Color is disabled automatically when piping output. Use `--no-color` to disable
+explicitly, or set the `NO_COLOR` environment variable.
+
 ## Handles
 
 - Modified files (single and multi-hunk)
 - New files (via `git add -N`)
 - Deleted files
+- Renamed files (with content changes)
+- Files with C-quoted paths (tabs, backslashes)
 - Files with no trailing newline
 - Prefix matching (minimum 4 hex characters)
 - Ambiguous prefix detection
+- Bulk staging via `--all` or `--file` without SHAs
 
 ## License
 

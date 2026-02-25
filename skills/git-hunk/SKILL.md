@@ -86,6 +86,7 @@ Include inline diff content:
 ```bash
 git hunk list --diff                   # human: indented diff below each hunk
 git hunk list --diff --porcelain       # porcelain: raw diff after metadata line
+git hunk list --no-color               # disable color output
 ```
 
 When there are untracked files, a hint is printed to stderr (human mode,
@@ -145,6 +146,8 @@ git hunk add a3f7c21                         # one hunk
 git hunk add a3f7c21 b82e0f4                 # multiple hunks
 git hunk add a3f7 b82e                       # prefix match (min 4 hex chars)
 git hunk add a3f7c21 --file src/main.zig     # restrict match to file
+git hunk add --all                           # stage all unstaged hunks
+git hunk add --file src/main.zig             # stage all hunks in a file
 ```
 
 On success, prints confirmation to stdout:
@@ -160,6 +163,8 @@ Unstage hunks from the index back to the working tree:
 ```bash
 git hunk remove a3f7c21                      # one hunk
 git hunk remove a3f7 b82e                    # multiple hunks
+git hunk remove --all                        # unstage everything
+git hunk remove --file src/main.zig          # unstage all hunks in a file
 ```
 
 Use hashes from `git hunk list --staged`. Note that staged and unstaged hashes
@@ -185,10 +190,10 @@ side is stable.
 
 ## Scripting patterns
 
-Stage all hunks in a file:
+Stage all hunks in a file (built-in):
 
 ```bash
-git hunk list --porcelain --file src/main.zig | cut -f1 | xargs git hunk add
+git hunk add --file src/main.zig
 ```
 
 List hunk hashes only:
