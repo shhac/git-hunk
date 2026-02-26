@@ -137,7 +137,7 @@ Fields:
 - `file` -- file path
 - `start_line` -- first line of the hunk range
 - `end_line` -- last line of the hunk range
-- `summary` -- function context, first changed line, "new file", or "deleted"
+- `summary` -- first changed line, function context (fallback), "new file", or "deleted"
 
 Line ranges are mode-aware: for unstaged hunks they refer to worktree lines, for
 staged hunks they refer to HEAD lines. This ensures hashes and ranges remain

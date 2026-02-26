@@ -237,11 +237,14 @@ fn stableEndLine(h: Hunk, mode: DiffMode) u32 {
 }
 
 fn hunkSummaryWithFallback(buf: []u8, h: Hunk) []const u8 {
-    if (h.context.len > 0) return h.context;
     if (h.is_new_file) return "new file";
     if (h.is_deleted_file) return "deleted";
-    // No function context — extract first changed line as summary
-    return firstChangedLine(buf, h.diff_lines);
+    // Prefer first changed line — answers "what changed?" for quick scanning
+    const changed = firstChangedLine(buf, h.diff_lines);
+    if (changed.len > 0) return changed;
+    // Fall back to function context from @@ header
+    if (h.context.len > 0) return h.context;
+    return "";
 }
 
 fn firstChangedLine(buf: []u8, diff_lines: []const u8) []const u8 {
@@ -328,10 +331,19 @@ test "firstChangedLine truncates to buffer size" {
     try std.testing.expectEqualStrings("hello", result);
 }
 
-test "hunkSummaryWithFallback uses context" {
+test "hunkSummaryWithFallback prefers changed line over context" {
     var buf: [64]u8 = undefined;
     var h = testMakeHunk("f.txt", 1, 1, 1, 1);
     h.context = "fn main()";
+    h.diff_lines = "+hello world";
+    try std.testing.expectEqualStrings("hello world", hunkSummaryWithFallback(&buf, h));
+}
+
+test "hunkSummaryWithFallback falls back to context" {
+    var buf: [64]u8 = undefined;
+    var h = testMakeHunk("f.txt", 1, 1, 1, 1);
+    h.context = "fn main()";
+    h.diff_lines = "";
     try std.testing.expectEqualStrings("fn main()", hunkSummaryWithFallback(&buf, h));
 }
 
