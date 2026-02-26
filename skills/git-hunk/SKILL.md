@@ -175,11 +175,16 @@ git hunk add --file src/main.zig             # stage all hunks in a file
 git hunk add a3f7:3-5,8                      # stage specific lines from a hunk
 ```
 
-On success, prints confirmation to stdout:
+On success, prints confirmation to stdout showing both the old and new hash:
 
 ```
-staged a3f7c21  src/main.zig
+staged a3f7c21 → 5e2b1a9  src/main.zig
+1 hunk staged
+hint: staged hashes differ from unstaged -- use 'git hunk list --staged' to see them
 ```
+
+The `→` mapping shows the new staged hash so you can immediately reference it
+with `list --staged` or `remove` without re-listing.
 
 ## Unstaging hunks
 
@@ -193,8 +198,8 @@ git hunk remove --file src/main.zig          # unstage all hunks in a file
 ```
 
 Use hashes from `git hunk list --staged`. Note that staged and unstaged hashes
-for the same hunk differ (they use different stable line references), so always
-re-list after switching between staging and unstaging.
+for the same hunk differ (they use different stable line references). The `add`
+command shows the mapping (`old → new`) to help track this.
 
 ## Hash stability
 

@@ -194,18 +194,36 @@ git hunk list --porcelain --oneline | head -1 | cut -f3
 
 ## Staging/unstaging confirmation
 
-`add` and `remove` print one line per hunk to stdout:
+`add` and `remove` print one line per hunk to stdout, showing both the old and
+new hash when a mapping is found:
 
 ```
-staged a3f7c21  src/main.zig
-staged b82e0f4  src/main.zig
+staged a3f7c21 → 5e2b1a9  src/main.zig
+staged b82e0f4 → 8c3d7f2  src/main.zig
 ```
 
 ```
-unstaged a3f7c21  src/main.zig
+unstaged 5e2b1a9 → a3f7c21  src/main.zig
 ```
 
-Format: `{verb} {sha7}  {file}` (two spaces between hash and file).
+Format: `{verb} {old_sha7} → {new_sha7}  {file}` (two spaces between new hash
+and file). When no mapping is found (e.g., partial line staging, hunk merging),
+falls back to: `{verb} {sha7}  {file}`.
+
+SHA hashes are colored yellow when stdout is a TTY (disable with `--no-color` or
+the `NO_COLOR` environment variable).
+
+After all per-hunk lines, a count summary is printed to stderr:
+
+```
+3 hunks staged
+```
+
+After staging, a hint is printed to stderr:
+
+```
+hint: staged hashes differ from unstaged -- use 'git hunk list --staged' to see them
+```
 
 ## Error output
 

@@ -107,7 +107,7 @@ Same error types as `add`:
 Stage hunks by content hash.
 
 ```
-git-hunk add [<sha[:lines]>...] [--file <path>] [--all] [--context <n>]
+git-hunk add [<sha[:lines]>...] [--file <path>] [--all] [--context <n>] [--no-color]
 ```
 
 ### Arguments
@@ -123,6 +123,7 @@ git-hunk add [<sha[:lines]>...] [--file <path>] [--all] [--context <n>]
 | `--file <path>` | Restrict hash matching to hunks in this file. When used without SHAs, stages all hunks in the file. |
 | `--all` | Stage all unstaged hunks. No SHA arguments required. |
 | `--context <n>` | Number of context lines (default: git's `diff.context` or 3). Must match the value used with `list`. |
+| `--no-color` | Disable color output. Color is also disabled automatically when stdout is not a TTY, or when the `NO_COLOR` environment variable is set. |
 
 ### Examples
 
@@ -134,6 +135,7 @@ git-hunk add a3f7 --file src/main.zig            # restrict to file
 git-hunk add --all                               # stage all unstaged hunks
 git-hunk add --file src/main.zig                 # stage all hunks in a file
 git-hunk add a3f7:3-5,8                          # stage specific lines from a hunk
+git-hunk add a3f7c21 --no-color                  # disable color output
 ```
 
 ### Behavior
@@ -141,7 +143,10 @@ git-hunk add a3f7:3-5,8                          # stage specific lines from a h
 - Reads unstaged diff, matches each SHA prefix to a hunk, builds a combined patch, applies via `git apply --cached`.
 - All matched hunks are applied in a single `git apply` invocation.
 - With `--all`, stages every unstaged hunk. With `--file` and no SHAs, stages all hunks in that file.
-- On success, prints one confirmation line per hunk to stdout: `staged <sha7>  <file>`
+- On success, prints one confirmation line per hunk to stdout showing both old and new hash: `staged <old_sha7> → <new_sha7>  <file>`. Falls back to `staged <sha7>  <file>` when no mapping is found (partial staging, hunk merging).
+- Prints a count summary to stderr: `N hunk(s) staged`.
+- Prints a hint to stderr: `hint: staged hashes differ from unstaged -- use 'git hunk list --staged' to see them`.
+- SHA hashes are colored yellow when stdout is a TTY.
 - Exits 1 if any SHA prefix doesn't match or is ambiguous.
 - Exits 1 if the patch doesn't apply (index changed since listing).
 
@@ -164,7 +169,7 @@ git-hunk add a3f7:3-5,8                          # stage specific lines from a h
 Unstage hunks by content hash.
 
 ```
-git-hunk remove [<sha[:lines]>...] [--file <path>] [--all] [--context <n>]
+git-hunk remove [<sha[:lines]>...] [--file <path>] [--all] [--context <n>] [--no-color]
 ```
 
 ### Arguments
@@ -180,6 +185,7 @@ git-hunk remove [<sha[:lines]>...] [--file <path>] [--all] [--context <n>]
 | `--file <path>` | Restrict hash matching to hunks in this file. When used without SHAs, unstages all hunks in the file. |
 | `--all` | Unstage all staged hunks. No SHA arguments required. |
 | `--context <n>` | Number of context lines (default: git's `diff.context` or 3). Must match the value used with `list`. |
+| `--no-color` | Disable color output. Color is also disabled automatically when stdout is not a TTY, or when the `NO_COLOR` environment variable is set. |
 
 ### Examples
 
@@ -189,13 +195,16 @@ git-hunk remove a3f7 b82e                        # unstage multiple
 git-hunk remove a3f7 --file src/main.zig         # restrict to file
 git-hunk remove --all                            # unstage everything
 git-hunk remove --file src/main.zig              # unstage all hunks in a file
+git-hunk remove a3f7c21 --no-color               # disable color output
 ```
 
 ### Behavior
 
 - Reads staged diff (`--cached`), matches SHA prefixes, applies the patch in reverse via `git apply --cached --reverse`.
 - With `--all`, unstages every staged hunk. With `--file` and no SHAs, unstages all hunks in that file.
-- On success, prints: `unstaged <sha7>  <file>`
+- On success, prints: `unstaged <old_sha7> → <new_sha7>  <file>` (showing the new unstaged hash). Falls back to `unstaged <sha7>  <file>` when no mapping is found.
+- Prints a count summary to stderr: `N hunk(s) unstaged`.
+- SHA hashes are colored yellow when stdout is a TTY.
 - Important: staged hashes differ from unstaged hashes for the same hunk. Always use hashes from `git-hunk list --staged`.
 
 ### Errors

@@ -91,6 +91,15 @@ git hunk add a3f7c21 --file src/main.zig   # restrict match to file
 git hunk add --all                     # stage all unstaged hunks
 git hunk add --file src/main.zig       # stage all hunks in a file
 git hunk add a3f7:3-5,8               # stage specific lines from a hunk
+git hunk add a3f7c21 --no-color        # disable color in confirmation output
+```
+
+Output shows both the old (unstaged) and new (staged) hash:
+
+```
+staged a3f7c21 → 5e2b1a9  src/main.zig
+1 hunk staged
+hint: staged hashes differ from unstaged -- use 'git hunk list --staged' to see them
 ```
 
 ### Unstage hunks
@@ -100,6 +109,7 @@ git hunk remove a3f7c21               # unstage from index
 git hunk remove a3f7 b82e             # unstage multiple
 git hunk remove --all                  # unstage everything
 git hunk remove --file src/main.zig    # unstage all hunks in a file
+git hunk remove a3f7c21 --no-color     # disable color in confirmation output
 ```
 
 ### Typical workflow
@@ -231,14 +241,15 @@ same.
 
 ## Color output
 
-In human mode, output is colorized when stdout is a TTY:
+Output is colorized when stdout is a TTY:
 
-- SHA hashes in yellow
+- SHA hashes in yellow (in `list`, `show`, `add`, and `remove` output)
 - Added lines (`+`) in green
 - Removed lines (`-`) in red
 
 Color is disabled automatically when piping output. Use `--no-color` to disable
-explicitly, or set the `NO_COLOR` environment variable.
+explicitly, or set the `NO_COLOR` environment variable. The `--no-color` flag is
+accepted by all commands (`list`, `show`, `add`, `remove`).
 
 ## Handles
 
