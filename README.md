@@ -3,6 +3,8 @@
 Non-interactive, deterministic hunk staging for git. Enumerate hunks, select by
 content hash, stage or unstage them -- no TUI required.
 
+<video src="assets/demo.webm" autoplay loop muted playsinline width="680"></video>
+
 ## Why
 
 `git add -p` is interactive. It requires a human driving a terminal. LLM agents,
@@ -15,19 +17,41 @@ multi-step staging workflows produce consistent results.
 
 ## Install
 
+### Homebrew
+
+```
+brew install shhac/tap/git-hunk
+```
+
+### GitHub Releases
+
+Download a prebuilt binary from [Releases](https://github.com/shhac/git-hunk/releases/latest):
+
+```
+# macOS (Universal)
+curl -L https://github.com/shhac/git-hunk/releases/latest/download/git-hunk-macos-universal.tar.gz | tar xz
+
+# Linux x86_64
+curl -L https://github.com/shhac/git-hunk/releases/latest/download/git-hunk-x86_64-linux.tar.gz | tar xz
+
+# Move to PATH
+mv git-hunk ~/.local/bin/
+```
+
+### Build from source
+
 Requires [Zig](https://ziglang.org/) 0.15.2 or later.
 
 ```
-git clone <repo-url>
+git clone https://github.com/shhac/git-hunk.git
 cd git-hunk
-zig build
-```
-
-The binary is at `zig-out/bin/git-hunk`. Add it to your PATH to use it as a git
-subcommand:
-
-```
+zig build -Doptimize=ReleaseFast
 cp zig-out/bin/git-hunk ~/.local/bin/
+```
+
+Once on your PATH, git-hunk works as a git subcommand:
+
+```
 git hunk list
 ```
 
@@ -91,7 +115,6 @@ git hunk add a3f7c21 --file src/main.zig   # restrict match to file
 git hunk add --all                     # stage all unstaged hunks
 git hunk add --file src/main.zig       # stage all hunks in a file
 git hunk add a3f7:3-5,8               # stage specific lines from a hunk
-git hunk add a3f7c21 --no-color        # disable color in confirmation output
 ```
 
 Output shows both the old (unstaged) and new (staged) hash:
@@ -109,16 +132,15 @@ git hunk remove a3f7c21               # unstage from index
 git hunk remove a3f7 b82e             # unstage multiple
 git hunk remove --all                  # unstage everything
 git hunk remove --file src/main.zig    # unstage all hunks in a file
-git hunk remove a3f7c21 --no-color     # disable color in confirmation output
 ```
 
 ### Typical workflow
 
 ```
 git hunk list                          # see what changed (with inline diffs)
-git hunk add a3f7c21                   # stage first hunk
-git hunk add b82e0f4                   # stage second hunk
-git hunk list --oneline                # verify remaining (hashes unchanged)
+git hunk show a3f7c21                  # inspect a specific hunk
+git hunk add a3f7c21                   # stage it
+git hunk add b82e0f4                   # stage another
 git hunk list --staged --oneline       # verify staged
 git commit -m "feat: add error handling"
 ```
