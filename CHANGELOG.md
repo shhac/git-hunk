@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.3.1] - 2026-02-26
+
+### Added
+- `--no-color` flag for `add` and `remove` commands (all commands now accept it)
+- Colored SHA output in add/remove confirmation (yellow, matching list/show)
+- Hash mapping display: `staged X → Y  file` shows both old and new hash after staging
+- Count summary after add/remove (e.g., `3 hunks staged`) printed to stderr
+- Hint after staging about hash differences printed to stderr
+
+### Changed
+- Summary column now shows first changed line instead of function context (answers "what changed?" instead of "where?")
+- `getTerminalWidth()` reads `COLUMNS` env var as fallback when ioctl fails (CI/agent support)
+
+### Fixed
+- Narrow terminal formatting: graceful degradation with 40-column minimum floor and summary truncation
+- Staging hint only shows in interactive TTY contexts (not when piped)
+
 ## [0.3.0] - 2026-02-25
 
 ### Added
