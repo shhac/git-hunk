@@ -101,6 +101,19 @@ pub fn cmdRemove(allocator: Allocator, stdout: *std.Io.Writer, opts: AddRemoveOp
 
 const ApplyAction = enum { stage, unstage };
 
+/// Find the new hash for a hunk after staging/unstaging by matching on content.
+/// Returns the 7-char truncated hash from the opposite diff, or null if no match.
+fn findMatchingHash(new_hunks: []const Hunk, old_hunk: *const Hunk) ?[]const u8 {
+    for (new_hunks) |*nh| {
+        if (std.mem.eql(u8, nh.file_path, old_hunk.file_path) and
+            std.mem.eql(u8, nh.diff_lines, old_hunk.diff_lines))
+        {
+            return nh.sha_hex[0..7];
+        }
+    }
+    return null;
+}
+
 fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddRemoveOptions, action: ApplyAction) !void {
     // For staging: diff unstaged hunks (index vs worktree)
     // For unstaging: diff staged hunks (HEAD vs index)
@@ -189,6 +202,21 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddRemoveOp
     const reverse = action == .unstage;
     try git.runGitApply(allocator, patch, reverse);
 
+    // Resolve new hashes: after staging/unstaging, the hunk appears in the
+    // opposite diff with a different hash (stable line references change).
+    // Re-parse that diff to show the user the hash mapping.
+    const new_mode: DiffMode = switch (action) {
+        .stage => .staged,
+        .unstage => .unstaged,
+    };
+    var new_hunks: std.ArrayList(Hunk) = .empty;
+    defer new_hunks.deinit(arena);
+    if (git.runGitDiff(arena, new_mode, opts.context)) |new_diff| {
+        if (new_diff.len > 0) {
+            diff_mod.parseDiff(arena, new_diff, new_mode, &new_hunks) catch {};
+        }
+    } else |_| {}
+
     // Report what was applied
     const use_color = !opts.no_color and
         std.fs.File.stdout().isTty() and posix.getenv("NO_COLOR") == null;
@@ -198,11 +226,23 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddRemoveOp
     };
     for (matched.items) |m| {
         const sha = m.hunk.sha_hex[0..7];
+        const new_sha: ?[]const u8 = if (m.line_spec == null)
+            findMatchingHash(new_hunks.items, m.hunk)
+        else
+            null;
         const suffix: []const u8 = if (m.line_spec != null) " (partial)" else "";
-        if (use_color) {
-            try stdout.print("{s} {s}{s}{s}  {s}{s}\n", .{ verb, format.COLOR_YELLOW, sha, format.COLOR_RESET, m.hunk.file_path, suffix });
+        if (new_sha) |ns| {
+            if (use_color) {
+                try stdout.print("{s} {s}{s}{s} \xe2\x86\x92 {s}{s}{s}  {s}{s}\n", .{ verb, format.COLOR_YELLOW, sha, format.COLOR_RESET, format.COLOR_YELLOW, ns, format.COLOR_RESET, m.hunk.file_path, suffix });
+            } else {
+                try stdout.print("{s} {s} \xe2\x86\x92 {s}  {s}{s}\n", .{ verb, sha, ns, m.hunk.file_path, suffix });
+            }
         } else {
-            try stdout.print("{s} {s}  {s}{s}\n", .{ verb, sha, m.hunk.file_path, suffix });
+            if (use_color) {
+                try stdout.print("{s} {s}{s}{s}  {s}{s}\n", .{ verb, format.COLOR_YELLOW, sha, format.COLOR_RESET, m.hunk.file_path, suffix });
+            } else {
+                try stdout.print("{s} {s}  {s}{s}\n", .{ verb, sha, m.hunk.file_path, suffix });
+            }
         }
     }
 
@@ -212,6 +252,11 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddRemoveOp
         std.debug.print("1 hunk {s}\n", .{verb});
     } else {
         std.debug.print("{d} hunks {s}\n", .{ count, verb });
+    }
+
+    // Hint about hash changes when staging
+    if (action == .stage) {
+        std.debug.print("hint: staged hashes differ from unstaged -- use 'git hunk list --staged' to see them\n", .{});
     }
 }
 
