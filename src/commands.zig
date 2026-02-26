@@ -254,8 +254,8 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddRemoveOp
         std.debug.print("{d} hunks {s}\n", .{ count, verb });
     }
 
-    // Hint about hash changes when staging
-    if (action == .stage) {
+    // Hint about hash changes when staging (only in interactive TTY contexts)
+    if (action == .stage and std.fs.File.stdout().isTty()) {
         std.debug.print("hint: staged hashes differ from unstaged -- use 'git hunk list --staged' to see them\n", .{});
     }
 }
