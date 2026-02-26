@@ -3,7 +3,7 @@
 Non-interactive, deterministic hunk staging for git. Enumerate hunks, select by
 content hash, stage or unstage them -- no TUI required.
 
-<video src="assets/demo.webm" autoplay loop muted playsinline width="680"></video>
+![Demo](assets/demo.gif)
 
 ## Why
 
