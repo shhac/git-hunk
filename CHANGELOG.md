@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.4.0] - 2026-02-27
+
+### Added
+- `count` command: outputs bare hunk count as integer (always exit 0)
+- `check` command: validates hunk hashes exist in current diff (silent success, exit 1 on failure)
+- `check --exclusive`: asserts provided hashes are the *only* hunks (no extras)
+- `discard` command: reverts unstaged worktree changes by hunk hash (`git apply --reverse`)
+- `discard --dry-run`: preview what would be discarded without modifying the worktree
+- `discard --all`: discard all unstaged hunks at once
+- `--porcelain` output for `add`, `remove`, `check`, and `discard` commands
+- Scripting workflow: `count --staged` + `check --exclusive` + `add` + `commit` for guaranteed precise commits
+
+### Changed
+- Add/remove summary line suppressed in `--porcelain` mode for clean machine parsing
+- Staging hint only shown in human output mode (not porcelain)
+- `check` stderr summary uses "failed" instead of "stale" for clarity
+
+### Fixed
+- Usage text now shows `--porcelain` flag for `add` and `remove` commands
+- Dry-run apply failure message distinguishes from normal apply failure
+- Empty matched hunk list in discard reports helpful error instead of silent no-op
+
 ## [0.3.1] - 2026-02-26
 
 ### Added
