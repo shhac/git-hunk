@@ -13,9 +13,15 @@ pub fn runGitDiff(allocator: Allocator, mode: DiffMode, context: ?u32) ![]u8 {
 /// Pass an empty slice for no file filter (equivalent to runGitDiff).
 pub fn runGitDiffFiles(allocator: Allocator, mode: DiffMode, context: ?u32, file_paths: []const []const u8) ![]u8 {
     // Base args: git diff [--cached] [-U<n>] --src-prefix=a/ --dst-prefix=b/ --no-color [-- file1 ...]
-    const max_args = 8 + 1 + file_paths.len; // 8 base + "--" separator + file paths
-    const argv_buf = try allocator.alloc([]const u8, max_args);
-    defer allocator.free(argv_buf);
+    // Use stack buffer for the common case (no file paths); heap-allocate only when needed.
+    var stack_buf: [8][]const u8 = undefined;
+    const argv_buf = if (file_paths.len == 0)
+        &stack_buf
+    else blk: {
+        const max_args = 8 + 1 + file_paths.len;
+        break :blk try allocator.alloc([]const u8, max_args);
+    };
+    defer if (file_paths.len > 0) allocator.free(argv_buf);
     var argc: usize = 0;
     argv_buf[argc] = "git";
     argc += 1;
