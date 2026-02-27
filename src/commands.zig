@@ -258,14 +258,14 @@ pub fn cmdCheck(allocator: Allocator, stdout: *std.Io.Writer, opts: CheckOptions
             if (r.status != .ok) fail_count += 1;
         }
         if (fail_count > 0 and unexpected_hunks.items.len > 0) {
-            std.debug.print("{d} of {d} hashes stale, {d} unexpected hunk{s}\n", .{
+            std.debug.print("{d} of {d} hashes failed, {d} unexpected hunk{s}\n", .{
                 fail_count,
                 results.items.len,
                 unexpected_hunks.items.len,
                 @as([]const u8, if (unexpected_hunks.items.len == 1) "" else "s"),
             });
         } else if (fail_count > 0) {
-            std.debug.print("{d} of {d} hashes stale\n", .{ fail_count, results.items.len });
+            std.debug.print("{d} of {d} hashes failed\n", .{ fail_count, results.items.len });
         } else if (unexpected_hunks.items.len > 0) {
             std.debug.print("exclusive check failed: {d} unexpected hunk{s}\n", .{
                 unexpected_hunks.items.len,
@@ -724,19 +724,21 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddRemoveOp
             .porcelain => try printResultGroupPorcelain(stdout, verb, rg),
         }
     }
-    // Summary count on stderr (visible even when stdout is piped)
-    if (count == 1 and merged_count == 0) {
-        std.debug.print("1 hunk {s}\n", .{verb});
-    } else if (count == 1 and merged_count > 0) {
-        std.debug.print("1 hunk {s} ({d} merged)\n", .{ verb, merged_count });
-    } else if (merged_count == 0) {
-        std.debug.print("{d} hunks {s}\n", .{ count, verb });
-    } else {
-        std.debug.print("{d} hunks {s} ({d} merged)\n", .{ count, verb, merged_count });
+    // Summary count on stderr (human mode only)
+    if (opts.output == .human) {
+        if (count == 1 and merged_count == 0) {
+            std.debug.print("1 hunk {s}\n", .{verb});
+        } else if (count == 1 and merged_count > 0) {
+            std.debug.print("1 hunk {s} ({d} merged)\n", .{ verb, merged_count });
+        } else if (merged_count == 0) {
+            std.debug.print("{d} hunks {s}\n", .{ count, verb });
+        } else {
+            std.debug.print("{d} hunks {s} ({d} merged)\n", .{ count, verb, merged_count });
+        }
     }
 
-    // Hint about hash changes when staging (only in interactive TTY contexts)
-    if (action == .stage and std.fs.File.stdout().isTty()) {
+    // Hint about hash changes when staging (only in interactive human-mode TTY contexts)
+    if (action == .stage and opts.output == .human and std.fs.File.stdout().isTty()) {
         std.debug.print("hint: staged hashes differ from unstaged -- use 'git hunk list --staged' to see them\n", .{});
     }
 }
@@ -805,6 +807,15 @@ pub fn cmdDiscard(allocator: Allocator, stdout: *std.Io.Writer, opts: DiscardOpt
                 try matched.append(arena, .{ .hunk = hunk, .line_spec = sha_arg.line_spec });
             }
         }
+    }
+
+    if (matched.items.len == 0) {
+        if (opts.file_filter) |filter| {
+            std.debug.print("no hunks matching file '{s}'\n", .{filter});
+        } else {
+            std.debug.print("no unstaged changes\n", .{});
+        }
+        std.process.exit(1);
     }
 
     // Sort hunks for valid combined patch

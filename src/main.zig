@@ -118,9 +118,9 @@ fn printUsage(stdout: *std.Io.Writer) !void {
         \\                                                List diff hunks
         \\  show <sha[:lines]>... [--staged] [--file <path>] [--porcelain] [--no-color] [--context <n>]
         \\                                                Show diff content of hunks
-        \\  add [--all] [--file <path>] [--no-color] [--context <n>] [<sha[:lines]>...]
+        \\  add [--all] [--file <path>] [--porcelain] [--no-color] [--context <n>] [<sha[:lines]>...]
         \\                                                Stage hunks (or selected lines)
-        \\  remove [--all] [--file <path>] [--no-color] [--context <n>] [<sha[:lines]>...]
+        \\  remove [--all] [--file <path>] [--porcelain] [--no-color] [--context <n>] [<sha[:lines]>...]
         \\                                                Unstage hunks (or selected lines)
         \\  discard [--all] [--file <path>] [--dry-run] [--porcelain] [--no-color] [--context <n>] [<sha[:lines]>...]
         \\                                                Discard unstaged worktree changes

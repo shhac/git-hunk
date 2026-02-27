@@ -135,7 +135,11 @@ pub fn runGitApply(allocator: Allocator, patch: []const u8, reverse: bool, targe
                 if (child_stderr.items.len > 0) {
                     std.debug.print("{s}", .{child_stderr.items});
                 }
-                std.debug.print("error: patch did not apply cleanly — re-run 'list' and try again\n", .{});
+                if (check_only) {
+                    std.debug.print("error: patch would not apply cleanly — hashes may be stale\n", .{});
+                } else {
+                    std.debug.print("error: patch did not apply cleanly — re-run 'list' and try again\n", .{});
+                }
                 std.process.exit(1);
             }
         },

@@ -545,5 +545,68 @@ BETA35="$("$GIT_HUNK" count --file beta.txt)"
 [[ "$BETA35" -gt 0 ]] || fail "test 35: beta.txt should still have hunks, got '$BETA35'"
 pass "test 35: discard --file only discards hunks in specified file"
 
+# ============================================================================
+# Test 36: check --staged validates staged hashes (M3)
+# ============================================================================
+git reset HEAD -q 2>/dev/null || true
+git checkout -- . 2>/dev/null || true
+echo "check staged content" > alpha.txt
+git add alpha.txt && git commit -m "base for check staged" -q
+echo "check staged change" > alpha.txt
+SHA36="$("$GIT_HUNK" list --porcelain --oneline | head -1 | cut -f1)"
+"$GIT_HUNK" add "$SHA36" > /dev/null 2>/dev/null
+STAGED_SHA36="$("$GIT_HUNK" list --staged --porcelain --oneline | head -1 | cut -f1)"
+"$GIT_HUNK" check --staged "$STAGED_SHA36"
+[[ $? -eq 0 ]] || fail "test 36: check --staged should exit 0 for valid staged hash"
+pass "test 36: check --staged validates staged hashes"
+
+# ============================================================================
+# Test 37: check --exclusive --porcelain shows unexpected entries (L5)
+# ============================================================================
+echo "extra change for exclusive" >> beta.txt
+# Get only one of multiple hunks
+ALL_SHAS37="$("$GIT_HUNK" list --porcelain --oneline | cut -f1)"
+FIRST_SHA37="$(echo "$ALL_SHAS37" | head -1)"
+TOTAL37="$(echo "$ALL_SHAS37" | wc -l | tr -d ' ')"
+if [[ "$TOTAL37" -gt 1 ]]; then
+    OUT37="$("$GIT_HUNK" check --porcelain --exclusive "$FIRST_SHA37" 2>/dev/null || true)"
+    echo "$OUT37" | grep -q "^unexpected" \
+        || fail "test 37: expected 'unexpected' in porcelain exclusive output, got: '$OUT37'"
+    pass "test 37: check --exclusive --porcelain shows unexpected entries"
+else
+    # Only one hunk — exclusive should pass
+    "$GIT_HUNK" check --porcelain --exclusive "$FIRST_SHA37" > /dev/null 2>/dev/null
+    pass "test 37: check --exclusive --porcelain (single hunk, trivial pass)"
+fi
+
+# ============================================================================
+# Test 38: discard with stale hash exits 1 (L5)
+# ============================================================================
+! "$GIT_HUNK" discard deadbeef 2>/dev/null
+[[ $? -eq 0 ]] || fail "test 38: discard with stale hash should exit 1"
+pass "test 38: discard with stale hash exits 1"
+
+# ============================================================================
+# Test 39: discard --dry-run --porcelain uses would-discard verb (L5)
+# ============================================================================
+git checkout -- . 2>/dev/null || true
+echo "dry run porcelain test" > alpha.txt
+SHA39="$("$GIT_HUNK" list --porcelain --oneline | head -1 | cut -f1)"
+OUT39="$("$GIT_HUNK" discard --dry-run --porcelain "$SHA39")"
+echo "$OUT39" | grep -q "^would-discard" \
+    || fail "test 39: expected 'would-discard' verb in porcelain output, got: '$OUT39'"
+pass "test 39: discard --dry-run --porcelain uses would-discard verb"
+
+# ============================================================================
+# Test 40: remove --porcelain uses tab-separated format (L5)
+# ============================================================================
+"$GIT_HUNK" add "$SHA39" > /dev/null 2>/dev/null
+STAGED_SHA40="$("$GIT_HUNK" list --staged --porcelain --oneline | head -1 | cut -f1)"
+OUT40="$("$GIT_HUNK" remove --porcelain "$STAGED_SHA40")"
+VERB40="$(echo "$OUT40" | cut -f1)"
+[[ "$VERB40" == "unstaged" ]] \
+    || fail "test 40: expected 'unstaged' verb in remove porcelain, got: '$VERB40'"
+pass "test 40: remove --porcelain uses tab-separated format"
+
 echo ""
-echo "ALL INTEGRATION TESTS PASSED (35 tests)"
+echo "ALL INTEGRATION TESTS PASSED (40 tests)"
