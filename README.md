@@ -3,6 +3,8 @@
 Non-interactive, deterministic hunk staging for git. Enumerate hunks, select by
 content hash, stage or unstage them -- no TUI required.
 
+**Website:** [git-hunk.paulie.app](https://git-hunk.paulie.app/)
+
 ![Demo](assets/demo.gif)
 
 ## Why
