@@ -63,6 +63,29 @@ fn run() !void {
         };
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
         try commands.cmdRemove(allocator, stdout, opts);
+    } else if (std.mem.eql(u8, subcmd, "count")) {
+        const opts = args_mod.parseCountArgs(process_args[2..]) catch {
+            try printUsage(stdout);
+            try stdout.flush();
+            std.process.exit(1);
+        };
+        try commands.cmdCount(allocator, stdout, opts);
+    } else if (std.mem.eql(u8, subcmd, "check")) {
+        var opts = args_mod.parseCheckArgs(allocator, process_args[2..]) catch {
+            try printUsage(stdout);
+            try stdout.flush();
+            std.process.exit(1);
+        };
+        defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
+        try commands.cmdCheck(allocator, stdout, opts);
+    } else if (std.mem.eql(u8, subcmd, "discard")) {
+        var opts = args_mod.parseDiscardArgs(allocator, process_args[2..]) catch {
+            try printUsage(stdout);
+            try stdout.flush();
+            std.process.exit(1);
+        };
+        defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
+        try commands.cmdDiscard(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "show")) {
         var opts = args_mod.parseShowArgs(allocator, process_args[2..]) catch {
             try printUsage(stdout);
@@ -99,6 +122,12 @@ fn printUsage(stdout: *std.Io.Writer) !void {
         \\                                                Stage hunks (or selected lines)
         \\  remove [--all] [--file <path>] [--no-color] [--context <n>] [<sha[:lines]>...]
         \\                                                Unstage hunks (or selected lines)
+        \\  discard [--all] [--file <path>] [--dry-run] [--porcelain] [--no-color] [--context <n>] [<sha[:lines]>...]
+        \\                                                Discard unstaged worktree changes
+        \\  count [--staged] [--file <path>] [--context <n>]
+        \\                                                Count diff hunks
+        \\  check [--staged] [--exclusive] [--file <path>] [--porcelain] [--no-color] [--context <n>] <sha>...
+        \\                                                Validate hunk hashes exist
         \\
         \\options:
         \\  --context <n>  Lines of diff context (default: git's diff.context or 3)

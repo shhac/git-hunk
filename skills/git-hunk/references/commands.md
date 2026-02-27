@@ -107,7 +107,7 @@ Same error types as `add`:
 Stage hunks by content hash.
 
 ```
-git-hunk add [<sha[:lines]>...] [--file <path>] [--all] [--context <n>] [--no-color]
+git-hunk add [<sha[:lines]>...] [--file <path>] [--all] [--porcelain] [--context <n>] [--no-color]
 ```
 
 ### Arguments
@@ -122,6 +122,7 @@ git-hunk add [<sha[:lines]>...] [--file <path>] [--all] [--context <n>] [--no-co
 |------|-------------|
 | `--file <path>` | Restrict hash matching to hunks in this file. When used without SHAs, stages all hunks in the file. |
 | `--all` | Stage all unstaged hunks. No SHA arguments required. |
+| `--porcelain` | Tab-separated machine-readable output. See [output format](output.md#porcelain-format-1). |
 | `--context <n>` | Number of context lines (default: git's `diff.context` or 3). Must match the value used with `list`. |
 | `--no-color` | Disable color output. Color is also disabled automatically when stdout is not a TTY, or when the `NO_COLOR` environment variable is set. |
 
@@ -135,6 +136,7 @@ git-hunk add a3f7 --file src/main.zig            # restrict to file
 git-hunk add --all                               # stage all unstaged hunks
 git-hunk add --file src/main.zig                 # stage all hunks in a file
 git-hunk add a3f7:3-5,8                          # stage specific lines from a hunk
+git-hunk add a3f7c21 --porcelain                 # machine-readable output
 git-hunk add a3f7c21 --no-color                  # disable color output
 ```
 
@@ -143,10 +145,12 @@ git-hunk add a3f7c21 --no-color                  # disable color output
 - Reads unstaged diff, matches each SHA prefix to a hunk, builds a combined patch, applies via `git apply --cached`.
 - All matched hunks are applied in a single `git apply` invocation.
 - With `--all`, stages every unstaged hunk. With `--file` and no SHAs, stages all hunks in that file.
-- On success, prints one confirmation line per hunk to stdout showing both old and new hash: `staged <old_sha7> → <new_sha7>  <file>`. Falls back to `staged <sha7>  <file>` when no mapping is found (partial staging, hunk merging).
-- Prints a count summary to stderr: `N hunk(s) staged`.
+- Captures target-side (staged) hunks before and after applying to detect merges.
+- On success, prints one line per **result hunk** to stdout: `staged {applied...} [+{consumed}...] → {result}  {file}`. Applied hashes are yellow, consumed hashes are dim, result hashes are green.
+- When staging causes a hunk to merge with an already-staged hunk, the consumed hash appears with a `+` prefix.
+- Prints a count summary to stderr: `N hunk(s) staged`. Appends `(M merged)` when target-side hunks were consumed.
 - Prints a hint to stderr: `hint: staged hashes differ from unstaged -- use 'git hunk list --staged' to see them`.
-- SHA hashes are colored yellow when stdout is a TTY.
+- With `--porcelain`, output is tab-separated: `verb\tapplied\tresult\tfile[\tconsumed]`.
 - Exits 1 if any SHA prefix doesn't match or is ambiguous.
 - Exits 1 if the patch doesn't apply (index changed since listing).
 
@@ -169,7 +173,7 @@ git-hunk add a3f7c21 --no-color                  # disable color output
 Unstage hunks by content hash.
 
 ```
-git-hunk remove [<sha[:lines]>...] [--file <path>] [--all] [--context <n>] [--no-color]
+git-hunk remove [<sha[:lines]>...] [--file <path>] [--all] [--porcelain] [--context <n>] [--no-color]
 ```
 
 ### Arguments
@@ -184,6 +188,7 @@ git-hunk remove [<sha[:lines]>...] [--file <path>] [--all] [--context <n>] [--no
 |------|-------------|
 | `--file <path>` | Restrict hash matching to hunks in this file. When used without SHAs, unstages all hunks in the file. |
 | `--all` | Unstage all staged hunks. No SHA arguments required. |
+| `--porcelain` | Tab-separated machine-readable output. See [output format](output.md#porcelain-format-1). |
 | `--context <n>` | Number of context lines (default: git's `diff.context` or 3). Must match the value used with `list`. |
 | `--no-color` | Disable color output. Color is also disabled automatically when stdout is not a TTY, or when the `NO_COLOR` environment variable is set. |
 
@@ -195,6 +200,7 @@ git-hunk remove a3f7 b82e                        # unstage multiple
 git-hunk remove a3f7 --file src/main.zig         # restrict to file
 git-hunk remove --all                            # unstage everything
 git-hunk remove --file src/main.zig              # unstage all hunks in a file
+git-hunk remove a3f7c21 --porcelain              # machine-readable output
 git-hunk remove a3f7c21 --no-color               # disable color output
 ```
 
@@ -202,14 +208,185 @@ git-hunk remove a3f7c21 --no-color               # disable color output
 
 - Reads staged diff (`--cached`), matches SHA prefixes, applies the patch in reverse via `git apply --cached --reverse`.
 - With `--all`, unstages every staged hunk. With `--file` and no SHAs, unstages all hunks in that file.
-- On success, prints: `unstaged <old_sha7> → <new_sha7>  <file>` (showing the new unstaged hash). Falls back to `unstaged <sha7>  <file>` when no mapping is found.
-- Prints a count summary to stderr: `N hunk(s) unstaged`.
-- SHA hashes are colored yellow when stdout is a TTY.
+- Captures target-side (unstaged) hunks before and after applying to detect merges.
+- On success, prints one line per **result hunk** to stdout: `unstaged {applied...} [+{consumed}...] → {result}  {file}`. When unstaging causes a merge with an existing unstaged hunk, the consumed hash appears with a `+` prefix.
+- Prints a count summary to stderr: `N hunk(s) unstaged`. Appends `(M merged)` when target-side hunks were consumed.
+- With `--porcelain`, output is tab-separated: `verb\tapplied\tresult\tfile[\tconsumed]`.
 - Important: staged hashes differ from unstaged hashes for the same hunk. Always use hashes from `git-hunk list --staged`.
 
 ### Errors
 
 Same error types as `add`, with `no staged changes` instead of `no unstaged changes`.
+
+---
+
+## git-hunk discard
+
+Discard unstaged worktree changes. Reverts specific hunks to match the index.
+
+```
+git-hunk discard [<sha[:lines]>...] [--file <path>] [--all] [--dry-run] [--porcelain] [--context <n>] [--no-color]
+```
+
+### Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `<sha[:lines]>...` | One or more SHA hex prefixes (minimum 4 characters). Prefix matching is supported. Optional `:lines` suffix discards specific hunk-relative lines (e.g., `a3f7:3-5,8`). Optional when `--all` or `--file` is used. |
+
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `--file <path>` | Restrict hash matching to hunks in this file. When used without SHAs, discards all hunks in the file. |
+| `--all` | Discard all unstaged hunks. No SHA arguments required. |
+| `--dry-run` | Preview what would be discarded without modifying the worktree. Uses `git apply --check`. |
+| `--porcelain` | Tab-separated machine-readable output. |
+| `--context <n>` | Number of context lines (default: git's `diff.context` or 3). Must match the value used with `list`. |
+| `--no-color` | Disable color output. Color is also disabled automatically when stdout is not a TTY, or when the `NO_COLOR` environment variable is set. |
+
+No `--staged` flag. Discarding staged changes is equivalent to unstaging, which is `remove`.
+
+### Examples
+
+```bash
+git-hunk discard a3f7c21                             # discard one hunk
+git-hunk discard a3f7                                # discard by 4-char prefix
+git-hunk discard a3f7c21 b82e0f4                     # discard multiple hunks
+git-hunk discard a3f7 --file src/main.zig            # restrict to file
+git-hunk discard --all                               # discard all unstaged hunks
+git-hunk discard --file src/main.zig                 # discard all hunks in a file
+git-hunk discard a3f7:3-5,8                          # discard specific lines
+git-hunk discard --dry-run a3f7c21                   # preview without modifying
+git-hunk discard a3f7c21 --porcelain                 # machine-readable output
+git-hunk discard a3f7c21 --no-color                  # disable color output
+```
+
+### Behavior
+
+- Reads unstaged diff, matches each SHA prefix to a hunk, builds a combined patch, applies via `git apply --reverse --unidiff-zero` (no `--cached`).
+- All matched hunks are applied in a single `git apply` invocation (atomic).
+- With `--all`, discards every unstaged hunk. With `--file` and no SHAs, discards all hunks in that file.
+- With `--dry-run`, validates via `git apply --reverse --check` without modifying the worktree.
+- Staged changes are unaffected — only the worktree is modified.
+- On success, prints one line per discarded hunk to stdout: `discarded {sha7}  {file}`. SHA in yellow for human mode.
+- With `--dry-run`, verb is `would discard` (human) or `would-discard` (porcelain).
+- Prints a count summary to stderr: `N hunk(s) discarded` or `N hunk(s) would be discarded`.
+- With `--porcelain`, output is tab-separated: `verb\tsha7\tfile`.
+- Exits 1 if any SHA prefix doesn't match or is ambiguous.
+- Exits 1 if the patch doesn't apply (worktree changed since listing).
+
+### Errors
+
+| Error | Cause |
+|-------|-------|
+| `error: sha prefix too short (minimum 4 chars): '<sha>'` | Prefix is less than 4 hex characters |
+| `error: invalid hex in sha prefix: '<sha>'` | Prefix contains non-hex characters |
+| `error: no hunk matching '<sha>'` | No hunk matches the prefix (with optional file filter) |
+| `error: ambiguous prefix '<sha>' -- matches multiple hunks` | Multiple hunks match the prefix |
+| `error: patch did not apply cleanly` | Worktree changed since hunks were listed |
+| `no unstaged changes` | Nothing to discard |
+| `error: at least one <sha> argument required` | No SHA arguments and no `--all`/`--file` flag |
+
+---
+
+## git-hunk count
+
+Count diff hunks.
+
+```
+git-hunk count [--staged] [--file <path>] [--context <n>]
+```
+
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `--staged` | Count staged hunks (HEAD vs index) instead of unstaged (index vs worktree) |
+| `--file <path>` | Only count hunks for the given file path. |
+| `--context <n>` | Number of context lines (default: git's `diff.context` or 3). Affects hunk splitting and therefore count. |
+
+`--porcelain` and `--no-color` are accepted for consistency but have no effect.
+
+### Examples
+
+```bash
+git-hunk count                                   # count all unstaged hunks
+git-hunk count --staged                          # count all staged hunks
+git-hunk count --file src/main.zig               # count unstaged hunks in one file
+git-hunk count --context 0                       # count with zero context (finer granularity)
+
+# Use in scripts
+if [ $(git-hunk count) -gt 0 ]; then
+  echo "unstaged changes remain"
+fi
+```
+
+### Behavior
+
+- Outputs a bare integer followed by a newline. No labels, no padding.
+- Always exits 0. Zero hunks is a valid count, not an error.
+- Output is identical with or without `--porcelain`.
+- No stderr output.
+
+---
+
+## git-hunk check
+
+Validate that hunk hashes exist in the current diff.
+
+```
+git-hunk check [--staged] [--exclusive] [--file <path>] [--porcelain] [--no-color] [--context <n>] <sha>...
+```
+
+### Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `<sha>...` | One or more SHA hex prefixes (minimum 4 characters). Line specs (e.g., `sha:1-3`) are rejected. |
+
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `--staged` | Check against staged hunks (HEAD vs index) instead of unstaged (index vs worktree) |
+| `--exclusive` | Assert the provided hashes are the ONLY hunks (scoped by `--file` if given) |
+| `--file <path>` | Scope all lookups to hunks in this file |
+| `--porcelain` | Machine-parseable tab-separated output (reports all entries) |
+| `--no-color` | Disable colored output |
+| `--context <n>` | Number of context lines (default: git's `diff.context` or 3). Must match the value used with `list`. |
+
+### Examples
+
+```bash
+git-hunk check a3f7c21                           # verify one hash exists
+git-hunk check a3f7 b82e                         # verify multiple
+git-hunk check a3f7c21 --staged                  # check staged hunks
+git-hunk check --exclusive a3f7 b82e             # assert these are the only hunks
+git-hunk check --exclusive --file f.zig a3f7     # exclusive within one file
+git-hunk check --porcelain a3f7 b82e             # machine-readable results
+git-hunk check a3f7c21 --no-color                # disable color output
+```
+
+### Behavior
+
+- Reads the diff (unstaged by default, staged with `--staged`), resolves each SHA prefix, and reports validity.
+- Human mode: silent on success (exit 0). On failure, prints `stale`, `ambiguous`, or `unexpected` lines to stdout, summary to stderr.
+- Porcelain mode: reports ALL entries. `ok\t{prefix}\t{sha7}\t{file}`, `stale\t{prefix}`, `ambiguous\t{prefix}`, `unexpected\t{sha7}\t{file}`.
+- Duplicate SHA prefixes in input are deduplicated (checked once).
+- With `--exclusive`, any hunks not matched by provided hashes are reported as `unexpected`.
+- `--file` scopes the universe for both lookup and exclusive checks.
+- Line specs (`sha:lines`) are rejected: `error: line specs not supported for check`.
+- Exits 0 if all checks pass. Exits 1 if any hash is stale/ambiguous or exclusive constraint is violated.
+
+### Errors
+
+| Error | Cause |
+|-------|-------|
+| `error: at least one <sha> argument required` | No SHA arguments provided |
+| `error: sha prefix too short (minimum 4 chars): '<sha>'` | Prefix is less than 4 hex characters |
+| `error: invalid hex in sha prefix: '<sha>'` | Prefix contains non-hex characters |
+| `error: line specs not supported for check` | Line spec used with check command |
 
 ---
 

@@ -63,6 +63,7 @@ pub const AddRemoveOptions = struct {
     sha_args: std.ArrayList(ShaArg),
     file_filter: ?[]const u8 = null,
     select_all: bool = false,
+    output: OutputMode = .human,
     no_color: bool = false,
     context: ?u32 = null,
 };
@@ -71,6 +72,32 @@ pub const ShowOptions = struct {
     sha_args: std.ArrayList(ShaArg),
     file_filter: ?[]const u8 = null,
     mode: DiffMode = .unstaged,
+    output: OutputMode = .human,
+    no_color: bool = false,
+    context: ?u32 = null,
+};
+
+pub const CountOptions = struct {
+    mode: DiffMode = .unstaged,
+    file_filter: ?[]const u8 = null,
+    context: ?u32 = null,
+};
+
+pub const CheckOptions = struct {
+    sha_args: std.ArrayList(ShaArg),
+    file_filter: ?[]const u8 = null,
+    mode: DiffMode = .unstaged,
+    exclusive: bool = false,
+    output: OutputMode = .human,
+    no_color: bool = false,
+    context: ?u32 = null,
+};
+
+pub const DiscardOptions = struct {
+    sha_args: std.ArrayList(ShaArg),
+    file_filter: ?[]const u8 = null,
+    select_all: bool = false,
+    dry_run: bool = false,
     output: OutputMode = .human,
     no_color: bool = false,
     context: ?u32 = null,

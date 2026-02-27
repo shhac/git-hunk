@@ -9,8 +9,9 @@ const LineSpec = types.LineSpec;
 // ANSI color escape codes — only used in human mode when stdout is a TTY
 pub const COLOR_RESET = "\x1b[0m";
 pub const COLOR_YELLOW = "\x1b[33m"; // SHA hash
-pub const COLOR_GREEN = "\x1b[32m"; // added lines (+)
+pub const COLOR_GREEN = "\x1b[32m"; // added lines (+), result hashes
 pub const COLOR_RED = "\x1b[31m"; // removed lines (-)
+pub const COLOR_DIM = "\x1b[2m"; // consumed/merged hashes
 
 pub fn printHunkHuman(stdout: *std.Io.Writer, h: Hunk, mode: DiffMode, col_width: usize, term_width: u16, use_color: bool) !void {
     const short_sha = h.sha_hex[0..7];

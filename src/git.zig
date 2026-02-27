@@ -6,7 +6,16 @@ const DiffMode = types.DiffMode;
 const fatal = types.fatal;
 
 pub fn runGitDiff(allocator: Allocator, mode: DiffMode, context: ?u32) ![]u8 {
-    var argv_buf: [8][]const u8 = undefined;
+    return runGitDiffFiles(allocator, mode, context, &.{});
+}
+
+/// Like runGitDiff but scoped to specific file paths via `-- file1 file2 ...`.
+/// Pass an empty slice for no file filter (equivalent to runGitDiff).
+pub fn runGitDiffFiles(allocator: Allocator, mode: DiffMode, context: ?u32, file_paths: []const []const u8) ![]u8 {
+    // Base args: git diff [--cached] [-U<n>] --src-prefix=a/ --dst-prefix=b/ --no-color [-- file1 ...]
+    const max_args = 8 + 1 + file_paths.len; // 8 base + "--" separator + file paths
+    const argv_buf = try allocator.alloc([]const u8, max_args);
+    defer allocator.free(argv_buf);
     var argc: usize = 0;
     argv_buf[argc] = "git";
     argc += 1;
@@ -27,6 +36,14 @@ pub fn runGitDiff(allocator: Allocator, mode: DiffMode, context: ?u32) ![]u8 {
     argc += 1;
     argv_buf[argc] = "--no-color";
     argc += 1;
+    if (file_paths.len > 0) {
+        argv_buf[argc] = "--";
+        argc += 1;
+        for (file_paths) |fp| {
+            argv_buf[argc] = fp;
+            argc += 1;
+        }
+    }
     const argv: []const []const u8 = argv_buf[0..argc];
 
     var child = std.process.Child.init(argv, allocator);
@@ -65,21 +82,29 @@ pub fn runGitDiff(allocator: Allocator, mode: DiffMode, context: ?u32) ![]u8 {
     return try child_stdout.toOwnedSlice(allocator);
 }
 
-pub fn runGitApply(allocator: Allocator, patch: []const u8, reverse: bool) !void {
-    var argv_buf: [6][]const u8 = undefined;
+pub const ApplyTarget = enum { index, worktree };
+
+pub fn runGitApply(allocator: Allocator, patch: []const u8, reverse: bool, target: ApplyTarget, check_only: bool) !void {
+    var argv_buf: [7][]const u8 = undefined;
     var argc: usize = 0;
     argv_buf[argc] = "git";
     argc += 1;
     argv_buf[argc] = "apply";
     argc += 1;
-    argv_buf[argc] = "--cached";
-    argc += 1;
+    if (target == .index) {
+        argv_buf[argc] = "--cached";
+        argc += 1;
+    }
     if (reverse) {
         argv_buf[argc] = "--reverse";
         argc += 1;
     }
     argv_buf[argc] = "--unidiff-zero";
     argc += 1;
+    if (check_only) {
+        argv_buf[argc] = "--check";
+        argc += 1;
+    }
     const argv: []const []const u8 = argv_buf[0..argc];
 
     var child = std.process.Child.init(argv, allocator);

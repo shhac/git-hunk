@@ -115,14 +115,22 @@ git hunk add a3f7c21 --file src/main.zig   # restrict match to file
 git hunk add --all                     # stage all unstaged hunks
 git hunk add --file src/main.zig       # stage all hunks in a file
 git hunk add a3f7:3-5,8               # stage specific lines from a hunk
+git hunk add a3f7c21 --porcelain      # machine-readable output
 ```
 
-Output shows both the old (unstaged) and new (staged) hash:
+Output shows the applied (input) and result (output) hashes:
 
 ```
 staged a3f7c21 → 5e2b1a9  src/main.zig
 1 hunk staged
 hint: staged hashes differ from unstaged -- use 'git hunk list --staged' to see them
+```
+
+When staging causes adjacent hunks to merge, consumed hashes appear with `+`:
+
+```
+staged a3f7c21 +xxxx123 → 5e2b1a9  src/main.zig
+1 hunk staged (1 merged)
 ```
 
 ### Unstage hunks
@@ -132,7 +140,62 @@ git hunk remove a3f7c21               # unstage from index
 git hunk remove a3f7 b82e             # unstage multiple
 git hunk remove --all                  # unstage everything
 git hunk remove --file src/main.zig    # unstage all hunks in a file
+git hunk remove a3f7c21 --porcelain   # machine-readable output
 ```
+
+### Discard changes
+
+```
+git hunk discard a3f7c21               # discard one unstaged hunk from worktree
+git hunk discard a3f7 b82e             # discard multiple hunks
+git hunk discard --all                 # discard all unstaged changes
+git hunk discard --file src/main.zig   # discard all hunks in a file
+git hunk discard a3f7:3-5             # discard specific lines from a hunk
+git hunk discard --dry-run a3f7c21    # preview what would be discarded
+git hunk discard a3f7c21 --porcelain  # machine-readable output
+```
+
+Reverts specific worktree changes to match the index. The destructive
+counterpart to `add`/`remove`. Staged changes are unaffected.
+
+Output:
+
+```
+discarded a3f7c21  src/main.zig
+1 hunk discarded
+```
+
+With `--dry-run`, shows what would be discarded without modifying files:
+
+```
+would discard a3f7c21  src/main.zig
+1 hunk would be discarded
+```
+
+### Count hunks
+
+```
+git hunk count                         # count unstaged hunks
+git hunk count --staged                # count staged hunks
+git hunk count --file src/main.zig     # count hunks in a file
+```
+
+Outputs a bare integer. Always exits 0 (zero hunks is a valid count).
+
+### Check hunk validity
+
+```
+git hunk check a3f7c21                 # verify hash still exists
+git hunk check a3f7 b82e               # check multiple hashes
+git hunk check --exclusive a3f7 b82e   # assert these are the ONLY hunks
+git hunk check --staged a3f7c21        # check against staged hunks
+git hunk check --porcelain a3f7 b82e   # machine-readable results
+```
+
+Validates that hunk hashes exist in the current diff. Exits 0 if all
+hashes are valid, 1 if any are stale or ambiguous. Silent on success
+in human mode. With `--exclusive`, asserts the provided hashes are the
+only hunks (scoped by `--file` if given).
 
 ### Typical workflow
 
@@ -265,13 +328,13 @@ same.
 
 Output is colorized when stdout is a TTY:
 
-- SHA hashes in yellow (in `list`, `show`, `add`, and `remove` output)
+- SHA hashes in yellow (in `list`, `show`, `add`, `remove`, and `discard` output)
 - Added lines (`+`) in green
 - Removed lines (`-`) in red
 
 Color is disabled automatically when piping output. Use `--no-color` to disable
 explicitly, or set the `NO_COLOR` environment variable. The `--no-color` flag is
-accepted by all commands (`list`, `show`, `add`, `remove`).
+accepted by all commands (`list`, `show`, `add`, `remove`, `discard`).
 
 ## Handles
 
@@ -286,6 +349,8 @@ accepted by all commands (`list`, `show`, `add`, `remove`).
 - Bulk staging via `--all` or `--file` without SHAs
 - Per-line staging via `sha:line-spec` syntax
 - Configurable context lines via `--context N`
+- Hash validity checking via `check` with `--exclusive` support
+- Worktree discard via `discard` with `--dry-run` preview
 
 ## License
 

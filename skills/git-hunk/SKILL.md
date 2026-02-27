@@ -173,15 +173,32 @@ git hunk add a3f7c21 --file src/main.zig     # restrict match to file
 git hunk add --all                           # stage all unstaged hunks
 git hunk add --file src/main.zig             # stage all hunks in a file
 git hunk add a3f7:3-5,8                      # stage specific lines from a hunk
+git hunk add a3f7c21 --porcelain             # machine-readable output
 ```
 
-On success, prints confirmation to stdout showing both the old and new hash:
+On success, prints confirmation to stdout showing applied and result hashes:
 
 ```
 staged a3f7c21 → 5e2b1a9  src/main.zig
 1 hunk staged
 hint: staged hashes differ from unstaged -- use 'git hunk list --staged' to see them
 ```
+
+When staging causes a hunk to merge with an already-staged hunk, the consumed
+hash is shown with a `+` prefix:
+
+```
+staged a3f7c21 +xxxx123 → 5e2b1a9  src/main.zig
+1 hunk staged (1 merged)
+```
+
+Machine-readable output for scripting:
+
+```bash
+git hunk add a3f7c21 --porcelain
+```
+
+Porcelain format is tab-separated: `verb\tapplied\tresult\tfile[\tconsumed]`
 
 The `→` mapping shows the new staged hash so you can immediately reference it
 with `list --staged` or `remove` without re-listing.
@@ -195,11 +212,113 @@ git hunk remove a3f7c21                      # one hunk
 git hunk remove a3f7 b82e                    # multiple hunks
 git hunk remove --all                        # unstage everything
 git hunk remove --file src/main.zig          # unstage all hunks in a file
+git hunk remove a3f7c21 --porcelain          # machine-readable output
 ```
 
 Use hashes from `git hunk list --staged`. Note that staged and unstaged hashes
 for the same hunk differ (they use different stable line references). The `add`
-command shows the mapping (`old → new`) to help track this.
+command shows the mapping (`applied → result`) to help track this.
+
+## Discarding changes
+
+Revert specific worktree changes to match the index (the destructive counterpart
+to `add`/`remove`). Staged changes are unaffected.
+
+```bash
+git hunk discard a3f7c21                      # discard one hunk from worktree
+git hunk discard a3f7 b82e                    # discard multiple hunks
+git hunk discard --all                        # discard all unstaged changes
+git hunk discard --file src/main.zig          # discard all hunks in a file
+git hunk discard a3f7:3-5                     # discard specific lines from a hunk
+git hunk discard a3f7c21 --porcelain          # machine-readable output
+```
+
+Preview before discarding with `--dry-run` (validates without modifying files):
+
+```bash
+git hunk discard --dry-run a3f7c21            # shows "would discard" without changing anything
+```
+
+Output (human mode):
+
+```
+discarded a3f7c21  src/main.zig
+1 hunk discarded
+```
+
+With `--dry-run`:
+
+```
+would discard a3f7c21  src/main.zig
+1 hunk would be discarded
+```
+
+Porcelain mode (tab-separated): `verb\tsha7\tfile`
+
+```
+discarded	a3f7c21	src/main.zig
+```
+
+No `--staged` flag — discarding staged hunks is equivalent to unstaging, which
+is `remove`.
+
+## Counting hunks
+
+Get a quick count of hunks for scripting:
+
+```bash
+git hunk count                                   # unstaged hunk count
+git hunk count --staged                          # staged hunk count
+git hunk count --file src/main.zig               # count in one file
+```
+
+Output is a bare integer (e.g., `3`). Always exits 0 — zero is a valid count.
+
+```bash
+if [ $(git hunk count) -gt 0 ]; then
+  echo "unstaged changes remain"
+fi
+```
+
+## Checking hunk validity
+
+Verify that captured hashes are still valid before acting on them:
+
+```bash
+git hunk check a3f7c21                         # verify one hash
+git hunk check a3f7 b82e                       # verify multiple
+git hunk check --staged a3f7c21                # check staged hunks
+git hunk check --exclusive a3f7 b82e           # assert these are the ONLY hunks
+git hunk check --exclusive --file f.zig a3f7   # exclusive within one file
+git hunk check --porcelain a3f7 b82e           # machine-readable results
+```
+
+Exits 0 if all hashes exist and no exclusive violations. Exits 1 otherwise.
+
+Human mode is silent on success. On failure, reports `stale`, `ambiguous`, or
+`unexpected` entries to stdout with a summary to stderr.
+
+Porcelain mode reports ALL entries (pass and fail), tab-separated:
+
+```
+ok	a3f7	a3f7c21	src/main.zig
+stale	deadbeef
+unexpected	c1d2e3f	src/main.zig
+```
+
+Useful for scripts that capture hashes, make decisions, then verify before
+staging:
+
+```bash
+SHAS=$(git hunk list --porcelain --oneline | cut -f1)
+# ... later ...
+if git hunk check $SHAS 2>/dev/null; then
+  git hunk add $SHAS
+else
+  echo "hashes stale, re-listing"
+  SHAS=$(git hunk list --porcelain --oneline | cut -f1)
+fi
+```
 
 ## Hash stability
 
@@ -232,6 +351,13 @@ List hunk hashes only:
 git hunk list --porcelain --oneline | cut -f1
 ```
 
+Count hunks:
+
+```bash
+git hunk count                         # total unstaged hunks
+git hunk count --file src/main.zig     # hunks in one file
+```
+
 Count hunks per file:
 
 ```bash
@@ -242,6 +368,41 @@ Stage hunks matching a pattern in the summary:
 
 ```bash
 git hunk list --porcelain --oneline | grep 'error' | cut -f1 | xargs git hunk add
+```
+
+Guaranteed precise commit — stage exactly these hunks, nothing else:
+
+```bash
+HASHES="a3f7c21 b82e1f4"
+
+# Verify nothing is already staged, these are the ONLY unstaged hunks, then stage and commit
+[ "$(git hunk count --staged)" -eq 0 ] && \
+  git hunk check --exclusive $HASHES && \
+  git hunk add $HASHES && \
+  git commit -m "feat: precise change"
+```
+
+The `--exclusive` flag guarantees no unexpected hunks exist — if someone else
+modified the worktree, `check` exits 1 and the pipeline stops before staging.
+
+Capture hashes by pattern, validate, stage:
+
+```bash
+HASHES=$(git hunk list --porcelain --oneline | grep 'error handling' | cut -f1)
+git hunk check $HASHES && git hunk add $HASHES && git commit -m "feat: add error handling"
+```
+
+Discard unwanted changes while keeping what you want:
+
+```bash
+# Stage the hunks you want to keep
+git hunk add a3f7c21 b82e0f4
+
+# Discard everything else from the worktree
+git hunk discard --all
+
+# Commit what's staged
+git commit -m "feat: precise changes only"
 ```
 
 ## Prefix matching
@@ -260,6 +421,9 @@ to disambiguate.
 - No staged changes: `no staged changes` (exit 1)
 
 All errors go to stderr. Data goes to stdout. Exit 0 on success, 1 on error.
+
+For `discard`, the same errors apply, plus:
+- `no unstaged changes` -- nothing to discard
 
 ## New and deleted files
 

@@ -194,36 +194,175 @@ git hunk list --porcelain --oneline | head -1 | cut -f3
 
 ## Staging/unstaging confirmation
 
-`add` and `remove` print one line per hunk to stdout, showing both the old and
-new hash when a mapping is found:
+`add` and `remove` print one line per **result hunk** to stdout. Each line shows
+the applied (input) hashes, any consumed (merged) hashes, and the new result
+hash on the target side:
+
+```
+{verb} {applied...} [+{consumed}...] → {result[,result...]}  {file}
+```
+
+### Tokens
+
+| Token | Meaning |
+|-------|---------|
+| `{verb}` | `staged` or `unstaged` |
+| `{applied}` | Hash the user asked to stage/unstage. Space-separated if multiple inputs merged. May include `:line-spec`. |
+| `+{consumed}` | Existing target-side hash absorbed into the result. Prefixed with `+`. |
+| `→` | Unicode arrow (U+2192). Always present. |
+| `{result}` | New target-side hash. Comma-separated if line-spec produced multiple outputs. `?` if no mapping found. |
+| `{file}` | File path (two spaces after result hash). |
+
+### Examples
+
+Simple staging (1→1):
 
 ```
 staged a3f7c21 → 5e2b1a9  src/main.zig
-staged b82e0f4 → 8c3d7f2  src/main.zig
 ```
+
+Merge with existing staged hunk:
+
+```
+staged a3f7c21 +xxxx123 → 5e2b1a9  src/main.zig
+```
+
+Two inputs merge with each other:
+
+```
+staged a3f7c21 b82e0f4 → 5e2b1a9  src/main.zig
+```
+
+Two inputs + existing merge (bridge):
+
+```
+staged a3f7c21 b82e0f4 +xxxx123 +yyyy456 → 5e2b1a9  src/main.zig
+```
+
+Line spec with multiple outputs:
+
+```
+staged a3f7c21:1,10 → 5e2b1a9,8c3d7f2  src/main.zig
+```
+
+Unstaging:
 
 ```
 unstaged 5e2b1a9 → a3f7c21  src/main.zig
+unstaged 5e2b1a9 +dddd789 → a3f7c21  src/main.zig
 ```
 
-Format: `{verb} {old_sha7} → {new_sha7}  {file}` (two spaces between new hash
-and file). When no mapping is found (e.g., partial line staging, hunk merging),
-falls back to: `{verb} {sha7}  {file}`.
+### Color (human mode, when TTY)
 
-SHA hashes are colored yellow when stdout is a TTY (disable with `--no-color` or
-the `NO_COLOR` environment variable).
+- Applied hashes: yellow (`\x1b[33m`)
+- Consumed hashes (including `+` prefix): dim (`\x1b[2m`)
+- Result hashes: green (`\x1b[32m`)
+- Arrow, file path: default
+
+Disable with `--no-color` or the `NO_COLOR` environment variable.
+
+### Porcelain format
+
+With `--porcelain`, output is tab-separated, one line per result hunk:
+
+```
+{verb}\t{applied}\t{result}\t{file}[\t{consumed}]
+```
+
+| Field | Description |
+|-------|-------------|
+| `verb` | `staged` or `unstaged` |
+| `applied` | Space-separated applied hashes (with `:line-spec` if any) |
+| `result` | Comma-separated result hashes on target side |
+| `file` | File path |
+| `consumed` | Optional. Comma-separated consumed hashes. Omitted if none. |
+
+Examples:
+
+```
+staged	a3f7c21	5e2b1a9	src/main.zig
+staged	a3f7c21	5e2b1a9	src/main.zig	xxxx123
+staged	a3f7c21 b82e0f4	5e2b1a9	src/main.zig	xxxx123
+staged	a3f7c21:1,10	5e2b1a9,8c3d7f2	src/main.zig
+```
+
+### Summary line (stderr)
 
 After all per-hunk lines, a count summary is printed to stderr:
 
 ```
+1 hunk staged
 3 hunks staged
+3 hunks staged (2 merged)
 ```
 
-After staging, a hint is printed to stderr:
+The `(N merged)` count reflects how many existing target-side hunks were
+consumed (the `+`-prefixed hashes).
+
+### Hint (stderr, TTY only, `add` only)
 
 ```
 hint: staged hashes differ from unstaged -- use 'git hunk list --staged' to see them
 ```
+
+## Discard confirmation
+
+`discard` prints one line per discarded hunk to stdout. Simpler than `add`/`remove`
+— no arrow, no result hashes, no consumed hashes (the hunk simply disappears
+from the worktree).
+
+### Human mode
+
+```
+{verb} {sha7}  {file}
+```
+
+| Token | Meaning |
+|-------|---------|
+| `{verb}` | `discarded` or `would discard` (with `--dry-run`) |
+| `{sha7}` | 7-char content hash (yellow when color enabled). May include `:line-spec`. |
+| `{file}` | File path (two spaces after hash). |
+
+Examples:
+
+```
+discarded a3f7c21  src/main.zig
+would discard a3f7c21  src/main.zig
+discarded a3f7c21:3-5  src/main.zig
+```
+
+### Porcelain mode
+
+Tab-separated, 3 fields:
+
+```
+{verb}\t{sha7}\t{file}
+```
+
+| Field | Description |
+|-------|-------------|
+| `verb` | `discarded` or `would-discard` |
+| `sha7` | 7-char hash (with `:line-spec` if any) |
+| `file` | File path |
+
+Examples:
+
+```
+discarded	a3f7c21	src/main.zig
+would-discard	a3f7c21	src/main.zig
+discarded	a3f7c21:3-5	src/main.zig
+```
+
+### Summary line (stderr, human mode only)
+
+```
+1 hunk discarded
+3 hunks discarded
+1 hunk would be discarded
+3 hunks would be discarded
+```
+
+No stderr summary in porcelain mode.
 
 ## Error output
 
@@ -244,5 +383,5 @@ error: unknown command 'badcmd'
 
 | Code | Meaning |
 |------|---------|
-| 0 | Success. For `list`, may produce empty output (no matching hunks). |
+| 0 | Success. For `list`, may produce empty output (no matching hunks). For `count`, always exits 0. |
 | 1 | Error. Message written to stderr. |
