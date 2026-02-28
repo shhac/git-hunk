@@ -1214,7 +1214,11 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
             const blob_sha = try git.runGitHashObject(allocator, m.hunk.file_path);
             defer allocator.free(blob_sha);
 
-            try git.runGitUpdateIndexCacheinfo(allocator, "100644", blob_sha, m.hunk.file_path, &ut_env);
+            const mode = blk: {
+                const stat = std.fs.cwd().statFile(m.hunk.file_path) catch break :blk "100644";
+                break :blk if (stat.mode & std.posix.S.IXUSR != 0) "100755" else "100644";
+            };
+            try git.runGitUpdateIndexCacheinfo(allocator, mode, blob_sha, m.hunk.file_path, &ut_env);
         }
 
         const untracked_tree = try git.runGitWriteTreeWithEnv(allocator, &ut_env);

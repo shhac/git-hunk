@@ -226,4 +226,20 @@ ORIG_ALPHA="$(git show HEAD:alpha.txt | head -1)"
     || fail "test 68: untracked.txt should still exist (not stashed)"
 pass "test 68: stash --all --tracked-only excludes untracked"
 
+# ============================================================================
+# Test 69: stash untracked preserves executable bit
+# ============================================================================
+new_repo
+echo '#!/bin/sh' > script.sh
+chmod +x script.sh
+[[ -x script.sh ]] || fail "test 69: precondition: script.sh should be executable"
+
+HASH=$("$GIT_HUNK" list --porcelain --oneline | head -1 | cut -f1)
+"$GIT_HUNK" stash "$HASH" > /dev/null
+[[ ! -f script.sh ]] || fail "test 69: script.sh should be removed after stash"
+
+git stash pop --quiet
+[[ -x script.sh ]] || fail "test 69: script.sh should be executable after pop"
+pass "test 69: stash untracked preserves executable bit"
+
 report_results
