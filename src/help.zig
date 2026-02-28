@@ -246,17 +246,22 @@ const stash_help: []const u8 =
     \\git-hunk stash - Stash hunks into git stash, remove from worktree
     \\
     \\USAGE
-    \\  git-hunk stash [options] [<sha>...]
+    \\  git-hunk stash [push] [options] [<sha>...]
+    \\  git-hunk stash pop
+    \\
+    \\SUBCOMMANDS
+    \\  push              Stash hunks (default when omitted)
+    \\  pop               Restore the most recent git-hunk stash
     \\
     \\ARGUMENTS
-    \\  <sha>...          Hunk hashes to stash (no line specs). Optional when --all,
-    \\                    --file, or --pop is used.
+    \\  <sha>...          Hunk hashes to stash (no line specs). Optional when --all
+    \\                    or --file is used.
     \\
-    \\OPTIONS
-    \\  --all             Stash all unstaged hunks
+    \\OPTIONS (push only)
+    \\  --all             Stash all unstaged tracked hunks
+    \\  --include-untracked, -u
+    \\                    Include untracked files (use with --all)
     \\  --file <path>     Stash all hunks in the given file
-    \\  --pop             Restore the most recent git-hunk stash (cannot combine with
-    \\                    other flags)
     \\  -m, --message <msg>
     \\                    Set the stash message
     \\  --porcelain       Machine-readable output
@@ -266,10 +271,14 @@ const stash_help: []const u8 =
     \\  --context <n>     Lines of diff context (default: git's diff.context or 3)
     \\  --help, -h        Show this help
     \\
+    \\  Note: --all without -u stashes only tracked changes (like git stash push).
+    \\  Explicit hashes always stash the specified hunks regardless of -u.
+    \\
     \\EXAMPLES
     \\  git-hunk stash a3f7c21                 Stash a single hunk
-    \\  git-hunk stash --all                   Stash all unstaged hunks
-    \\  git-hunk stash -m "wip"                Stash with a message
-    \\  git-hunk stash --pop                   Restore the most recent stash
+    \\  git-hunk stash --all                   Stash all tracked unstaged hunks
+    \\  git-hunk stash --all -u                Stash all hunks including untracked
+    \\  git-hunk stash push -m "wip"           Stash with a message
+    \\  git-hunk stash pop                     Restore the most recent stash
     \\
 ;

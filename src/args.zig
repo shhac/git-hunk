@@ -282,6 +282,30 @@ pub fn parseStashArgs(allocator: Allocator, args: []const [:0]u8) !StashOptions 
     errdefer deinitShaArgs(allocator, &opts.sha_args);
 
     var i: usize = 0;
+
+    // Check for subcommand: push or pop
+    if (i < args.len) {
+        const first = args[i];
+        if (std.mem.eql(u8, first, "pop")) {
+            // pop subcommand: reject all other flags/args
+            i += 1;
+            while (i < args.len) : (i += 1) {
+                const arg = args[i];
+                if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+                    return error.HelpRequested;
+                }
+                std.debug.print("error: pop does not accept arguments or flags\n", .{});
+                return error.InvalidArgument;
+            }
+            opts.pop = true;
+            return opts;
+        } else if (std.mem.eql(u8, first, "push")) {
+            // Explicit push: skip keyword, parse rest as normal
+            i += 1;
+        }
+        // Otherwise: not a subcommand keyword, treat as flags/hash (implicit push)
+    }
+
     while (i < args.len) : (i += 1) {
         const arg = args[i];
         if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
@@ -292,8 +316,8 @@ pub fn parseStashArgs(allocator: Allocator, args: []const [:0]u8) !StashOptions 
             opts.file_filter = args[i];
         } else if (std.mem.eql(u8, arg, "--all")) {
             opts.select_all = true;
-        } else if (std.mem.eql(u8, arg, "--pop")) {
-            opts.pop = true;
+        } else if (std.mem.eql(u8, arg, "--include-untracked") or std.mem.eql(u8, arg, "-u")) {
+            opts.include_untracked = true;
         } else if (std.mem.eql(u8, arg, "--tracked-only")) {
             opts.diff_filter = .tracked_only;
         } else if (std.mem.eql(u8, arg, "--untracked-only")) {
@@ -323,27 +347,14 @@ pub fn parseStashArgs(allocator: Allocator, args: []const [:0]u8) !StashOptions 
         }
     }
 
-    if (opts.pop) {
-        if (opts.sha_args.items.len > 0) {
-            std.debug.print("error: --pop cannot be combined with sha arguments\n", .{});
-            return error.InvalidArgument;
-        }
-        if (opts.select_all) {
-            std.debug.print("error: --pop cannot be combined with --all\n", .{});
-            return error.InvalidArgument;
-        }
-        if (opts.file_filter != null) {
-            std.debug.print("error: --pop cannot be combined with --file\n", .{});
-            return error.InvalidArgument;
-        }
-        if (opts.message != null) {
-            std.debug.print("error: --pop cannot be combined with --message\n", .{});
-            return error.InvalidArgument;
-        }
+    // --include-untracked conflicts with --tracked-only
+    if (opts.include_untracked and opts.diff_filter == .tracked_only) {
+        std.debug.print("error: --include-untracked cannot be combined with --tracked-only\n", .{});
+        return error.InvalidArgument;
     }
 
-    if (!opts.pop and opts.sha_args.items.len == 0 and !opts.select_all and opts.file_filter == null) {
-        std.debug.print("error: at least one <sha> argument required (or use --all, --file <path>, or --pop)\n", .{});
+    if (opts.sha_args.items.len == 0 and !opts.select_all and opts.file_filter == null) {
+        std.debug.print("error: at least one <sha> argument required (or use --all or --file <path>)\n", .{});
         return error.MissingArgument;
     }
 
@@ -1087,12 +1098,43 @@ test "parseStashArgs select all" {
     try std.testing.expect(opts.select_all);
 }
 
-test "parseStashArgs pop flag" {
+test "parseStashArgs pop subcommand" {
     const allocator = std.testing.allocator;
-    const args_arr = [_][:0]u8{@constCast("--pop")};
+    const args_arr = [_][:0]u8{@constCast("pop")};
     var opts = try parseStashArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expect(opts.pop);
+}
+
+test "parseStashArgs push subcommand explicit" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("push"), @constCast("--all") };
+    var opts = try parseStashArgs(allocator, &args_arr);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expect(opts.select_all);
+    try std.testing.expect(!opts.pop);
+}
+
+test "parseStashArgs include-untracked long flag" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("--all"), @constCast("--include-untracked") };
+    var opts = try parseStashArgs(allocator, &args_arr);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expect(opts.include_untracked);
+}
+
+test "parseStashArgs include-untracked short flag" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("--all"), @constCast("-u") };
+    var opts = try parseStashArgs(allocator, &args_arr);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expect(opts.include_untracked);
+}
+
+test "parseStashArgs include-untracked conflicts with tracked-only" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("--all"), @constCast("--include-untracked"), @constCast("--tracked-only") };
+    try std.testing.expectError(error.InvalidArgument, parseStashArgs(allocator, &args_arr));
 }
 
 test "parseStashArgs message long flag" {
@@ -1161,20 +1203,20 @@ test "parseStashArgs rejects line specs" {
     try std.testing.expectError(error.InvalidArgument, parseStashArgs(allocator, &args_arr));
 }
 
-test "parseStashArgs pop rejects sha args" {
+test "parseStashArgs pop rejects extra args" {
     const allocator = std.testing.allocator;
-    const args_arr = [_][:0]u8{ @constCast("--pop"), @constCast("abcd1234") };
+    const args_arr = [_][:0]u8{ @constCast("pop"), @constCast("abcd1234") };
     try std.testing.expectError(error.InvalidArgument, parseStashArgs(allocator, &args_arr));
 }
 
-test "parseStashArgs pop rejects --all" {
+test "parseStashArgs pop rejects flags" {
     const allocator = std.testing.allocator;
-    const args_arr = [_][:0]u8{ @constCast("--pop"), @constCast("--all") };
+    const args_arr = [_][:0]u8{ @constCast("pop"), @constCast("--all") };
     try std.testing.expectError(error.InvalidArgument, parseStashArgs(allocator, &args_arr));
 }
 
-test "parseStashArgs pop rejects --message" {
+test "parseStashArgs old --pop flag rejected as unknown" {
     const allocator = std.testing.allocator;
-    const args_arr = [_][:0]u8{ @constCast("--pop"), @constCast("-m"), @constCast("msg") };
-    try std.testing.expectError(error.InvalidArgument, parseStashArgs(allocator, &args_arr));
+    const args_arr = [_][:0]u8{ @constCast("--all"), @constCast("--pop") };
+    try std.testing.expectError(error.UnknownFlag, parseStashArgs(allocator, &args_arr));
 }

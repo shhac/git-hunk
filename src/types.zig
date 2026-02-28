@@ -119,6 +119,7 @@ pub const StashOptions = struct {
     file_filter: ?[]const u8 = null,
     select_all: bool = false,
     pop: bool = false,
+    include_untracked: bool = false,
     message: ?[]const u8 = null,
     output: OutputMode = .human,
     no_color: bool = false,

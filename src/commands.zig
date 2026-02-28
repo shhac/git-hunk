@@ -1017,7 +1017,14 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
-    const diffs = try getDiffWithUntracked(allocator, arena, .unstaged, opts.context, opts.file_filter, opts.diff_filter, &hunks);
+    // When --all is used without --include-untracked, default to tracked-only
+    // (matching git stash behavior). Explicit hashes bypass this.
+    const effective_filter = if (opts.select_all and !opts.include_untracked and opts.diff_filter == .all)
+        DiffFilter.tracked_only
+    else
+        opts.diff_filter;
+
+    const diffs = try getDiffWithUntracked(allocator, arena, .unstaged, opts.context, opts.file_filter, effective_filter, &hunks);
     defer allocator.free(diffs.tracked);
     defer allocator.free(diffs.untracked);
 
@@ -1318,7 +1325,7 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
         }
         // Hint on stderr (TTY only)
         if (std.fs.File.stdout().isTty()) {
-            std.debug.print("hint: use 'git stash list' to see stashed entries, 'git hunk stash --pop' to restore\n", .{});
+            std.debug.print("hint: use 'git stash list' to see stashed entries, 'git hunk stash pop' to restore\n", .{});
         }
     }
 }

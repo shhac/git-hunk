@@ -29,8 +29,8 @@ pass "test 53: list --help shows per-command help"
 OUT54="$("$GIT_HUNK" help stash)"
 echo "$OUT54" | grep -q "USAGE" \
     || fail "test 54: help stash should contain 'USAGE'"
-echo "$OUT54" | grep -q "\-\-pop" \
-    || fail "test 54: help stash should describe --pop"
+echo "$OUT54" | grep -q "pop" \
+    || fail "test 54: help stash should describe pop subcommand"
 pass "test 54: help <command> shows per-command help"
 
 # ============================================================================
