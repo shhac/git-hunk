@@ -199,6 +199,32 @@ hashes are valid, 1 if any are stale or ambiguous. Silent on success
 in human mode. With `--exclusive`, asserts the provided hashes are the
 only hunks (scoped by `--file` if given).
 
+### Stash hunks
+
+```
+git hunk stash a3f7c21                    # stash one hunk, remove from worktree
+git hunk stash a3f7 b82e                  # stash multiple hunks
+git hunk stash --all                      # stash all unstaged hunks
+git hunk stash --file src/main.zig        # stash hunks in one file
+git hunk stash -m "wip: auth refactor"    # custom stash message
+git hunk stash --pop                      # restore most recent stash
+```
+
+Saves selected hunks into a real `git stash` entry and removes them from the
+worktree. Compatible with `git stash list`, `git stash show`, and `git stash pop`.
+Auto-generates a stash message from affected file paths unless `-m` is provided.
+
+Note: stash operates on whole hunks only (line selection syntax is not supported).
+
+Output:
+
+```
+stashed a3f7c21  src/main.zig
+stashed b8e4d2f  src/args.zig
+2 hunks stashed
+hint: use 'git stash list' to see stashed entries, 'git hunk stash --pop' to restore
+```
+
 ### Typical workflow
 
 ```
@@ -275,8 +301,8 @@ git hunk list --context 0              # zero context (maximum granularity)
 ```
 
 The `--context` flag is available on all commands (`list`, `show`, `add`,
-`remove`). Context must be consistent within a workflow -- hashes change with
-different context values.
+`remove`, `stash`). Context must be consistent within a workflow -- hashes change
+with different context values.
 
 ## Line selection
 
@@ -330,13 +356,13 @@ same.
 
 Output is colorized when stdout is a TTY:
 
-- SHA hashes in yellow (in `list`, `show`, `add`, `remove`, and `discard` output)
+- SHA hashes in yellow (in `list`, `show`, `add`, `remove`, `discard`, and `stash` output)
 - Added lines (`+`) in green
 - Removed lines (`-`) in red
 
 Color is disabled automatically when piping output. Use `--no-color` to disable
 explicitly, or set the `NO_COLOR` environment variable. The `--no-color` flag is
-accepted by all commands (`list`, `show`, `add`, `remove`, `discard`).
+accepted by all commands (`list`, `show`, `add`, `remove`, `discard`, `stash`).
 
 ## Handles
 
@@ -353,6 +379,16 @@ accepted by all commands (`list`, `show`, `add`, `remove`, `discard`).
 - Configurable context lines via `--context N`
 - Hash validity checking via `check` with `--exclusive` support
 - Worktree discard via `discard` with `--dry-run` preview
+- Hunk stashing via `stash` with `git stash` integration
+
+## Testing
+
+Integration tests use a deterministic fixture repo created by `tests/setup-repo.sh`
+(3 files, 30 lines each, 2 commits):
+
+```
+REPO="$(bash tests/setup-repo.sh)"
+```
 
 ## License
 

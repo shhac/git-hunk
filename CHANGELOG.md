@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- `stash` command: saves selected hunks into a real git stash entry and removes them from the worktree
+- `stash --pop`: restores most recent stash via `git stash pop`
+- `stash --all`: stash all unstaged hunks at once
+- `stash --file <path>`: stash hunks in a specific file
+- `stash -m <msg>`: custom stash message (auto-generates from file paths if omitted)
+- `--porcelain` output for `stash` command
+- Two-diff strategy ensures correct stash content even with dirty index
+
+### Fixed
+- `git apply` failures in stash worktree cleanup now handled gracefully instead of process exit
+
 ## [0.4.0] - 2026-02-27
 
 ### Added
