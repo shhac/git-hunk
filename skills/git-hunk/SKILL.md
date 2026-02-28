@@ -32,25 +32,26 @@ Always stage with `git hunk add` rather than `git add <file>`. File-level stagin
 includes unreviewed changes. Hunk-level staging ensures every staged line has been seen.
 
 When to use `git add` instead:
-- **`git add -N <file>`** -- required for new untracked files (intent-to-add)
+- **`git add -N <file>`** -- optional for new untracked files (intent-to-add). Untracked files are shown by default, but `git add -N` converts them to tracked empty files if preferred.
 - **`git hunk add --all`** -- use this instead of `git add .` for explicit intent
 
 ## Commands
 
 | Command | Purpose | Key flags |
 |---------|---------|-----------|
-| `list` | Enumerate hunks with hashes | `--staged`, `--file`, `--porcelain`, `--oneline`, `--context` |
+| `list` | Enumerate hunks with hashes | `--staged`, `--file`, `--porcelain`, `--oneline`, `--unified` |
 | `show` | Inspect full diff of specific hunks | `--staged`, `--file`, `--porcelain` |
 | `add` | Stage hunks by hash | `--all`, `--file`, `--porcelain`, line specs (`sha:3-5,8`) |
-| `remove` | Unstage hunks by hash | `--all`, `--file`, `--porcelain`, line specs |
-| `stash` | Save hunks to git stash, remove from worktree | `--all`, `--file`, `--pop`, `-m <msg>` |
-| `discard` | Revert worktree hunks (destructive) | `--all`, `--file`, `--dry-run`, line specs |
+| `reset` | Unstage hunks by hash | `--all`, `--file`, `--porcelain`, line specs |
+| `stash` | Save hunks to git stash, remove from worktree | `--all`, `--include-untracked`/`-u`, `--file`, `-m <msg>`, `pop` subcommand |
+| `discard` | Revert worktree hunks (destructive) | `--all`, `--file`, `--force`, `--dry-run`, line specs |
 | `count` | Bare integer hunk count | `--staged`, `--file` |
 | `check` | Verify hashes still valid | `--staged`, `--exclusive`, `--file`, `--porcelain` |
 
-All commands accept `--help`, `--no-color`, and `--context <n>`. SHA prefixes need
-at least 4 hex characters. Use `--file` to disambiguate prefix collisions.
-Use `git-hunk <command> --help` for detailed per-command help.
+All commands accept `--help`, `--no-color`, `--tracked-only`, `--untracked-only`,
+and `-U`/`--unified <n>`. SHA prefixes need at least 4 hex characters. Use `--file`
+to disambiguate prefix collisions. Use `git-hunk <command> --help` for detailed
+per-command help.
 
 ## Hash stability
 
@@ -59,16 +60,15 @@ remaining hashes. List once, then stage multiple hunks sequentially.
 
 The hash is computed from: file path, stable line number (worktree side for unstaged,
 HEAD side for staged), and diff content (`+`/`-` lines only). Staged and unstaged
-hashes for the same hunk differ — use `add`'s `→` output to track the mapping.
+hashes for the same hunk differ -- use `add`'s `->` output to track the mapping.
 
-## New and deleted files
+## New, deleted, and untracked files
 
-New files need intent-to-add before hunks appear:
+Untracked files appear automatically in `list` output alongside tracked changes.
+Use `--tracked-only` or `--untracked-only` to filter.
 
-```bash
-git add -N newfile.txt           # register intent
-git hunk list                    # now shows newfile.txt hunks
-```
+New files can also be registered with intent-to-add (`git add -N`) to convert them
+to tracked empty files, but this is optional.
 
 Deleted files appear automatically when a tracked file is removed.
 
@@ -80,6 +80,7 @@ All errors go to stderr. Exit 0 on success, 1 on error. Common errors:
 - `error: ambiguous prefix '<sha>'` -- use longer prefix or `--file`
 - `error: patch did not apply cleanly` -- re-run `list` and try again
 - `no unstaged changes` / `no staged changes` -- nothing to operate on
+- `error: <file> is an untracked file -- use --force to delete` -- discard requires `--force` for untracked files
 
 ## References
 

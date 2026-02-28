@@ -78,7 +78,8 @@ git hunk list --oneline                # compact one-line-per-hunk output
 git hunk list --staged                 # staged hunks
 git hunk list --file src/main.zig      # filter by file
 git hunk list --porcelain              # machine-readable output
-git hunk list --context 1              # finer-grained hunks
+git hunk list -U 1                     # finer-grained hunks
+git hunk list --tracked-only           # exclude untracked files
 git hunk list --no-color               # disable color output
 ```
 
@@ -99,11 +100,8 @@ b82e0f4  src/main.zig                  45-52     Replace old parser
 Each hunk shows a 7-character content hash, file path, line range, summary, and
 inline diff content. Use `--oneline` for compact output without diffs.
 
-When there are untracked files, a hint is printed to stderr:
-
-```
-hint: 3 untracked file(s) not shown -- use 'git add -N <file>' to include
-```
+Untracked files are included by default. Use `--tracked-only` or
+`--untracked-only` to filter.
 
 ### Show hunk content
 
@@ -149,11 +147,11 @@ staged a3f7c21 +xxxx123 → 5e2b1a9  src/main.zig
 ### Unstage hunks
 
 ```
-git hunk remove a3f7c21               # unstage from index
-git hunk remove a3f7 b82e             # unstage multiple
-git hunk remove --all                  # unstage everything
-git hunk remove --file src/main.zig    # unstage all hunks in a file
-git hunk remove a3f7c21 --porcelain   # machine-readable output
+git hunk reset a3f7c21                # unstage from index
+git hunk reset a3f7 b82e              # unstage multiple
+git hunk reset --all                   # unstage everything
+git hunk reset --file src/main.zig     # unstage all hunks in a file
+git hunk reset a3f7c21 --porcelain    # machine-readable output
 ```
 
 ### Discard changes
@@ -169,7 +167,13 @@ git hunk discard a3f7c21 --porcelain  # machine-readable output
 ```
 
 Reverts specific worktree changes to match the index. The destructive
-counterpart to `add`/`remove`. Staged changes are unaffected.
+counterpart to `add`/`reset`. Staged changes are unaffected.
+
+Untracked files require `--force` to discard (they are deleted permanently):
+
+```
+git hunk discard --force a3f7c21       # discard/delete an untracked file
+```
 
 Output:
 
@@ -215,15 +219,22 @@ only hunks (scoped by `--file` if given).
 ```
 git hunk stash a3f7c21                    # stash one hunk, remove from worktree
 git hunk stash a3f7 b82e                  # stash multiple hunks
-git hunk stash --all                      # stash all unstaged hunks
+git hunk stash --all                      # stash all tracked unstaged hunks
+git hunk stash --all -u                   # stash all including untracked files
+git hunk stash push --include-untracked   # same as -u (explicit push keyword)
 git hunk stash --file src/main.zig        # stash hunks in one file
 git hunk stash -m "wip: auth refactor"    # custom stash message
-git hunk stash --pop                      # restore most recent stash
+git hunk stash pop                        # restore most recent stash
 ```
 
 Saves selected hunks into a real `git stash` entry and removes them from the
 worktree. Compatible with `git stash list`, `git stash show`, and `git stash pop`.
 Auto-generates a stash message from affected file paths unless `-m` is provided.
+
+Like `git stash`, `--all` excludes untracked files by default. Use `-u` /
+`--include-untracked` to include them. Explicit hash targeting always works
+for untracked hunks regardless of `-u`. Untracked files are stored using git's
+native 3-parent stash format, so `git stash pop` restores them correctly.
 
 Note: stash operates on whole hunks only (line selection syntax is not supported).
 
@@ -233,7 +244,7 @@ Output:
 stashed a3f7c21  src/main.zig
 stashed b8e4d2f  src/args.zig
 2 hunks stashed
-hint: use 'git stash list' to see stashed entries, 'git hunk stash --pop' to restore
+hint: use 'git stash list' to see stashed entries, 'git hunk stash pop' to restore
 ```
 
 ### Typical workflow
@@ -304,16 +315,15 @@ b82e0f4	src/main.zig	45	52	Replace old parser
 ## Context lines
 
 By default, git-hunk respects git's `diff.context` setting (default: 3 lines).
-Override with `--context N`:
+Override with `-U N` / `--unified N`:
 
 ```
-git hunk list --context 1              # finer-grained hunks
-git hunk list --context 0              # zero context (maximum granularity)
+git hunk list -U 1                     # finer-grained hunks
+git hunk list --unified 0              # zero context (maximum granularity)
 ```
 
-The `--context` flag is available on all commands (`list`, `show`, `add`,
-`remove`, `stash`). Context must be consistent within a workflow -- hashes change
-with different context values.
+The `-U`/`--unified` flag is available on all commands. Context must be consistent
+within a workflow -- hashes change with different context values.
 
 ## Line selection
 
@@ -367,18 +377,19 @@ same.
 
 Output is colorized when stdout is a TTY:
 
-- SHA hashes in yellow (in `list`, `show`, `add`, `remove`, `discard`, and `stash` output)
+- SHA hashes in yellow (in `list`, `show`, `add`, `reset`, `discard`, and `stash` output)
 - Added lines (`+`) in green
 - Removed lines (`-`) in red
 
 Color is disabled automatically when piping output. Use `--no-color` to disable
 explicitly, or set the `NO_COLOR` environment variable. The `--no-color` flag is
-accepted by all commands (`list`, `show`, `add`, `remove`, `discard`, `stash`).
+accepted by all commands.
 
 ## Handles
 
 - Modified files (single and multi-hunk)
 - New files (via `git add -N`)
+- Untracked files (shown by default, `--tracked-only`/`--untracked-only` to filter)
 - Deleted files
 - Renamed files (with content changes)
 - Files with C-quoted paths (tabs, backslashes)
@@ -387,10 +398,11 @@ accepted by all commands (`list`, `show`, `add`, `remove`, `discard`, `stash`).
 - Ambiguous prefix detection
 - Bulk staging via `--all` or `--file` without SHAs
 - Per-line staging via `sha:line-spec` syntax
-- Configurable context lines via `--context N`
+- Configurable context lines via `-U N` / `--unified N`
 - Hash validity checking via `check` with `--exclusive` support
-- Worktree discard via `discard` with `--dry-run` preview
-- Hunk stashing via `stash` with `git stash` integration
+- Worktree discard via `discard` with `--dry-run` preview and `--force` for untracked
+- Hunk stashing via `stash` with native 3-parent format for untracked files
+- Executable bit preservation in stash
 
 ## Testing
 
