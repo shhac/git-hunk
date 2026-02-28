@@ -39,7 +39,7 @@ pub fn parseListArgs(args: []const [:0]u8) !ListOptions {
             opts.diff_filter = .tracked_only;
         } else if (std.mem.eql(u8, arg, "--untracked-only")) {
             opts.diff_filter = .untracked_only;
-        } else if (std.mem.eql(u8, arg, "--context")) {
+        } else if (std.mem.eql(u8, arg, "--unified") or std.mem.eql(u8, arg, "-U")) {
             i += 1;
             if (i >= args.len) return error.MissingArgument;
             opts.context = std.fmt.parseInt(u32, args[i], 10) catch return error.InvalidArgument;
@@ -75,7 +75,7 @@ pub fn parseAddResetArgs(allocator: Allocator, args: []const [:0]u8) !AddResetOp
             opts.diff_filter = .tracked_only;
         } else if (std.mem.eql(u8, arg, "--untracked-only")) {
             opts.diff_filter = .untracked_only;
-        } else if (std.mem.eql(u8, arg, "--context")) {
+        } else if (std.mem.eql(u8, arg, "--unified") or std.mem.eql(u8, arg, "-U")) {
             i += 1;
             if (i >= args.len) return error.MissingArgument;
             opts.context = std.fmt.parseInt(u32, args[i], 10) catch return error.InvalidArgument;
@@ -120,7 +120,7 @@ pub fn parseShowArgs(allocator: Allocator, args: []const [:0]u8) !ShowOptions {
             opts.diff_filter = .tracked_only;
         } else if (std.mem.eql(u8, arg, "--untracked-only")) {
             opts.diff_filter = .untracked_only;
-        } else if (std.mem.eql(u8, arg, "--context")) {
+        } else if (std.mem.eql(u8, arg, "--unified") or std.mem.eql(u8, arg, "-U")) {
             i += 1;
             if (i >= args.len) return error.MissingArgument;
             opts.context = std.fmt.parseInt(u32, args[i], 10) catch return error.InvalidArgument;
@@ -159,7 +159,7 @@ pub fn parseCountArgs(args: []const [:0]u8) !CountOptions {
             i += 1;
             if (i >= args.len) return error.MissingArgument;
             opts.file_filter = args[i];
-        } else if (std.mem.eql(u8, arg, "--context")) {
+        } else if (std.mem.eql(u8, arg, "--unified") or std.mem.eql(u8, arg, "-U")) {
             i += 1;
             if (i >= args.len) return error.MissingArgument;
             opts.context = std.fmt.parseInt(u32, args[i], 10) catch return error.InvalidArgument;
@@ -201,7 +201,7 @@ pub fn parseCheckArgs(allocator: Allocator, args: []const [:0]u8) !CheckOptions 
             opts.output = .porcelain;
         } else if (std.mem.eql(u8, arg, "--no-color")) {
             opts.no_color = true;
-        } else if (std.mem.eql(u8, arg, "--context")) {
+        } else if (std.mem.eql(u8, arg, "--unified") or std.mem.eql(u8, arg, "-U")) {
             i += 1;
             if (i >= args.len) return error.MissingArgument;
             opts.context = std.fmt.parseInt(u32, args[i], 10) catch return error.InvalidArgument;
@@ -255,7 +255,7 @@ pub fn parseDiscardArgs(allocator: Allocator, args: []const [:0]u8) !DiscardOpti
             opts.output = .porcelain;
         } else if (std.mem.eql(u8, arg, "--no-color")) {
             opts.no_color = true;
-        } else if (std.mem.eql(u8, arg, "--context")) {
+        } else if (std.mem.eql(u8, arg, "--unified") or std.mem.eql(u8, arg, "-U")) {
             i += 1;
             if (i >= args.len) return error.MissingArgument;
             opts.context = std.fmt.parseInt(u32, args[i], 10) catch return error.InvalidArgument;
@@ -330,7 +330,7 @@ pub fn parseStashArgs(allocator: Allocator, args: []const [:0]u8) !StashOptions 
             opts.output = .porcelain;
         } else if (std.mem.eql(u8, arg, "--no-color")) {
             opts.no_color = true;
-        } else if (std.mem.eql(u8, arg, "--context")) {
+        } else if (std.mem.eql(u8, arg, "--unified") or std.mem.eql(u8, arg, "-U")) {
             i += 1;
             if (i >= args.len) return error.MissingArgument;
             opts.context = std.fmt.parseInt(u32, args[i], 10) catch return error.InvalidArgument;
@@ -529,24 +529,24 @@ test "parseListArgs all flags combined" {
 }
 
 test "parseListArgs context" {
-    const args_arr = [_][:0]u8{ @constCast("--context"), @constCast("0") };
+    const args_arr = [_][:0]u8{ @constCast("--unified"), @constCast("0") };
     const opts = try parseListArgs(&args_arr);
     try std.testing.expectEqual(@as(?u32, 0), opts.context);
 }
 
 test "parseListArgs context value" {
-    const args_arr = [_][:0]u8{ @constCast("--context"), @constCast("5") };
+    const args_arr = [_][:0]u8{ @constCast("--unified"), @constCast("5") };
     const opts = try parseListArgs(&args_arr);
     try std.testing.expectEqual(@as(?u32, 5), opts.context);
 }
 
 test "parseListArgs context missing arg" {
-    const args_arr = [_][:0]u8{@constCast("--context")};
+    const args_arr = [_][:0]u8{@constCast("--unified")};
     try std.testing.expectError(error.MissingArgument, parseListArgs(&args_arr));
 }
 
 test "parseListArgs context invalid" {
-    const args_arr = [_][:0]u8{ @constCast("--context"), @constCast("abc") };
+    const args_arr = [_][:0]u8{ @constCast("--unified"), @constCast("abc") };
     try std.testing.expectError(error.InvalidArgument, parseListArgs(&args_arr));
 }
 
@@ -623,7 +623,7 @@ test "parseAddResetArgs multiple shas" {
 
 test "parseAddResetArgs context" {
     const allocator = std.testing.allocator;
-    const args_arr = [_][:0]u8{ @constCast("--all"), @constCast("--context"), @constCast("1") };
+    const args_arr = [_][:0]u8{ @constCast("--all"), @constCast("--unified"), @constCast("1") };
     var opts = try parseAddResetArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expectEqual(@as(?u32, 1), opts.context);
@@ -631,7 +631,7 @@ test "parseAddResetArgs context" {
 
 test "parseAddResetArgs context missing arg" {
     const allocator = std.testing.allocator;
-    const args_arr = [_][:0]u8{ @constCast("--all"), @constCast("--context") };
+    const args_arr = [_][:0]u8{ @constCast("--all"), @constCast("--unified") };
     try std.testing.expectError(error.MissingArgument, parseAddResetArgs(allocator, &args_arr));
 }
 
@@ -680,7 +680,7 @@ test "parseShowArgs missing sha" {
 
 test "parseShowArgs context" {
     const allocator = std.testing.allocator;
-    const args_arr = [_][:0]u8{ @constCast("abcd1234"), @constCast("--context"), @constCast("2") };
+    const args_arr = [_][:0]u8{ @constCast("abcd1234"), @constCast("--unified"), @constCast("2") };
     var opts = try parseShowArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expectEqual(@as(?u32, 2), opts.context);
@@ -688,7 +688,7 @@ test "parseShowArgs context" {
 
 test "parseShowArgs context missing arg" {
     const allocator = std.testing.allocator;
-    const args_arr = [_][:0]u8{ @constCast("abcd1234"), @constCast("--context") };
+    const args_arr = [_][:0]u8{ @constCast("abcd1234"), @constCast("--unified") };
     try std.testing.expectError(error.MissingArgument, parseShowArgs(allocator, &args_arr));
 }
 
@@ -798,7 +798,7 @@ test "parseCountArgs file filter" {
 }
 
 test "parseCountArgs context" {
-    const args_arr = [_][:0]u8{ @constCast("--context"), @constCast("5") };
+    const args_arr = [_][:0]u8{ @constCast("--unified"), @constCast("5") };
     const opts = try parseCountArgs(&args_arr);
     try std.testing.expectEqual(@as(?u32, 5), opts.context);
 }
@@ -829,7 +829,7 @@ test "parseCountArgs file missing arg" {
 }
 
 test "parseCountArgs context missing arg" {
-    const args_arr = [_][:0]u8{@constCast("--context")};
+    const args_arr = [_][:0]u8{@constCast("--unified")};
     try std.testing.expectError(error.MissingArgument, parseCountArgs(&args_arr));
 }
 
@@ -838,7 +838,7 @@ test "parseCountArgs all flags combined" {
         @constCast("--staged"),
         @constCast("--file"),
         @constCast("foo.txt"),
-        @constCast("--context"),
+        @constCast("--unified"),
         @constCast("3"),
         @constCast("--porcelain"),
         @constCast("--no-color"),
@@ -901,7 +901,7 @@ test "parseCheckArgs file filter" {
 
 test "parseCheckArgs context" {
     const allocator = std.testing.allocator;
-    const args_arr = [_][:0]u8{ @constCast("abcd1234"), @constCast("--context"), @constCast("2") };
+    const args_arr = [_][:0]u8{ @constCast("abcd1234"), @constCast("--unified"), @constCast("2") };
     var opts = try parseCheckArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expectEqual(@as(?u32, 2), opts.context);
@@ -942,7 +942,7 @@ test "parseCheckArgs all flags combined" {
         @constCast("foo.txt"),
         @constCast("--porcelain"),
         @constCast("--no-color"),
-        @constCast("--context"),
+        @constCast("--unified"),
         @constCast("1"),
     };
     var opts = try parseCheckArgs(allocator, &args_arr);
@@ -1031,7 +1031,7 @@ test "parseDiscardArgs no-color" {
 
 test "parseDiscardArgs context" {
     const allocator = std.testing.allocator;
-    const args_arr = [_][:0]u8{ @constCast("--all"), @constCast("--context"), @constCast("2") };
+    const args_arr = [_][:0]u8{ @constCast("--all"), @constCast("--unified"), @constCast("2") };
     var opts = try parseDiscardArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expectEqual(@as(?u32, 2), opts.context);
@@ -1053,7 +1053,7 @@ test "parseDiscardArgs all flags combined" {
         @constCast("foo.txt"),
         @constCast("--porcelain"),
         @constCast("--no-color"),
-        @constCast("--context"),
+        @constCast("--unified"),
         @constCast("1"),
     };
     var opts = try parseDiscardArgs(allocator, &args_arr);
@@ -1185,7 +1185,7 @@ test "parseStashArgs no-color" {
 
 test "parseStashArgs context" {
     const allocator = std.testing.allocator;
-    const args_arr = [_][:0]u8{ @constCast("--all"), @constCast("--context"), @constCast("2") };
+    const args_arr = [_][:0]u8{ @constCast("--all"), @constCast("--unified"), @constCast("2") };
     var opts = try parseStashArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expectEqual(@as(?u32, 2), opts.context);

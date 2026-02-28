@@ -186,7 +186,7 @@ fn printUsage(stdout: *std.Io.Writer) !void {
         \\  stash     Stash hunks into git stash, remove from worktree
         \\
         \\common options:
-        \\  --context <n>     Lines of diff context (default: git's diff.context or 3)
+        \\  -U, --unified <n> Lines of diff context (default: git's diff.context or 3)
         \\  --file <path>     Restrict to hunks in a specific file
         \\  --tracked-only    Only include hunks from tracked files
         \\  --untracked-only  Only include hunks from untracked files

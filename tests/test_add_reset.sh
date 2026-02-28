@@ -163,7 +163,7 @@ pass "test 16: arrow always present in add output"
 # ============================================================================
 # Test 17: bridge case — staging middle hunk consumes outer staged hunks
 # ============================================================================
-# Needs a file with specific line structure for predictable --context 0 hunks.
+# Needs a file with specific line structure for predictable --unified 0 hunks.
 new_repo
 cat > bridge.txt <<'BRIDGE_EOF'
 line 1
@@ -182,19 +182,19 @@ git add bridge.txt && git commit -m "bridge setup" -q
 sed -i '' 's/line 4 original/line 4 changed/' bridge.txt
 sed -i '' 's/line 6 original/line 6 changed/' bridge.txt
 
-BRIDGE_HUNKS="$("$GIT_HUNK" list --porcelain --oneline --context 0 --file bridge.txt 2>/dev/null)"
+BRIDGE_HUNKS="$("$GIT_HUNK" list --porcelain --oneline --unified 0 --file bridge.txt 2>/dev/null)"
 BRIDGE_COUNT="$(echo "$BRIDGE_HUNKS" | wc -l | tr -d ' ')"
-[[ "$BRIDGE_COUNT" -eq 2 ]] || fail "test 17: expected 2 hunks with --context 0, got $BRIDGE_COUNT"
+[[ "$BRIDGE_COUNT" -eq 2 ]] || fail "test 17: expected 2 hunks with --unified 0, got $BRIDGE_COUNT"
 
 SHA17_A="$(echo "$BRIDGE_HUNKS" | sort -t$'\t' -k3 -n | head -1 | cut -f1)"
 SHA17_B="$(echo "$BRIDGE_HUNKS" | sort -t$'\t' -k3 -n | tail -1 | cut -f1)"
-"$GIT_HUNK" add --no-color --context 0 "$SHA17_A" "$SHA17_B" > /dev/null 2>/dev/null
+"$GIT_HUNK" add --no-color --unified 0 "$SHA17_A" "$SHA17_B" > /dev/null 2>/dev/null
 
 sed -i '' 's/line 5 gap/line 5 changed/' bridge.txt
-SHA17_MID="$("$GIT_HUNK" list --porcelain --oneline --context 0 --file bridge.txt 2>/dev/null | cut -f1)"
+SHA17_MID="$("$GIT_HUNK" list --porcelain --oneline --unified 0 --file bridge.txt 2>/dev/null | cut -f1)"
 [[ -n "$SHA17_MID" ]] || fail "test 17: no gap hunk found after modifying line 5"
 
-BRIDGE_OUT="$("$GIT_HUNK" add --no-color --context 0 "$SHA17_MID" 2>/dev/null)"
+BRIDGE_OUT="$("$GIT_HUNK" add --no-color --unified 0 "$SHA17_MID" 2>/dev/null)"
 CONSUMED_COUNT="$(echo "$BRIDGE_OUT" | grep -oE '\+[a-f0-9]{7}' | wc -l | tr -d ' ')"
 [[ "$CONSUMED_COUNT" -eq 2 ]] \
     || fail "test 17: bridge expected 2 consumed hashes, got $CONSUMED_COUNT in: '$BRIDGE_OUT'"
@@ -219,21 +219,21 @@ BATCH_EOF
 git add batch.txt && git commit -m "batch setup" -q
 
 sed -i '' 's/line 4 gap/line 4 changed/' batch.txt
-SHA18_PRE="$("$GIT_HUNK" list --porcelain --oneline --context 0 --file batch.txt 2>/dev/null | cut -f1)"
+SHA18_PRE="$("$GIT_HUNK" list --porcelain --oneline --unified 0 --file batch.txt 2>/dev/null | cut -f1)"
 [[ -n "$SHA18_PRE" ]] || fail "test 18: no hunk found for line 4"
-"$GIT_HUNK" add --no-color --context 0 "$SHA18_PRE" > /dev/null 2>/dev/null
+"$GIT_HUNK" add --no-color --unified 0 "$SHA18_PRE" > /dev/null 2>/dev/null
 
 sed -i '' 's/line 3 original/line 3 changed/' batch.txt
 sed -i '' 's/line 5 original/line 5 changed/' batch.txt
 
-BATCH_HUNKS="$("$GIT_HUNK" list --porcelain --oneline --context 0 --file batch.txt 2>/dev/null)"
+BATCH_HUNKS="$("$GIT_HUNK" list --porcelain --oneline --unified 0 --file batch.txt 2>/dev/null)"
 BATCH_COUNT="$(echo "$BATCH_HUNKS" | wc -l | tr -d ' ')"
 [[ "$BATCH_COUNT" -eq 2 ]] || fail "test 18: expected 2 unstaged hunks, got $BATCH_COUNT"
 
 SHA18_A="$(echo "$BATCH_HUNKS" | sort -t$'\t' -k3 -n | head -1 | cut -f1)"
 SHA18_B="$(echo "$BATCH_HUNKS" | sort -t$'\t' -k3 -n | tail -1 | cut -f1)"
 
-BATCH_OUT="$("$GIT_HUNK" add --no-color --context 0 "$SHA18_A" "$SHA18_B" 2>/dev/null)"
+BATCH_OUT="$("$GIT_HUNK" add --no-color --unified 0 "$SHA18_A" "$SHA18_B" 2>/dev/null)"
 BATCH_LINES="$(echo "$BATCH_OUT" | wc -l | tr -d ' ')"
 [[ "$BATCH_LINES" -eq 1 ]] \
     || fail "test 18: expected 1 output line (merged), got $BATCH_LINES in: '$BATCH_OUT'"

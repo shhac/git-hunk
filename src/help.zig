@@ -53,7 +53,7 @@ const list_help: []const u8 =
     \\  --no-color        Disable colored output
     \\  --tracked-only    Only show hunks from tracked files
     \\  --untracked-only  Only show hunks from untracked files
-    \\  --context <n>     Lines of diff context (default: git's diff.context or 3)
+    \\  -U, --unified <n> Lines of diff context (default: git's diff.context or 3)
     \\  --help, -h        Show this help
     \\
     \\EXAMPLES
@@ -62,7 +62,7 @@ const list_help: []const u8 =
     \\  git-hunk list --staged                 List hunks in the staging area
     \\  git-hunk list --file src/main.zig      List hunks for a specific file
     \\  git-hunk list --porcelain --oneline    Machine-readable compact output
-    \\  git-hunk list --context 0              List hunks with no surrounding context
+    \\  git-hunk list --unified 0              List hunks with no surrounding context
     \\
 ;
 
@@ -83,7 +83,7 @@ const show_help: []const u8 =
     \\  --no-color        Disable colored output
     \\  --tracked-only    Only show hunks from tracked files
     \\  --untracked-only  Only show hunks from untracked files
-    \\  --context <n>     Lines of diff context (default: git's diff.context or 3)
+    \\  -U, --unified <n> Lines of diff context (default: git's diff.context or 3)
     \\  --help, -h        Show this help
     \\
     \\EXAMPLES
@@ -112,7 +112,7 @@ const add_help: []const u8 =
     \\  --no-color        Disable colored output
     \\  --tracked-only    Only include hunks from tracked files
     \\  --untracked-only  Only include hunks from untracked files
-    \\  --context <n>     Lines of diff context (default: git's diff.context or 3)
+    \\  -U, --unified <n> Lines of diff context (default: git's diff.context or 3)
     \\  --help, -h        Show this help
     \\
     \\EXAMPLES
@@ -142,7 +142,7 @@ const reset_help: []const u8 =
     \\  --no-color        Disable colored output
     \\  --tracked-only    Only include hunks from tracked files
     \\  --untracked-only  Only include hunks from untracked files
-    \\  --context <n>     Lines of diff context (default: git's diff.context or 3)
+    \\  -U, --unified <n> Lines of diff context (default: git's diff.context or 3)
     \\  --help, -h        Show this help
     \\
     \\EXAMPLES
@@ -171,7 +171,7 @@ const discard_help: []const u8 =
     \\  --no-color        Disable colored output
     \\  --tracked-only    Only include hunks from tracked files
     \\  --untracked-only  Only include hunks from untracked files
-    \\  --context <n>     Lines of diff context (default: git's diff.context or 3)
+    \\  -U, --unified <n> Lines of diff context (default: git's diff.context or 3)
     \\  --help, -h        Show this help
     \\
     \\  WARNING: This command is DESTRUCTIVE. Discarded changes cannot be recovered.
@@ -201,7 +201,7 @@ const count_help: []const u8 =
     \\  --file <path>     Count hunks in the given file only
     \\  --tracked-only    Only count hunks from tracked files
     \\  --untracked-only  Only count hunks from untracked files
-    \\  --context <n>     Lines of diff context (default: git's diff.context or 3)
+    \\  -U, --unified <n> Lines of diff context (default: git's diff.context or 3)
     \\  --help, -h        Show this help
     \\
     \\EXAMPLES
@@ -228,7 +228,7 @@ const check_help: []const u8 =
     \\  --no-color        Disable colored output
     \\  --tracked-only    Only check hunks from tracked files
     \\  --untracked-only  Only check hunks from untracked files
-    \\  --context <n>     Lines of diff context (default: git's diff.context or 3)
+    \\  -U, --unified <n> Lines of diff context (default: git's diff.context or 3)
     \\  --help, -h        Show this help
     \\
     \\EXIT STATUS
@@ -268,7 +268,7 @@ const stash_help: []const u8 =
     \\  --no-color        Disable colored output
     \\  --tracked-only    Only include hunks from tracked files
     \\  --untracked-only  Only include hunks from untracked files
-    \\  --context <n>     Lines of diff context (default: git's diff.context or 3)
+    \\  -U, --unified <n> Lines of diff context (default: git's diff.context or 3)
     \\  --help, -h        Show this help
     \\
     \\  Note: --all without -u stashes only tracked changes (like git stash push).
