@@ -56,7 +56,7 @@ fn run() !void {
         };
         try commands.cmdList(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "add")) {
-        var opts = args_mod.parseAddRemoveArgs(allocator, process_args[2..]) catch |err| {
+        var opts = args_mod.parseAddResetArgs(allocator, process_args[2..]) catch |err| {
             if (err == error.HelpRequested) {
                 try help.printCommandHelp(stdout, .add);
                 try stdout.flush();
@@ -68,10 +68,10 @@ fn run() !void {
         };
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
         try commands.cmdAdd(allocator, stdout, opts);
-    } else if (std.mem.eql(u8, subcmd, "remove")) {
-        var opts = args_mod.parseAddRemoveArgs(allocator, process_args[2..]) catch |err| {
+    } else if (std.mem.eql(u8, subcmd, "reset")) {
+        var opts = args_mod.parseAddResetArgs(allocator, process_args[2..]) catch |err| {
             if (err == error.HelpRequested) {
-                try help.printCommandHelp(stdout, .remove);
+                try help.printCommandHelp(stdout, .reset);
                 try stdout.flush();
                 std.process.exit(0);
             }
@@ -80,7 +80,7 @@ fn run() !void {
             std.process.exit(1);
         };
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
-        try commands.cmdRemove(allocator, stdout, opts);
+        try commands.cmdReset(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "count")) {
         const opts = args_mod.parseCountArgs(process_args[2..]) catch |err| {
             if (err == error.HelpRequested) {
@@ -179,7 +179,7 @@ fn printUsage(stdout: *std.Io.Writer) !void {
         \\  list      List diff hunks with content hashes
         \\  show      Show diff content of specific hunks
         \\  add       Stage hunks (or selected lines) by hash
-        \\  remove    Unstage hunks (or selected lines) by hash
+        \\  reset     Unstage hunks (or selected lines) by hash
         \\  discard   Discard unstaged worktree changes by hash
         \\  count     Count diff hunks (bare integer output)
         \\  check     Validate hunk hashes exist in current diff

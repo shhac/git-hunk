@@ -63,7 +63,7 @@ pub const ListOptions = struct {
     context: ?u32 = null,
 };
 
-pub const AddRemoveOptions = struct {
+pub const AddResetOptions = struct {
     sha_args: std.ArrayList(ShaArg),
     diff_filter: DiffFilter = .all,
     file_filter: ?[]const u8 = null,

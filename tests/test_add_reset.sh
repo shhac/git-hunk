@@ -14,7 +14,7 @@ STAGED="$(git diff --cached alpha.txt | wc -l | tr -d ' ')"
 pass "test 2: add stages hunk"
 
 # ============================================================================
-# Test 3: remove (unstage) a hunk by SHA
+# Test 3: reset (unstage) a hunk by SHA
 # ============================================================================
 new_repo
 sed -i '' '1s/.*/Modified first line./' alpha.txt
@@ -22,10 +22,10 @@ sed -i '' '1s/.*/Modified first line./' alpha.txt
 "$GIT_HUNK" add --all > /dev/null 2>/dev/null
 STAGED_SHA="$("$GIT_HUNK" list --staged --porcelain --oneline | head -1 | cut -f1)"
 [[ -n "$STAGED_SHA" ]] || fail "test 3: no staged hunk found"
-"$GIT_HUNK" remove "$STAGED_SHA" > /dev/null
+"$GIT_HUNK" reset "$STAGED_SHA" > /dev/null
 REMAINING="$(git diff --cached | wc -l | tr -d ' ')"
 [[ "$REMAINING" -eq 0 ]] || fail "test 3: hunk was not unstaged"
-pass "test 3: remove unstages hunk"
+pass "test 3: reset unstages hunk"
 
 # ============================================================================
 # Test 7: --all stages all unstaged hunks
@@ -54,17 +54,17 @@ echo "$ADD_OUT" | grep -qE '^staged [a-f0-9]{7} → [a-f0-9]{7}  alpha\.txt$' \
 pass "test 9: add output format (staged X -> Y  file)"
 
 # ============================================================================
-# Test 10: remove output shows unstaged HASH -> HASH  FILE format
+# Test 10: reset output shows unstaged HASH -> HASH  FILE format
 # ============================================================================
 new_repo
 sed -i '' '1s/.*/Changed alpha./' alpha.txt
 
 "$GIT_HUNK" add --all > /dev/null 2>/dev/null
 STAGED_SHA="$("$GIT_HUNK" list --staged --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
-REM_OUT="$("$GIT_HUNK" remove --no-color "$STAGED_SHA")"
+REM_OUT="$("$GIT_HUNK" reset --no-color "$STAGED_SHA")"
 echo "$REM_OUT" | grep -qE '^unstaged [a-f0-9]{7} → [a-f0-9]{7}  alpha\.txt$' \
-    || fail "test 10: remove output didn't match expected format, got: '$REM_OUT'"
-pass "test 10: remove output format (unstaged X -> Y  file)"
+    || fail "test 10: reset output didn't match expected format, got: '$REM_OUT'"
+pass "test 10: reset output format (unstaged X -> Y  file)"
 
 # ============================================================================
 # Test 11: overlap/merge case shows consumed hash with + prefix
@@ -246,18 +246,18 @@ echo "$BATCH_OUT" | grep -q "$SHA18_B" \
 pass "test 18: batch add with merge — two applied + one consumed"
 
 # ============================================================================
-# Test 40: remove --porcelain uses tab-separated format
+# Test 40: reset --porcelain uses tab-separated format
 # ============================================================================
 new_repo
 sed -i '' '1s/.*/Changed alpha./' alpha.txt
 
 "$GIT_HUNK" add --all > /dev/null 2>/dev/null
 STAGED_SHA40="$("$GIT_HUNK" list --staged --porcelain --oneline | head -1 | cut -f1)"
-OUT40="$("$GIT_HUNK" remove --porcelain "$STAGED_SHA40")"
+OUT40="$("$GIT_HUNK" reset --porcelain "$STAGED_SHA40")"
 VERB40="$(echo "$OUT40" | cut -f1)"
 [[ "$VERB40" == "unstaged" ]] \
-    || fail "test 40: expected 'unstaged' verb in remove porcelain, got: '$VERB40'"
-pass "test 40: remove --porcelain uses tab-separated format"
+    || fail "test 40: expected 'unstaged' verb in reset porcelain, got: '$VERB40'"
+pass "test 40: reset --porcelain uses tab-separated format"
 
 # ============================================================================
 # Test 56: --all stages both tracked changes and untracked files
@@ -288,7 +288,7 @@ echo "$STAGED54" | grep -q "untracked.txt" || fail "test 54: untracked file was 
 pass "test 54: add stages untracked file"
 
 # ============================================================================
-# Test 55: remove (unstage) untracked file returns it to untracked
+# Test 55: reset (unstage) untracked file returns it to untracked
 # ============================================================================
 new_repo
 echo "new file content line 1" > untracked.txt
@@ -297,10 +297,10 @@ SHA55="$("$GIT_HUNK" list --porcelain --oneline --file untracked.txt | head -1 |
 "$GIT_HUNK" add "$SHA55" > /dev/null 2>/dev/null
 STAGED_SHA55="$("$GIT_HUNK" list --staged --porcelain --oneline --file untracked.txt | head -1 | cut -f1)"
 [[ -n "$STAGED_SHA55" ]] || fail "test 55: no staged hunk found after add"
-"$GIT_HUNK" remove "$STAGED_SHA55" > /dev/null
+"$GIT_HUNK" reset "$STAGED_SHA55" > /dev/null
 REMAINING55="$(git diff --cached --name-only | grep "untracked.txt" || true)"
-[[ -z "$REMAINING55" ]] || fail "test 55: file still staged after remove"
-[[ -f untracked.txt ]] || fail "test 55: file deleted after remove"
-pass "test 55: remove returns untracked file to untracked"
+[[ -z "$REMAINING55" ]] || fail "test 55: file still staged after reset"
+[[ -f untracked.txt ]] || fail "test 55: file deleted after reset"
+pass "test 55: reset returns untracked file to untracked"
 
 report_results

@@ -44,7 +44,7 @@ pass "test 55: help <unknown> exits 1"
 # ============================================================================
 # Test 56: all commands support --help
 # ============================================================================
-for CMD in list show add remove discard count check stash; do
+for CMD in list show add reset discard count check stash; do
     OUT56="$("$GIT_HUNK" "$CMD" --help)"
     echo "$OUT56" | grep -q "USAGE" \
         || fail "test 56: $CMD --help should contain 'USAGE'"

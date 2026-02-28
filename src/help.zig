@@ -4,7 +4,7 @@ pub const Command = enum {
     list,
     show,
     add,
-    remove,
+    reset,
     discard,
     count,
     check,
@@ -16,7 +16,7 @@ pub fn commandFromString(s: []const u8) ?Command {
         .{ "list", .list },
         .{ "show", .show },
         .{ "add", .add },
-        .{ "remove", .remove },
+        .{ "reset", .reset },
         .{ "discard", .discard },
         .{ "count", .count },
         .{ "check", .check },
@@ -30,7 +30,7 @@ pub fn printCommandHelp(stdout: *std.Io.Writer, cmd: Command) !void {
         .list => list_help,
         .show => show_help,
         .add => add_help,
-        .remove => remove_help,
+        .reset => reset_help,
         .discard => discard_help,
         .count => count_help,
         .check => check_help,
@@ -124,11 +124,11 @@ const add_help: []const u8 =
     \\
 ;
 
-const remove_help: []const u8 =
-    \\git-hunk remove - Unstage hunks (or selected lines) by hash
+const reset_help: []const u8 =
+    \\git-hunk reset - Unstage hunks (or selected lines) by hash
     \\
     \\USAGE
-    \\  git-hunk remove [options] [<sha[:lines]>...]
+    \\  git-hunk reset [options] [<sha[:lines]>...]
     \\
     \\ARGUMENTS
     \\  <sha[:lines]>...  Staged hunk hashes to unstage (use `list --staged` to find).
@@ -146,9 +146,9 @@ const remove_help: []const u8 =
     \\  --help, -h        Show this help
     \\
     \\EXAMPLES
-    \\  git-hunk remove a3f7c21                Unstage a single hunk
-    \\  git-hunk remove --all                  Unstage all staged hunks
-    \\  git-hunk remove --file src/main.zig    Unstage all hunks in a file
+    \\  git-hunk reset a3f7c21                Unstage a single hunk
+    \\  git-hunk reset --all                  Unstage all staged hunks
+    \\  git-hunk reset --file src/main.zig    Unstage all hunks in a file
     \\
 ;
 

@@ -9,7 +9,7 @@ const DiffMode = types.DiffMode;
 const DiffFilter = types.DiffFilter;
 const OutputMode = types.OutputMode;
 const ListOptions = types.ListOptions;
-const AddRemoveOptions = types.AddRemoveOptions;
+const AddResetOptions = types.AddResetOptions;
 const ShowOptions = types.ShowOptions;
 const CountOptions = types.CountOptions;
 const CheckOptions = types.CheckOptions;
@@ -50,8 +50,8 @@ pub fn parseListArgs(args: []const [:0]u8) !ListOptions {
     return opts;
 }
 
-pub fn parseAddRemoveArgs(allocator: Allocator, args: []const [:0]u8) !AddRemoveOptions {
-    var opts: AddRemoveOptions = .{
+pub fn parseAddResetArgs(allocator: Allocator, args: []const [:0]u8) !AddResetOptions {
+    var opts: AddResetOptions = .{
         .sha_args = .empty,
     };
     errdefer deinitShaArgs(allocator, &opts.sha_args);
@@ -544,84 +544,84 @@ test "parseListArgs context default null" {
     try std.testing.expectEqual(@as(?u32, null), opts.context);
 }
 
-test "parseAddRemoveArgs valid sha" {
+test "parseAddResetArgs valid sha" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]u8{@constCast("abcd1234")};
-    var opts = try parseAddRemoveArgs(allocator, &args_arr);
+    var opts = try parseAddResetArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expectEqual(@as(usize, 1), opts.sha_args.items.len);
     try std.testing.expectEqualStrings("abcd1234", opts.sha_args.items[0].prefix);
     try std.testing.expectEqual(@as(?LineSpec, null), opts.sha_args.items[0].line_spec);
 }
 
-test "parseAddRemoveArgs too short sha" {
+test "parseAddResetArgs too short sha" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]u8{@constCast("abc")};
-    try std.testing.expectError(error.InvalidArgument, parseAddRemoveArgs(allocator, &args_arr));
+    try std.testing.expectError(error.InvalidArgument, parseAddResetArgs(allocator, &args_arr));
 }
 
-test "parseAddRemoveArgs non-hex sha" {
+test "parseAddResetArgs non-hex sha" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]u8{@constCast("xyzw1234")};
-    try std.testing.expectError(error.InvalidArgument, parseAddRemoveArgs(allocator, &args_arr));
+    try std.testing.expectError(error.InvalidArgument, parseAddResetArgs(allocator, &args_arr));
 }
 
-test "parseAddRemoveArgs missing sha" {
+test "parseAddResetArgs missing sha" {
     const allocator = std.testing.allocator;
-    try std.testing.expectError(error.MissingArgument, parseAddRemoveArgs(allocator, &.{}));
+    try std.testing.expectError(error.MissingArgument, parseAddResetArgs(allocator, &.{}));
 }
 
-test "parseAddRemoveArgs select all" {
+test "parseAddResetArgs select all" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]u8{@constCast("--all")};
-    var opts = try parseAddRemoveArgs(allocator, &args_arr);
+    var opts = try parseAddResetArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expect(opts.select_all);
 }
 
-test "parseAddRemoveArgs no-color" {
+test "parseAddResetArgs no-color" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]u8{ @constCast("--all"), @constCast("--no-color") };
-    var opts = try parseAddRemoveArgs(allocator, &args_arr);
+    var opts = try parseAddResetArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expect(opts.no_color);
 }
 
-test "parseAddRemoveArgs with file flag" {
+test "parseAddResetArgs with file flag" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]u8{
         @constCast("abcd1234"),
         @constCast("--file"),
         @constCast("src/main.zig"),
     };
-    var opts = try parseAddRemoveArgs(allocator, &args_arr);
+    var opts = try parseAddResetArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expectEqualStrings("src/main.zig", opts.file_filter.?);
 }
 
-test "parseAddRemoveArgs multiple shas" {
+test "parseAddResetArgs multiple shas" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]u8{
         @constCast("abcd1234"),
         @constCast("ef567890"),
     };
-    var opts = try parseAddRemoveArgs(allocator, &args_arr);
+    var opts = try parseAddResetArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expectEqual(@as(usize, 2), opts.sha_args.items.len);
 }
 
-test "parseAddRemoveArgs context" {
+test "parseAddResetArgs context" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]u8{ @constCast("--all"), @constCast("--context"), @constCast("1") };
-    var opts = try parseAddRemoveArgs(allocator, &args_arr);
+    var opts = try parseAddResetArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expectEqual(@as(?u32, 1), opts.context);
 }
 
-test "parseAddRemoveArgs context missing arg" {
+test "parseAddResetArgs context missing arg" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]u8{ @constCast("--all"), @constCast("--context") };
-    try std.testing.expectError(error.MissingArgument, parseAddRemoveArgs(allocator, &args_arr));
+    try std.testing.expectError(error.MissingArgument, parseAddResetArgs(allocator, &args_arr));
 }
 
 test "parseShowArgs valid sha" {
@@ -745,10 +745,10 @@ test "parseShaArg invalid number in line spec" {
     try std.testing.expectError(error.InvalidArgument, parseShaArg(allocator, "abcd1234:abc"));
 }
 
-test "parseAddRemoveArgs sha with line spec" {
+test "parseAddResetArgs sha with line spec" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]u8{@constCast("abcd1234:3-5")};
-    var opts = try parseAddRemoveArgs(allocator, &args_arr);
+    var opts = try parseAddResetArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expectEqual(@as(usize, 1), opts.sha_args.items.len);
     try std.testing.expectEqualStrings("abcd1234", opts.sha_args.items[0].prefix);

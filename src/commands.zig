@@ -15,7 +15,7 @@ const MatchedHunk = types.MatchedHunk;
 const DiffMode = types.DiffMode;
 const DiffFilter = types.DiffFilter;
 const ListOptions = types.ListOptions;
-const AddRemoveOptions = types.AddRemoveOptions;
+const AddResetOptions = types.AddResetOptions;
 const ShowOptions = types.ShowOptions;
 const CountOptions = types.CountOptions;
 const CheckOptions = types.CheckOptions;
@@ -312,11 +312,11 @@ pub fn cmdCheck(allocator: Allocator, stdout: *std.Io.Writer, opts: CheckOptions
     }
 }
 
-pub fn cmdAdd(allocator: Allocator, stdout: *std.Io.Writer, opts: AddRemoveOptions) !void {
+pub fn cmdAdd(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOptions) !void {
     try cmdApplyHunks(allocator, stdout, opts, .stage);
 }
 
-pub fn cmdRemove(allocator: Allocator, stdout: *std.Io.Writer, opts: AddRemoveOptions) !void {
+pub fn cmdReset(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOptions) !void {
     try cmdApplyHunks(allocator, stdout, opts, .unstage);
 }
 
@@ -605,7 +605,7 @@ fn printResultGroupPorcelain(stdout: *std.Io.Writer, verb: []const u8, rg: Resul
     try stdout.print("\n", .{});
 }
 
-fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddRemoveOptions, action: ApplyAction) !void {
+fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOptions, action: ApplyAction) !void {
     // For staging: diff unstaged hunks (index vs worktree)
     // For unstaging: diff staged hunks (HEAD vs index)
     const diff_mode: DiffMode = switch (action) {
