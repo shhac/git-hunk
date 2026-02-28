@@ -390,6 +390,77 @@ git-hunk check a3f7c21 --no-color                # disable color output
 
 ---
 
+## git-hunk stash
+
+Stash hunks into a real git stash entry and remove them from the worktree.
+
+```
+git-hunk stash [<sha>...] [--file <path>] [--all] [--pop] [-m <message>] [--porcelain] [--context <n>] [--no-color]
+```
+
+### Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `<sha>...` | One or more SHA hex prefixes (minimum 4 characters). Prefix matching is supported. Line specs are NOT supported — whole hunks only. Optional when `--all`, `--file`, or `--pop` is used. |
+
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `--file <path>` | Restrict hash matching to hunks in this file. When used without SHAs, stashes all hunks in the file. |
+| `--all` | Stash all unstaged hunks. No SHA arguments required. |
+| `--pop` | Restore the most recent stash via `git stash pop`. Cannot be combined with SHAs, `--all`, `--file`, or `-m`. |
+| `-m <message>` | Custom stash message. If omitted, auto-generates from affected file paths. |
+| `--porcelain` | Tab-separated machine-readable output. |
+| `--context <n>` | Number of context lines (default: git's `diff.context` or 3). Must match the value used with `list`. |
+| `--no-color` | Disable color output. Color is also disabled automatically when stdout is not a TTY, or when the `NO_COLOR` environment variable is set. |
+
+### Examples
+
+```bash
+git-hunk stash a3f7c21                          # stash one hunk
+git-hunk stash a3f7 b82e                        # stash multiple hunks
+git-hunk stash --all                            # stash all unstaged hunks
+git-hunk stash --file src/main.zig              # stash hunks in one file
+git-hunk stash -m "wip: auth refactor"          # custom stash message
+git-hunk stash --all -m "wip: save progress"    # stash all with message
+git-hunk stash --pop                            # restore most recent stash
+git-hunk stash a3f7c21 --porcelain              # machine-readable output
+git-hunk stash a3f7c21 --no-color               # disable color output
+```
+
+### Behavior
+
+- Reads unstaged diff, matches each SHA prefix to a hunk, creates a git stash containing those hunks, then removes them from the worktree.
+- The stash is a real git stash entry visible in `git stash list`, `git stash show`, and `git stash pop`.
+- Uses a two-diff strategy to ensure correct stash content even when the index is dirty.
+- With `--all`, stashes every unstaged hunk. With `--file` and no SHAs, stashes all hunks in that file.
+- Auto-generates a stash message from affected file paths (e.g., `git hunk stash: src/main.zig, src/args.zig`) unless `-m` is provided.
+- On success, prints one line per stashed hunk to stdout: `stashed {sha7}  {file}`. SHA in yellow for human mode.
+- Prints a count summary to stderr: `N hunk(s) stashed`.
+- Prints a hint to stderr (TTY only): `hint: use 'git stash list' to see stashed entries, 'git hunk stash --pop' to restore`.
+- With `--porcelain`, output is tab-separated: `stashed\t{sha7}\t{file}`.
+- `--pop` runs `git stash pop` and prints `popped stash@{0}` to stderr. Rejects conflicting flags.
+- Line specs (`sha:lines`) are rejected: `error: line specs not supported for stash`.
+- `git apply` failures during worktree cleanup are handled gracefully (error returned, not process exit).
+- Exits 1 if any SHA prefix doesn't match, is ambiguous, or if there are no unstaged changes.
+
+### Errors
+
+| Error | Cause |
+|-------|-------|
+| `error: sha prefix too short (minimum 4 chars): '<sha>'` | Prefix is less than 4 hex characters |
+| `error: invalid hex in sha prefix: '<sha>'` | Prefix contains non-hex characters |
+| `error: no hunk matching '<sha>'` | No hunk matches the prefix (with optional file filter) |
+| `error: ambiguous prefix '<sha>' -- matches multiple hunks` | Multiple hunks match the prefix |
+| `error: line specs not supported for stash` | Line spec used with stash command |
+| `error: --pop cannot be combined with <flag>` | `--pop` used with SHA args, `--all`, `--file`, or `-m` |
+| `no unstaged changes` | Nothing to stash |
+| `error: at least one <sha> argument required` | No SHA arguments and no `--all`/`--file` flag |
+
+---
+
 ## git-hunk help
 
 Show usage information.

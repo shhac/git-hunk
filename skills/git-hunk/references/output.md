@@ -364,6 +364,60 @@ discarded	a3f7c21:3-5	src/main.zig
 
 No stderr summary in porcelain mode.
 
+## Stash confirmation
+
+`stash` prints one line per stashed hunk to stdout. Similar to `discard` — no
+arrow, no result hashes (the hunk is moved to the stash).
+
+### Human mode
+
+```
+stashed {sha7}  {file}
+```
+
+Examples:
+
+```
+stashed a3f7c21  src/main.zig
+stashed b8e4d2f  src/args.zig
+```
+
+SHA in yellow when color is enabled.
+
+### Porcelain mode
+
+Tab-separated, 3 fields:
+
+```
+stashed\t{sha7}\t{file}
+```
+
+Examples:
+
+```
+stashed	a3f7c21	src/main.zig
+stashed	b8e4d2f	src/args.zig
+```
+
+### Summary line (stderr, human mode only)
+
+```
+1 hunk stashed
+3 hunks stashed
+```
+
+### Hint (stderr, TTY only)
+
+```
+hint: use 'git stash list' to see stashed entries, 'git hunk stash --pop' to restore
+```
+
+### Pop output (stderr)
+
+```
+popped stash@{0}
+```
+
 ## Error output
 
 All errors are written to stderr. Examples:
