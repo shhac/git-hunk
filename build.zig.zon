@@ -1,6 +1,6 @@
 .{
     .name = .git_hunk,
-    .version = "0.4.0",
+    .version = "0.5.0",
     .fingerprint = 0x664e39e7d5052c1,
     .minimum_zig_version = "0.15.2",
     .dependencies = .{},

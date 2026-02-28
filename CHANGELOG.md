@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.5.0] - 2026-02-28
 
 ### Added
 - `stash` command: saves selected hunks into a real git stash entry and removes them from the worktree
