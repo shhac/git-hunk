@@ -260,6 +260,21 @@ VERB40="$(echo "$OUT40" | cut -f1)"
 pass "test 40: remove --porcelain uses tab-separated format"
 
 # ============================================================================
+# Test 56: --all stages both tracked changes and untracked files
+# ============================================================================
+new_repo
+sed -i '' '1s/.*/Modified first line./' alpha.txt
+echo "brand new untracked content" > untracked_all.txt
+
+"$GIT_HUNK" add --all > /dev/null 2>/dev/null
+REMAINING="$("$GIT_HUNK" count)"
+[[ "$REMAINING" == "0" ]] || fail "test 56: expected 0 unstaged hunks after --all, got $REMAINING"
+STAGED_FILES="$(git diff --cached --name-only)"
+echo "$STAGED_FILES" | grep -q "alpha.txt" || fail "test 56: tracked change not staged"
+echo "$STAGED_FILES" | grep -q "untracked_all.txt" || fail "test 56: untracked file not staged"
+pass "test 56: --all stages tracked changes and untracked files"
+
+# ============================================================================
 # Test 54: add stages an untracked file by hash
 # ============================================================================
 new_repo

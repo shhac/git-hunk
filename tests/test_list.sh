@@ -112,4 +112,16 @@ FILTERED53="$("$GIT_HUNK" list --porcelain --oneline --file untracked_a.txt)"
 echo "$FILTERED53" | grep "untracked_b.txt" && fail "test 53: --file leaked untracked_b.txt" || true
 pass "test 53: --file filter works with untracked files"
 
+new_repo
+echo "unique_marker_for_show_test" > untracked_show.txt
+
+SHA57="$("$GIT_HUNK" list --porcelain --oneline --file untracked_show.txt | head -1 | cut -f1)"
+[[ -n "$SHA57" ]] || fail "test 57: no untracked hunk found"
+SHOW_OUT="$("$GIT_HUNK" show --no-color "$SHA57")"
+echo "$SHOW_OUT" | grep -q "unique_marker_for_show_test" \
+    || fail "test 57: show output missing file content, got: '$SHOW_OUT'"
+echo "$SHOW_OUT" | grep -qE '(new file|@@)' \
+    || fail "test 57: show output missing new file or @@ header, got: '$SHOW_OUT'"
+pass "test 57: show displays untracked file content"
+
 report_results
