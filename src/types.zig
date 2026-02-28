@@ -49,10 +49,13 @@ pub const MatchedHunk = struct {
 
 pub const DiffMode = enum { unstaged, staged };
 
+pub const DiffFilter = enum { all, tracked_only, untracked_only };
+
 pub const OutputMode = enum { human, porcelain };
 
 pub const ListOptions = struct {
     mode: DiffMode = .unstaged,
+    diff_filter: DiffFilter = .all,
     file_filter: ?[]const u8 = null,
     output: OutputMode = .human,
     oneline: bool = false,
@@ -62,6 +65,7 @@ pub const ListOptions = struct {
 
 pub const AddRemoveOptions = struct {
     sha_args: std.ArrayList(ShaArg),
+    diff_filter: DiffFilter = .all,
     file_filter: ?[]const u8 = null,
     select_all: bool = false,
     output: OutputMode = .human,
@@ -71,6 +75,7 @@ pub const AddRemoveOptions = struct {
 
 pub const ShowOptions = struct {
     sha_args: std.ArrayList(ShaArg),
+    diff_filter: DiffFilter = .all,
     file_filter: ?[]const u8 = null,
     mode: DiffMode = .unstaged,
     output: OutputMode = .human,
@@ -80,12 +85,14 @@ pub const ShowOptions = struct {
 
 pub const CountOptions = struct {
     mode: DiffMode = .unstaged,
+    diff_filter: DiffFilter = .all,
     file_filter: ?[]const u8 = null,
     context: ?u32 = null,
 };
 
 pub const CheckOptions = struct {
     sha_args: std.ArrayList(ShaArg),
+    diff_filter: DiffFilter = .all,
     file_filter: ?[]const u8 = null,
     mode: DiffMode = .unstaged,
     exclusive: bool = false,
@@ -96,6 +103,7 @@ pub const CheckOptions = struct {
 
 pub const DiscardOptions = struct {
     sha_args: std.ArrayList(ShaArg),
+    diff_filter: DiffFilter = .all,
     file_filter: ?[]const u8 = null,
     select_all: bool = false,
     dry_run: bool = false,
@@ -107,6 +115,7 @@ pub const DiscardOptions = struct {
 
 pub const StashOptions = struct {
     sha_args: std.ArrayList(ShaArg),
+    diff_filter: DiffFilter = .all,
     file_filter: ?[]const u8 = null,
     select_all: bool = false,
     pop: bool = false,

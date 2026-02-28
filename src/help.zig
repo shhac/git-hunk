@@ -51,6 +51,8 @@ const list_help: []const u8 =
     \\  --porcelain       Machine-readable output (tab-separated fields)
     \\  --oneline         One hunk per line: hash, file, and line range
     \\  --no-color        Disable colored output
+    \\  --tracked-only    Only show hunks from tracked files
+    \\  --untracked-only  Only show hunks from untracked files
     \\  --context <n>     Lines of diff context (default: git's diff.context or 3)
     \\  --help, -h        Show this help
     \\
@@ -79,6 +81,8 @@ const show_help: []const u8 =
     \\  --file <path>     Restrict to hunks in the given file
     \\  --porcelain       Machine-readable output
     \\  --no-color        Disable colored output
+    \\  --tracked-only    Only show hunks from tracked files
+    \\  --untracked-only  Only show hunks from untracked files
     \\  --context <n>     Lines of diff context (default: git's diff.context or 3)
     \\  --help, -h        Show this help
     \\
@@ -106,6 +110,8 @@ const add_help: []const u8 =
     \\  --file <path>     Stage all hunks in the given file
     \\  --porcelain       Machine-readable output
     \\  --no-color        Disable colored output
+    \\  --tracked-only    Only include hunks from tracked files
+    \\  --untracked-only  Only include hunks from untracked files
     \\  --context <n>     Lines of diff context (default: git's diff.context or 3)
     \\  --help, -h        Show this help
     \\
@@ -134,6 +140,8 @@ const remove_help: []const u8 =
     \\  --file <path>     Unstage all hunks in the given file
     \\  --porcelain       Machine-readable output
     \\  --no-color        Disable colored output
+    \\  --tracked-only    Only include hunks from tracked files
+    \\  --untracked-only  Only include hunks from untracked files
     \\  --context <n>     Lines of diff context (default: git's diff.context or 3)
     \\  --help, -h        Show this help
     \\
@@ -161,6 +169,8 @@ const discard_help: []const u8 =
     \\  --dry-run         Show what would be discarded without making changes
     \\  --porcelain       Machine-readable output
     \\  --no-color        Disable colored output
+    \\  --tracked-only    Only include hunks from tracked files
+    \\  --untracked-only  Only include hunks from untracked files
     \\  --context <n>     Lines of diff context (default: git's diff.context or 3)
     \\  --help, -h        Show this help
     \\
@@ -189,6 +199,8 @@ const count_help: []const u8 =
     \\OPTIONS
     \\  --staged          Count staged hunks instead of unstaged
     \\  --file <path>     Count hunks in the given file only
+    \\  --tracked-only    Only count hunks from tracked files
+    \\  --untracked-only  Only count hunks from untracked files
     \\  --context <n>     Lines of diff context (default: git's diff.context or 3)
     \\  --help, -h        Show this help
     \\
@@ -214,6 +226,8 @@ const check_help: []const u8 =
     \\  --file <path>     Restrict check to hunks in the given file
     \\  --porcelain       Machine-readable output
     \\  --no-color        Disable colored output
+    \\  --tracked-only    Only check hunks from tracked files
+    \\  --untracked-only  Only check hunks from untracked files
     \\  --context <n>     Lines of diff context (default: git's diff.context or 3)
     \\  --help, -h        Show this help
     \\
@@ -247,6 +261,8 @@ const stash_help: []const u8 =
     \\                    Set the stash message
     \\  --porcelain       Machine-readable output
     \\  --no-color        Disable colored output
+    \\  --tracked-only    Only include hunks from tracked files
+    \\  --untracked-only  Only include hunks from untracked files
     \\  --context <n>     Lines of diff context (default: git's diff.context or 3)
     \\  --help, -h        Show this help
     \\

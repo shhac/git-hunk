@@ -13,6 +13,7 @@ const Hunk = types.Hunk;
 const LineRange = types.LineRange;
 const MatchedHunk = types.MatchedHunk;
 const DiffMode = types.DiffMode;
+const DiffFilter = types.DiffFilter;
 const ListOptions = types.ListOptions;
 const AddRemoveOptions = types.AddRemoveOptions;
 const ShowOptions = types.ShowOptions;
@@ -31,17 +32,22 @@ fn getDiffWithUntracked(
     mode: DiffMode,
     context: ?u32,
     file_filter: ?[]const u8,
+    diff_filter: DiffFilter,
     hunks: *std.ArrayList(Hunk),
 ) !struct { tracked: []u8, untracked: []u8 } {
-    const diff_output = try git.runGitDiff(allocator, mode, context);
+    // Skip tracked diffs when only untracked files are requested
+    const diff_output = if (diff_filter == .untracked_only)
+        try allocator.alloc(u8, 0)
+    else
+        try git.runGitDiff(allocator, mode, context);
     errdefer allocator.free(diff_output);
 
     if (diff_output.len > 0) {
         try diff_mod.parseDiff(arena, diff_output, mode, hunks);
     }
 
-    // Untracked files only appear in unstaged mode
-    if (mode == .unstaged) {
+    // Untracked files only appear in unstaged mode and when not filtered out
+    if (mode == .unstaged and diff_filter != .tracked_only) {
         const untracked_diff = try git.diffUntrackedFiles(allocator, file_filter);
         errdefer allocator.free(untracked_diff);
 
@@ -69,7 +75,7 @@ pub fn cmdList(allocator: Allocator, stdout: *std.Io.Writer, opts: ListOptions) 
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
-    const diffs = try getDiffWithUntracked(allocator, arena, opts.mode, opts.context, opts.file_filter, &hunks);
+    const diffs = try getDiffWithUntracked(allocator, arena, opts.mode, opts.context, opts.file_filter, opts.diff_filter, &hunks);
     defer allocator.free(diffs.tracked);
     defer allocator.free(diffs.untracked);
 
@@ -135,7 +141,7 @@ pub fn cmdCount(allocator: Allocator, stdout: *std.Io.Writer, opts: CountOptions
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
-    const diffs = try getDiffWithUntracked(allocator, arena, opts.mode, opts.context, opts.file_filter, &hunks);
+    const diffs = try getDiffWithUntracked(allocator, arena, opts.mode, opts.context, opts.file_filter, opts.diff_filter, &hunks);
     defer allocator.free(diffs.tracked);
     defer allocator.free(diffs.untracked);
 
@@ -158,7 +164,7 @@ pub fn cmdCheck(allocator: Allocator, stdout: *std.Io.Writer, opts: CheckOptions
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
-    const diffs = try getDiffWithUntracked(allocator, arena, opts.mode, opts.context, opts.file_filter, &hunks);
+    const diffs = try getDiffWithUntracked(allocator, arena, opts.mode, opts.context, opts.file_filter, opts.diff_filter, &hunks);
     defer allocator.free(diffs.tracked);
     defer allocator.free(diffs.untracked);
 
@@ -614,7 +620,7 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddRemoveOp
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
-    const diffs = try getDiffWithUntracked(allocator, arena, diff_mode, opts.context, opts.file_filter, &hunks);
+    const diffs = try getDiffWithUntracked(allocator, arena, diff_mode, opts.context, opts.file_filter, opts.diff_filter, &hunks);
     defer allocator.free(diffs.tracked);
     defer allocator.free(diffs.untracked);
 
@@ -778,7 +784,7 @@ pub fn cmdDiscard(allocator: Allocator, stdout: *std.Io.Writer, opts: DiscardOpt
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
-    const diffs = try getDiffWithUntracked(allocator, arena, .unstaged, opts.context, opts.file_filter, &hunks);
+    const diffs = try getDiffWithUntracked(allocator, arena, .unstaged, opts.context, opts.file_filter, opts.diff_filter, &hunks);
     defer allocator.free(diffs.tracked);
     defer allocator.free(diffs.untracked);
 
@@ -920,7 +926,7 @@ pub fn cmdShow(allocator: Allocator, stdout: *std.Io.Writer, opts: ShowOptions) 
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
-    const diffs = try getDiffWithUntracked(allocator, arena, opts.mode, opts.context, opts.file_filter, &hunks);
+    const diffs = try getDiffWithUntracked(allocator, arena, opts.mode, opts.context, opts.file_filter, opts.diff_filter, &hunks);
     defer allocator.free(diffs.tracked);
     defer allocator.free(diffs.untracked);
 
@@ -1011,7 +1017,7 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
-    const diffs = try getDiffWithUntracked(allocator, arena, .unstaged, opts.context, opts.file_filter, &hunks);
+    const diffs = try getDiffWithUntracked(allocator, arena, .unstaged, opts.context, opts.file_filter, opts.diff_filter, &hunks);
     defer allocator.free(diffs.tracked);
     defer allocator.free(diffs.untracked);
 

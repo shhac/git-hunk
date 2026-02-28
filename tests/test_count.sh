@@ -68,4 +68,29 @@ COUNT61="$("$GIT_HUNK" count --staged)"
 [[ "$COUNT61" == "0" ]] || fail "test 61: expected 0 staged count with only untracked, got '$COUNT61'"
 pass "test 61: count --staged excludes untracked"
 
+# ============================================================================
+# Test 63: count --tracked-only + --untracked-only sum equals total
+# ============================================================================
+new_repo
+sed -i '' '1s/.*/Changed alpha./' alpha.txt
+echo "untracked content" > untracked_count.txt
+
+TOTAL63="$("$GIT_HUNK" count)"
+TRACKED63="$("$GIT_HUNK" count --tracked-only)"
+UNTRACKED63="$("$GIT_HUNK" count --untracked-only)"
+SUM63=$((TRACKED63 + UNTRACKED63))
+[[ "$SUM63" -eq "$TOTAL63" ]] \
+    || fail "test 63: tracked ($TRACKED63) + untracked ($UNTRACKED63) = $SUM63, expected $TOTAL63"
+pass "test 63: count --tracked-only + --untracked-only equals total"
+
+# ============================================================================
+# Test 64: count --untracked-only with no untracked files returns 0
+# ============================================================================
+new_repo
+sed -i '' '1s/.*/Changed alpha./' alpha.txt
+
+COUNT64="$("$GIT_HUNK" count --untracked-only)"
+[[ "$COUNT64" == "0" ]] || fail "test 64: expected 0 untracked count, got '$COUNT64'"
+pass "test 64: count --untracked-only with no untracked files returns 0"
+
 report_results

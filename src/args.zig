@@ -6,6 +6,7 @@ const LineRange = types.LineRange;
 const LineSpec = types.LineSpec;
 const ShaArg = types.ShaArg;
 const DiffMode = types.DiffMode;
+const DiffFilter = types.DiffFilter;
 const OutputMode = types.OutputMode;
 const ListOptions = types.ListOptions;
 const AddRemoveOptions = types.AddRemoveOptions;
@@ -34,6 +35,10 @@ pub fn parseListArgs(args: []const [:0]u8) !ListOptions {
             i += 1;
             if (i >= args.len) return error.MissingArgument;
             opts.file_filter = args[i];
+        } else if (std.mem.eql(u8, arg, "--tracked-only")) {
+            opts.diff_filter = .tracked_only;
+        } else if (std.mem.eql(u8, arg, "--untracked-only")) {
+            opts.diff_filter = .untracked_only;
         } else if (std.mem.eql(u8, arg, "--context")) {
             i += 1;
             if (i >= args.len) return error.MissingArgument;
@@ -66,6 +71,10 @@ pub fn parseAddRemoveArgs(allocator: Allocator, args: []const [:0]u8) !AddRemove
             opts.output = .porcelain;
         } else if (std.mem.eql(u8, arg, "--no-color")) {
             opts.no_color = true;
+        } else if (std.mem.eql(u8, arg, "--tracked-only")) {
+            opts.diff_filter = .tracked_only;
+        } else if (std.mem.eql(u8, arg, "--untracked-only")) {
+            opts.diff_filter = .untracked_only;
         } else if (std.mem.eql(u8, arg, "--context")) {
             i += 1;
             if (i >= args.len) return error.MissingArgument;
@@ -107,6 +116,10 @@ pub fn parseShowArgs(allocator: Allocator, args: []const [:0]u8) !ShowOptions {
             opts.output = .porcelain;
         } else if (std.mem.eql(u8, arg, "--no-color")) {
             opts.no_color = true;
+        } else if (std.mem.eql(u8, arg, "--tracked-only")) {
+            opts.diff_filter = .tracked_only;
+        } else if (std.mem.eql(u8, arg, "--untracked-only")) {
+            opts.diff_filter = .untracked_only;
         } else if (std.mem.eql(u8, arg, "--context")) {
             i += 1;
             if (i >= args.len) return error.MissingArgument;
@@ -138,6 +151,10 @@ pub fn parseCountArgs(args: []const [:0]u8) !CountOptions {
             opts.mode = .staged;
         } else if (std.mem.eql(u8, arg, "--porcelain") or std.mem.eql(u8, arg, "--no-color")) {
             // Accepted for consistency, no effect
+        } else if (std.mem.eql(u8, arg, "--tracked-only")) {
+            opts.diff_filter = .tracked_only;
+        } else if (std.mem.eql(u8, arg, "--untracked-only")) {
+            opts.diff_filter = .untracked_only;
         } else if (std.mem.eql(u8, arg, "--file")) {
             i += 1;
             if (i >= args.len) return error.MissingArgument;
@@ -172,6 +189,10 @@ pub fn parseCheckArgs(allocator: Allocator, args: []const [:0]u8) !CheckOptions 
             opts.mode = .staged;
         } else if (std.mem.eql(u8, arg, "--exclusive")) {
             opts.exclusive = true;
+        } else if (std.mem.eql(u8, arg, "--tracked-only")) {
+            opts.diff_filter = .tracked_only;
+        } else if (std.mem.eql(u8, arg, "--untracked-only")) {
+            opts.diff_filter = .untracked_only;
         } else if (std.mem.eql(u8, arg, "--file")) {
             i += 1;
             if (i >= args.len) return error.MissingArgument;
@@ -226,6 +247,10 @@ pub fn parseDiscardArgs(allocator: Allocator, args: []const [:0]u8) !DiscardOpti
             opts.dry_run = true;
         } else if (std.mem.eql(u8, arg, "--force")) {
             opts.force = true;
+        } else if (std.mem.eql(u8, arg, "--tracked-only")) {
+            opts.diff_filter = .tracked_only;
+        } else if (std.mem.eql(u8, arg, "--untracked-only")) {
+            opts.diff_filter = .untracked_only;
         } else if (std.mem.eql(u8, arg, "--porcelain")) {
             opts.output = .porcelain;
         } else if (std.mem.eql(u8, arg, "--no-color")) {
@@ -269,6 +294,10 @@ pub fn parseStashArgs(allocator: Allocator, args: []const [:0]u8) !StashOptions 
             opts.select_all = true;
         } else if (std.mem.eql(u8, arg, "--pop")) {
             opts.pop = true;
+        } else if (std.mem.eql(u8, arg, "--tracked-only")) {
+            opts.diff_filter = .tracked_only;
+        } else if (std.mem.eql(u8, arg, "--untracked-only")) {
+            opts.diff_filter = .untracked_only;
         } else if (std.mem.eql(u8, arg, "--message") or std.mem.eql(u8, arg, "-m")) {
             i += 1;
             if (i >= args.len) return error.MissingArgument;

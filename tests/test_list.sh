@@ -112,6 +112,45 @@ FILTERED53="$("$GIT_HUNK" list --porcelain --oneline --file untracked_a.txt)"
 echo "$FILTERED53" | grep "untracked_b.txt" && fail "test 53: --file leaked untracked_b.txt" || true
 pass "test 53: --file filter works with untracked files"
 
+# ============================================================================
+# Test 58: --tracked-only excludes untracked files
+# ============================================================================
+new_repo
+sed -i '' '1s/.*/Changed alpha./' alpha.txt
+echo "untracked content" > untracked_filter.txt
+
+TRACKED_ONLY="$("$GIT_HUNK" list --tracked-only --porcelain --oneline)"
+[[ -n "$TRACKED_ONLY" ]] || fail "test 58: expected tracked hunks in output"
+echo "$TRACKED_ONLY" | grep -q "alpha.txt" || fail "test 58: tracked file missing from --tracked-only"
+echo "$TRACKED_ONLY" | grep -q "untracked_filter.txt" && fail "test 58: untracked file leaked into --tracked-only" || true
+pass "test 58: --tracked-only excludes untracked files"
+
+# ============================================================================
+# Test 59: --untracked-only excludes tracked files
+# ============================================================================
+new_repo
+sed -i '' '1s/.*/Changed alpha./' alpha.txt
+echo "untracked content" > untracked_filter.txt
+
+UNTRACKED_ONLY="$("$GIT_HUNK" list --untracked-only --porcelain --oneline)"
+[[ -n "$UNTRACKED_ONLY" ]] || fail "test 59: expected untracked hunks in output"
+echo "$UNTRACKED_ONLY" | grep -q "untracked_filter.txt" || fail "test 59: untracked file missing from --untracked-only"
+echo "$UNTRACKED_ONLY" | grep -q "alpha.txt" && fail "test 59: tracked file leaked into --untracked-only" || true
+pass "test 59: --untracked-only excludes tracked files"
+
+# ============================================================================
+# Test 62: --untracked-only with no untracked files shows nothing
+# ============================================================================
+new_repo
+sed -i '' '1s/.*/Changed alpha./' alpha.txt
+
+EMPTY62="$("$GIT_HUNK" list --untracked-only --porcelain --oneline 2>/dev/null || true)"
+[[ -z "$EMPTY62" ]] || fail "test 62: expected no output with --untracked-only and no untracked files, got: '$EMPTY62'"
+pass "test 62: --untracked-only with no untracked files shows nothing"
+
+# ============================================================================
+# Test 57: show displays untracked file content
+# ============================================================================
 new_repo
 echo "unique_marker_for_show_test" > untracked_show.txt
 

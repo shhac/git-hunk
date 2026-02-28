@@ -188,6 +188,8 @@ fn printUsage(stdout: *std.Io.Writer) !void {
         \\common options:
         \\  --context <n>     Lines of diff context (default: git's diff.context or 3)
         \\  --file <path>     Restrict to hunks in a specific file
+        \\  --tracked-only    Only include hunks from tracked files
+        \\  --untracked-only  Only include hunks from untracked files
         \\  --porcelain       Machine-readable tab-separated output
         \\  --no-color        Disable colored output
         \\  --help, -h        Show help for a command
