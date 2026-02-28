@@ -56,7 +56,7 @@ Save hunks you're not ready to commit, then restore later:
 ```bash
 git hunk stash a3f7c21 b82e0f4 -m "wip: experimental approach"
 git commit -m "feat: main changes"
-git hunk stash --pop
+git hunk stash pop
 ```
 
 ## Discard unwanted changes
@@ -82,9 +82,9 @@ if [ $(git hunk count) -gt 0 ]; then
 fi
 ```
 
-## Add/remove porcelain output
+## Add/reset porcelain output
 
-`add` and `remove` produce tab-separated confirmation:
+`add` and `reset` produce tab-separated confirmation:
 
 ```
 verb\tapplied\tresult\tfile[\tconsumed]

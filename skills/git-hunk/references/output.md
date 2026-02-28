@@ -194,7 +194,7 @@ git hunk list --porcelain --oneline | head -1 | cut -f3
 
 ## Staging/unstaging confirmation
 
-`add` and `remove` print one line per **result hunk** to stdout. Each line shows
+`add` and `reset` print one line per **result hunk** to stdout. Each line shows
 the applied (input) hashes, any consumed (merged) hashes, and the new result
 hash on the target side:
 
@@ -307,7 +307,7 @@ hint: staged hashes differ from unstaged -- use 'git hunk list --staged' to see 
 
 ## Discard confirmation
 
-`discard` prints one line per discarded hunk to stdout. Simpler than `add`/`remove`
+`discard` prints one line per discarded hunk to stdout. Simpler than `add`/`reset`
 — no arrow, no result hashes, no consumed hashes (the hunk simply disappears
 from the worktree).
 
@@ -409,7 +409,7 @@ stashed	b8e4d2f	src/args.zig
 ### Hint (stderr, TTY only)
 
 ```
-hint: use 'git stash list' to see stashed entries, 'git hunk stash --pop' to restore
+hint: use 'git stash list' to see stashed entries, 'git hunk stash pop' to restore
 ```
 
 ### Pop output (stderr)
