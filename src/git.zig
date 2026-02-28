@@ -483,7 +483,7 @@ pub fn runGitWriteTreeWithEnv(allocator: Allocator, env_map: *const EnvMap) ![]u
 pub fn runGitCommitTree(allocator: Allocator, tree_sha: []const u8, parents: []const []const u8, message: []const u8) ![]u8 {
     // Args: "git" "commit-tree" [-p <parent>]... "-m" <message> <tree>
     const arg_count = 5 + 2 * parents.len;
-    var stack_buf: [9][]const u8 = undefined; // fits up to 2 parents
+    var stack_buf: [11][]const u8 = undefined; // fits up to 3 parents
     const argv_buf = if (arg_count <= stack_buf.len)
         &stack_buf
     else
@@ -591,6 +591,70 @@ pub fn runGitStashPop(allocator: Allocator) !void {
             }
         },
         else => fatal("git stash pop terminated abnormally", .{}),
+    }
+}
+
+/// Run `git hash-object -w <file_path>` and return the trimmed blob SHA.
+pub fn runGitHashObject(allocator: Allocator, file_path: []const u8) ![]u8 {
+    const argv: []const []const u8 = &.{ "git", "hash-object", "-w", file_path };
+
+    var child = std.process.Child.init(argv, allocator);
+    child.stdout_behavior = .Pipe;
+    child.stderr_behavior = .Pipe;
+    try child.spawn();
+
+    var child_stdout: std.ArrayList(u8) = .empty;
+    defer child_stdout.deinit(allocator);
+    var child_stderr: std.ArrayList(u8) = .empty;
+    defer child_stderr.deinit(allocator);
+
+    const max_bytes = 1 * 1024 * 1024;
+    try child.collectOutput(allocator, &child_stdout, &child_stderr, max_bytes);
+    const term = try child.wait();
+
+    switch (term) {
+        .Exited => |code| {
+            if (code != 0) {
+                if (child_stderr.items.len > 0) std.debug.print("{s}", .{child_stderr.items});
+                fatal("git hash-object exited with code {d}", .{code});
+            }
+        },
+        else => fatal("git hash-object terminated abnormally", .{}),
+    }
+
+    return try allocator.dupe(u8, std.mem.trimRight(u8, child_stdout.items, "\n"));
+}
+
+/// Run `git update-index --add --cacheinfo <mode>,<blob_hash>,<file_path>` with custom GIT_INDEX_FILE env.
+pub fn runGitUpdateIndexCacheinfo(allocator: Allocator, mode: []const u8, blob_hash: []const u8, file_path: []const u8, env_map: *const EnvMap) !void {
+    const cacheinfo_arg = try std.fmt.allocPrint(allocator, "{s},{s},{s}", .{ mode, blob_hash, file_path });
+    defer allocator.free(cacheinfo_arg);
+
+    const argv: []const []const u8 = &.{ "git", "update-index", "--add", "--cacheinfo", cacheinfo_arg };
+
+    var child = std.process.Child.init(argv, allocator);
+    child.env_map = env_map;
+    child.stdout_behavior = .Pipe;
+    child.stderr_behavior = .Pipe;
+    try child.spawn();
+
+    var child_stdout: std.ArrayList(u8) = .empty;
+    defer child_stdout.deinit(allocator);
+    var child_stderr: std.ArrayList(u8) = .empty;
+    defer child_stderr.deinit(allocator);
+
+    const max_bytes = 1 * 1024 * 1024;
+    try child.collectOutput(allocator, &child_stdout, &child_stderr, max_bytes);
+    const term = try child.wait();
+
+    switch (term) {
+        .Exited => |code| {
+            if (code != 0) {
+                if (child_stderr.items.len > 0) std.debug.print("{s}", .{child_stderr.items});
+                fatal("git update-index exited with code {d}", .{code});
+            }
+        },
+        else => fatal("git update-index terminated abnormally", .{}),
     }
 }
 

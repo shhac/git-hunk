@@ -146,29 +146,84 @@ fi
 pass "test 51: line spec rejection"
 
 # ============================================================================
-# Test 64: stash rejects untracked file hash
+# Test 64: stash untracked file by hash
 # ============================================================================
 new_repo
 echo "untracked content" > untracked.txt
 
 SHA64="$("$GIT_HUNK" list --porcelain --oneline --file untracked.txt | head -1 | cut -f1)"
 [[ -n "$SHA64" ]] || fail "test 64: no untracked hunk found"
-if "$GIT_HUNK" stash "$SHA64" > /dev/null 2>/dev/null; then
-    fail "test 64: expected exit 1 for untracked file stash"
-fi
-pass "test 64: stash rejects untracked file hash"
+"$GIT_HUNK" stash "$SHA64" > /dev/null
+[[ ! -f untracked.txt ]] || fail "test 64: untracked.txt should be deleted after stash"
+STASH_LIST64="$(git stash list)"
+[[ -n "$STASH_LIST64" ]] || fail "test 64: expected non-empty stash list"
+pass "test 64: stash untracked file by hash"
 
 # ============================================================================
-# Test 65: stash --all with only tracked changes works (untracked skipped)
+# Test 65: stash --all with mixed tracked+untracked
 # ============================================================================
 new_repo
 sed -i '' '1s/.*/Changed alpha./' alpha.txt
 echo "untracked content" > untracked.txt
+ORIG_ALPHA="$(git show HEAD:alpha.txt | head -1)"
 
-# stash --all should fail because it includes untracked hunks
-if "$GIT_HUNK" stash --all > /dev/null 2>/dev/null; then
-    fail "test 65: expected exit 1 for --all with untracked files"
-fi
-pass "test 65: stash --all rejects when untracked files present"
+"$GIT_HUNK" stash --all > /dev/null
+[[ "$(head -1 alpha.txt)" == "$ORIG_ALPHA" ]] \
+    || fail "test 65: expected alpha.txt reverted"
+[[ ! -f untracked.txt ]] \
+    || fail "test 65: untracked.txt should be deleted after stash"
+pass "test 65: stash --all with mixed tracked+untracked"
+
+# ============================================================================
+# Test 66: stash pop restores untracked file
+# ============================================================================
+new_repo
+echo "untracked content" > untracked.txt
+
+"$GIT_HUNK" stash --all > /dev/null
+[[ ! -f untracked.txt ]] || fail "test 66: untracked.txt should be gone after stash"
+
+"$GIT_HUNK" stash --pop > /dev/null 2>/dev/null
+[[ -f untracked.txt ]] || fail "test 66: untracked.txt should be restored after pop"
+[[ "$(cat untracked.txt)" == "untracked content" ]] \
+    || fail "test 66: untracked.txt content mismatch after pop"
+# Verify it's still untracked (not staged)
+UNTRACKED66="$(git ls-files --others --exclude-standard)"
+echo "$UNTRACKED66" | grep -q "untracked.txt" \
+    || fail "test 66: untracked.txt should be untracked after pop"
+pass "test 66: stash pop restores untracked file"
+
+# ============================================================================
+# Test 67: stash untracked preserves staged changes
+# ============================================================================
+new_repo
+sed -i '' '1s/.*/Staged beta./' beta.txt
+git add beta.txt
+echo "untracked content" > untracked.txt
+
+SHA67="$("$GIT_HUNK" list --porcelain --oneline --file untracked.txt | head -1 | cut -f1)"
+"$GIT_HUNK" stash "$SHA67" > /dev/null
+[[ ! -f untracked.txt ]] || fail "test 67: untracked.txt should be gone after stash"
+STAGED67="$(git diff --cached --name-only)"
+echo "$STAGED67" | grep -q "beta.txt" \
+    || fail "test 67: expected beta.txt still staged, got '$STAGED67'"
+"$GIT_HUNK" stash --pop > /dev/null 2>/dev/null
+[[ -f untracked.txt ]] || fail "test 67: untracked.txt should be restored after pop"
+pass "test 67: stash untracked preserves staged changes"
+
+# ============================================================================
+# Test 68: stash --all --tracked-only excludes untracked
+# ============================================================================
+new_repo
+sed -i '' '1s/.*/Changed alpha./' alpha.txt
+echo "untracked content" > untracked.txt
+ORIG_ALPHA="$(git show HEAD:alpha.txt | head -1)"
+
+"$GIT_HUNK" stash --all --tracked-only > /dev/null
+[[ "$(head -1 alpha.txt)" == "$ORIG_ALPHA" ]] \
+    || fail "test 68: expected alpha.txt reverted"
+[[ -f untracked.txt ]] \
+    || fail "test 68: untracked.txt should still exist (not stashed)"
+pass "test 68: stash --all --tracked-only excludes untracked"
 
 report_results
