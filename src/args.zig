@@ -73,6 +73,8 @@ pub fn parseAddResetArgs(allocator: Allocator, args: []const [:0]u8) !AddResetOp
             opts.output = .porcelain;
         } else if (std.mem.eql(u8, arg, "--no-color")) {
             opts.no_color = true;
+        } else if (std.mem.eql(u8, arg, "--verbose") or std.mem.eql(u8, arg, "-v")) {
+            opts.verbose = true;
         } else if (std.mem.eql(u8, arg, "--tracked-only")) {
             if (opts.diff_filter == .untracked_only) return error.ConflictingFilter;
             opts.diff_filter = .tracked_only;
@@ -344,6 +346,8 @@ pub fn parseStashArgs(allocator: Allocator, args: []const [:0]u8) !StashOptions 
             opts.output = .porcelain;
         } else if (std.mem.eql(u8, arg, "--no-color")) {
             opts.no_color = true;
+        } else if (std.mem.eql(u8, arg, "--verbose") or std.mem.eql(u8, arg, "-v")) {
+            opts.verbose = true;
         } else if (std.mem.eql(u8, arg, "--unified") or std.mem.eql(u8, arg, "-U")) {
             i += 1;
             if (i >= args.len) return error.MissingArgument;

@@ -769,8 +769,8 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
         }
     }
 
-    // Hint about hash changes when staging (only in interactive human-mode TTY contexts)
-    if (action == .stage and opts.output == .human and std.fs.File.stdout().isTty()) {
+    // Hint about hash changes when staging (only with --verbose)
+    if (action == .stage and opts.verbose and opts.output == .human and std.fs.File.stdout().isTty()) {
         std.debug.print("hint: staged hashes differ from unstaged -- use 'git hunk list --staged' to see them\n", .{});
     }
 }
@@ -1324,8 +1324,8 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
         } else {
             std.debug.print("{d} hunks stashed\n", .{count});
         }
-        // Hint on stderr (TTY only)
-        if (std.fs.File.stdout().isTty()) {
+        // Hint on stderr (only with --verbose)
+        if (opts.verbose and std.fs.File.stdout().isTty()) {
             std.debug.print("hint: use 'git stash list' to see stashed entries, 'git hunk stash pop' to restore\n", .{});
         }
     }
