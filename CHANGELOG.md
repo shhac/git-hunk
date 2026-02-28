@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.6.0] - 2026-02-28
+
+### Added
+- Per-command `--help`/`-h` flag on all subcommands
+- `help <command>` form for per-command help (`git hunk help list`)
+- Man page (`doc/git-hunk.1`) for `git hunk --help` integration
+- Untracked file support: untracked files shown by default in all commands
+- `--tracked-only` and `--untracked-only` filter flags on all commands
+- Stash support for untracked files using git's native 3-parent stash format
+- `stash push` optional keyword (matches `git stash push` pattern)
+- `stash --include-untracked` / `-u` flag for `stash --all`
+- `discard --force` gate for untracked files (permanent deletion)
+- `discard --dry-run` works for untracked files without requiring `--force`
+- Mutual exclusion validation for `--tracked-only` + `--untracked-only`
+- Integration tests split into 7 parallel suites (93 tests)
+
+### Changed
+- **Breaking:** `remove` command renamed to `reset` (matches `git reset`)
+- **Breaking:** `--context <n>` renamed to `--unified <n>` / `-U <n>` (matches git convention)
+- **Breaking:** `stash --pop` changed to `stash pop` subcommand (matches `git stash pop`)
+- **Breaking:** `stash --all` now excludes untracked files by default (use `-u` to include)
+- Reformatted global help text for scannability
+
+### Fixed
+- Executable bit preserved when stashing untracked files
+- Discard error message now shows both SHA and file path
+- Discard error message uses consistent `--` (was Unicode em dash)
+
 ## [0.5.0] - 2026-02-28
 
 ### Added
