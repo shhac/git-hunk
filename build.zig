@@ -37,7 +37,7 @@ pub fn build(b: *std.Build) void {
 
     const integration_step = b.step("test-integration", "Run integration tests (requires git)");
     const bin_path = b.getInstallPath(.bin, "git-hunk");
-    const run_integration = b.addSystemCommand(&.{ "bash", "tests/integration.sh", bin_path });
+    const run_integration = b.addSystemCommand(&.{ "bash", "tests/run-all.sh", bin_path });
     run_integration.step.dependOn(b.getInstallStep());
     integration_step.dependOn(&run_integration.step);
 }
