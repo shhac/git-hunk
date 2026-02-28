@@ -303,4 +303,27 @@ REMAINING55="$(git diff --cached --name-only | grep "untracked.txt" || true)"
 [[ -f untracked.txt ]] || fail "test 55: file deleted after reset"
 pass "test 55: reset returns untracked file to untracked"
 
+# ============================================================================
+# Test 56: add --tracked-only excludes untracked files
+# ============================================================================
+new_repo
+sed -i '' '1s/.*/Changed alpha./' alpha.txt
+echo "untracked content" > untracked.txt
+
+"$GIT_HUNK" add --all --tracked-only > /dev/null
+STAGED56="$("$GIT_HUNK" list --staged --porcelain --oneline)"
+echo "$STAGED56" | grep -q "alpha.txt" || fail "test 56: tracked file should be staged"
+UNSTAGED56="$("$GIT_HUNK" list --porcelain --oneline)"
+echo "$UNSTAGED56" | grep -q "untracked.txt" || fail "test 56: untracked file should remain unstaged"
+pass "test 56: add --tracked-only excludes untracked files"
+
+# ============================================================================
+# Test 57: --tracked-only and --untracked-only conflict
+# ============================================================================
+new_repo
+if "$GIT_HUNK" list --tracked-only --untracked-only 2>/dev/null; then
+    fail "test 57: expected exit 1 for conflicting filter flags"
+fi
+pass "test 57: --tracked-only and --untracked-only conflict detected"
+
 report_results

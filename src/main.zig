@@ -45,6 +45,10 @@ fn run() !void {
 
     if (std.mem.eql(u8, subcmd, "list")) {
         const opts = args_mod.parseListArgs(process_args[2..]) catch |err| {
+            if (err == error.ConflictingFilter) {
+                std.debug.print("error: --tracked-only and --untracked-only are mutually exclusive\n", .{});
+                std.process.exit(1);
+            }
             if (err == error.HelpRequested) {
                 try help.printCommandHelp(stdout, .list);
                 try stdout.flush();
@@ -57,6 +61,10 @@ fn run() !void {
         try commands.cmdList(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "add")) {
         var opts = args_mod.parseAddResetArgs(allocator, process_args[2..]) catch |err| {
+            if (err == error.ConflictingFilter) {
+                std.debug.print("error: --tracked-only and --untracked-only are mutually exclusive\n", .{});
+                std.process.exit(1);
+            }
             if (err == error.HelpRequested) {
                 try help.printCommandHelp(stdout, .add);
                 try stdout.flush();
@@ -70,6 +78,10 @@ fn run() !void {
         try commands.cmdAdd(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "reset")) {
         var opts = args_mod.parseAddResetArgs(allocator, process_args[2..]) catch |err| {
+            if (err == error.ConflictingFilter) {
+                std.debug.print("error: --tracked-only and --untracked-only are mutually exclusive\n", .{});
+                std.process.exit(1);
+            }
             if (err == error.HelpRequested) {
                 try help.printCommandHelp(stdout, .reset);
                 try stdout.flush();
@@ -83,6 +95,10 @@ fn run() !void {
         try commands.cmdReset(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "count")) {
         const opts = args_mod.parseCountArgs(process_args[2..]) catch |err| {
+            if (err == error.ConflictingFilter) {
+                std.debug.print("error: --tracked-only and --untracked-only are mutually exclusive\n", .{});
+                std.process.exit(1);
+            }
             if (err == error.HelpRequested) {
                 try help.printCommandHelp(stdout, .count);
                 try stdout.flush();
@@ -95,6 +111,10 @@ fn run() !void {
         try commands.cmdCount(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "check")) {
         var opts = args_mod.parseCheckArgs(allocator, process_args[2..]) catch |err| {
+            if (err == error.ConflictingFilter) {
+                std.debug.print("error: --tracked-only and --untracked-only are mutually exclusive\n", .{});
+                std.process.exit(1);
+            }
             if (err == error.HelpRequested) {
                 try help.printCommandHelp(stdout, .check);
                 try stdout.flush();
@@ -108,6 +128,10 @@ fn run() !void {
         try commands.cmdCheck(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "discard")) {
         var opts = args_mod.parseDiscardArgs(allocator, process_args[2..]) catch |err| {
+            if (err == error.ConflictingFilter) {
+                std.debug.print("error: --tracked-only and --untracked-only are mutually exclusive\n", .{});
+                std.process.exit(1);
+            }
             if (err == error.HelpRequested) {
                 try help.printCommandHelp(stdout, .discard);
                 try stdout.flush();
@@ -121,6 +145,10 @@ fn run() !void {
         try commands.cmdDiscard(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "show")) {
         var opts = args_mod.parseShowArgs(allocator, process_args[2..]) catch |err| {
+            if (err == error.ConflictingFilter) {
+                std.debug.print("error: --tracked-only and --untracked-only are mutually exclusive\n", .{});
+                std.process.exit(1);
+            }
             if (err == error.HelpRequested) {
                 try help.printCommandHelp(stdout, .show);
                 try stdout.flush();
@@ -134,6 +162,10 @@ fn run() !void {
         try commands.cmdShow(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "stash")) {
         var opts = args_mod.parseStashArgs(allocator, process_args[2..]) catch |err| {
+            if (err == error.ConflictingFilter) {
+                std.debug.print("error: --tracked-only and --untracked-only are mutually exclusive\n", .{});
+                std.process.exit(1);
+            }
             if (err == error.HelpRequested) {
                 try help.printCommandHelp(stdout, .stash);
                 try stdout.flush();

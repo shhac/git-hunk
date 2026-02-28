@@ -136,4 +136,18 @@ ALL_SHAS63="$("$GIT_HUNK" list --porcelain --oneline | cut -f1)"
 [[ $? -eq 0 ]] || fail "test 63: check --exclusive should pass with all hashes including untracked"
 pass "test 63: check --exclusive accounts for untracked"
 
+# ============================================================================
+# Test 64: check --tracked-only ignores untracked hashes
+# ============================================================================
+new_repo
+sed -i '' '1s/.*/Changed alpha./' alpha.txt
+echo "untracked content" > untracked.txt
+
+UT_SHA64="$("$GIT_HUNK" list --untracked-only --porcelain --oneline | head -1 | cut -f1)"
+[[ -n "$UT_SHA64" ]] || fail "test 64: no untracked hunk found"
+if "$GIT_HUNK" check --tracked-only "$UT_SHA64" 2>/dev/null; then
+    fail "test 64: untracked hash should be stale with --tracked-only"
+fi
+pass "test 64: check --tracked-only ignores untracked hashes"
+
 report_results

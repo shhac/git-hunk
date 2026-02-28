@@ -80,7 +80,7 @@ All errors go to stderr. Exit 0 on success, 1 on error. Common errors:
 - `error: ambiguous prefix '<sha>'` -- use longer prefix or `--file`
 - `error: patch did not apply cleanly` -- re-run `list` and try again
 - `no unstaged changes` / `no staged changes` -- nothing to operate on
-- `error: <file> is an untracked file -- use --force to delete` -- discard requires `--force` for untracked files
+- `error: <sha> (<file>) is an untracked file -- use --force to delete` -- discard requires `--force` for untracked files (dry-run bypasses this gate)
 
 ## References
 

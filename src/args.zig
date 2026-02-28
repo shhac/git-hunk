@@ -36,8 +36,10 @@ pub fn parseListArgs(args: []const [:0]u8) !ListOptions {
             if (i >= args.len) return error.MissingArgument;
             opts.file_filter = args[i];
         } else if (std.mem.eql(u8, arg, "--tracked-only")) {
+            if (opts.diff_filter == .untracked_only) return error.ConflictingFilter;
             opts.diff_filter = .tracked_only;
         } else if (std.mem.eql(u8, arg, "--untracked-only")) {
+            if (opts.diff_filter == .tracked_only) return error.ConflictingFilter;
             opts.diff_filter = .untracked_only;
         } else if (std.mem.eql(u8, arg, "--unified") or std.mem.eql(u8, arg, "-U")) {
             i += 1;
@@ -72,8 +74,10 @@ pub fn parseAddResetArgs(allocator: Allocator, args: []const [:0]u8) !AddResetOp
         } else if (std.mem.eql(u8, arg, "--no-color")) {
             opts.no_color = true;
         } else if (std.mem.eql(u8, arg, "--tracked-only")) {
+            if (opts.diff_filter == .untracked_only) return error.ConflictingFilter;
             opts.diff_filter = .tracked_only;
         } else if (std.mem.eql(u8, arg, "--untracked-only")) {
+            if (opts.diff_filter == .tracked_only) return error.ConflictingFilter;
             opts.diff_filter = .untracked_only;
         } else if (std.mem.eql(u8, arg, "--unified") or std.mem.eql(u8, arg, "-U")) {
             i += 1;
@@ -117,8 +121,10 @@ pub fn parseShowArgs(allocator: Allocator, args: []const [:0]u8) !ShowOptions {
         } else if (std.mem.eql(u8, arg, "--no-color")) {
             opts.no_color = true;
         } else if (std.mem.eql(u8, arg, "--tracked-only")) {
+            if (opts.diff_filter == .untracked_only) return error.ConflictingFilter;
             opts.diff_filter = .tracked_only;
         } else if (std.mem.eql(u8, arg, "--untracked-only")) {
+            if (opts.diff_filter == .tracked_only) return error.ConflictingFilter;
             opts.diff_filter = .untracked_only;
         } else if (std.mem.eql(u8, arg, "--unified") or std.mem.eql(u8, arg, "-U")) {
             i += 1;
@@ -152,8 +158,10 @@ pub fn parseCountArgs(args: []const [:0]u8) !CountOptions {
         } else if (std.mem.eql(u8, arg, "--porcelain") or std.mem.eql(u8, arg, "--no-color")) {
             // Accepted for consistency, no effect
         } else if (std.mem.eql(u8, arg, "--tracked-only")) {
+            if (opts.diff_filter == .untracked_only) return error.ConflictingFilter;
             opts.diff_filter = .tracked_only;
         } else if (std.mem.eql(u8, arg, "--untracked-only")) {
+            if (opts.diff_filter == .tracked_only) return error.ConflictingFilter;
             opts.diff_filter = .untracked_only;
         } else if (std.mem.eql(u8, arg, "--file")) {
             i += 1;
@@ -190,8 +198,10 @@ pub fn parseCheckArgs(allocator: Allocator, args: []const [:0]u8) !CheckOptions 
         } else if (std.mem.eql(u8, arg, "--exclusive")) {
             opts.exclusive = true;
         } else if (std.mem.eql(u8, arg, "--tracked-only")) {
+            if (opts.diff_filter == .untracked_only) return error.ConflictingFilter;
             opts.diff_filter = .tracked_only;
         } else if (std.mem.eql(u8, arg, "--untracked-only")) {
+            if (opts.diff_filter == .tracked_only) return error.ConflictingFilter;
             opts.diff_filter = .untracked_only;
         } else if (std.mem.eql(u8, arg, "--file")) {
             i += 1;
@@ -248,8 +258,10 @@ pub fn parseDiscardArgs(allocator: Allocator, args: []const [:0]u8) !DiscardOpti
         } else if (std.mem.eql(u8, arg, "--force")) {
             opts.force = true;
         } else if (std.mem.eql(u8, arg, "--tracked-only")) {
+            if (opts.diff_filter == .untracked_only) return error.ConflictingFilter;
             opts.diff_filter = .tracked_only;
         } else if (std.mem.eql(u8, arg, "--untracked-only")) {
+            if (opts.diff_filter == .tracked_only) return error.ConflictingFilter;
             opts.diff_filter = .untracked_only;
         } else if (std.mem.eql(u8, arg, "--porcelain")) {
             opts.output = .porcelain;
@@ -319,8 +331,10 @@ pub fn parseStashArgs(allocator: Allocator, args: []const [:0]u8) !StashOptions 
         } else if (std.mem.eql(u8, arg, "--include-untracked") or std.mem.eql(u8, arg, "-u")) {
             opts.include_untracked = true;
         } else if (std.mem.eql(u8, arg, "--tracked-only")) {
+            if (opts.diff_filter == .untracked_only) return error.ConflictingFilter;
             opts.diff_filter = .tracked_only;
         } else if (std.mem.eql(u8, arg, "--untracked-only")) {
+            if (opts.diff_filter == .tracked_only) return error.ConflictingFilter;
             opts.diff_filter = .untracked_only;
         } else if (std.mem.eql(u8, arg, "--message") or std.mem.eql(u8, arg, "-m")) {
             i += 1;

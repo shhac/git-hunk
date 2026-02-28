@@ -297,7 +297,7 @@ git-hunk discard a3f7c21 --no-color                  # disable color output
 | `error: invalid hex in sha prefix: '<sha>'` | Prefix contains non-hex characters |
 | `error: no hunk matching '<sha>'` | No hunk matches the prefix (with optional file filter) |
 | `error: ambiguous prefix '<sha>' -- matches multiple hunks` | Multiple hunks match the prefix |
-| `error: <file> is an untracked file -- use --force to delete` | Untracked file matched without `--force` |
+| `error: <sha> (<file>) is an untracked file -- use --force to delete` | Untracked file matched without `--force` (bypassed by `--dry-run`) |
 | `error: patch did not apply cleanly` | Worktree changed since hunks were listed |
 | `no unstaged changes` | Nothing to discard |
 | `error: at least one <sha> argument required` | No SHA arguments and no `--all`/`--file` flag |

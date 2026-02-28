@@ -125,17 +125,6 @@ a3f7c21	src/main.zig	12	18	Add error handling
 
 ```
 
-## Untracked file hint
-
-In human mode when listing unstaged hunks, if there are untracked files a hint
-is printed to stderr:
-
-```
-hint: 3 untracked file(s) not shown -- use 'git add -N <file>' to include
-```
-
-This does not appear in porcelain mode, staged mode, or `show` output.
-
 ## Porcelain (`--porcelain`)
 
 Tab-separated fields, one hunk per line. No headers, no alignment padding.

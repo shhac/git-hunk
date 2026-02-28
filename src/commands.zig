@@ -851,10 +851,11 @@ pub fn cmdDiscard(allocator: Allocator, stdout: *std.Io.Writer, opts: DiscardOpt
     }
 
     // Gate: untracked files require --force (discarding deletes them permanently)
-    if (!opts.force) {
+    // Dry-run bypasses the gate — safe to preview without --force
+    if (!opts.force and !opts.dry_run) {
         for (matched.items) |m| {
             if (m.hunk.is_untracked) {
-                std.debug.print("error: {s} is an untracked file — use --force to delete\n", .{m.hunk.sha_hex[0..7]});
+                std.debug.print("error: {s} ({s}) is an untracked file -- use --force to delete\n", .{ m.hunk.sha_hex[0..7], m.hunk.file_path });
                 std.process.exit(1);
             }
         }

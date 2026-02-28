@@ -171,4 +171,30 @@ REMAINING59="$("$GIT_HUNK" count)"
 [[ ! -f untracked.txt ]] || fail "test 59: untracked file should be deleted"
 pass "test 59: discard --force --all discards everything"
 
+# ============================================================================
+# Test 60: discard --dry-run works for untracked files without --force
+# ============================================================================
+new_repo
+echo "untracked content" > untracked.txt
+
+SHA60="$("$GIT_HUNK" list --porcelain --oneline --file untracked.txt | head -1 | cut -f1)"
+[[ -n "$SHA60" ]] || fail "test 60: no untracked hunk found"
+OUT60="$("$GIT_HUNK" discard --dry-run "$SHA60" 2>/dev/null)"
+echo "$OUT60" | grep -q "would discard" || fail "test 60: expected 'would discard' in output, got: '$OUT60'"
+[[ -f untracked.txt ]] || fail "test 60: file should still exist after dry-run"
+pass "test 60: discard --dry-run works for untracked without --force"
+
+# ============================================================================
+# Test 61: discard --tracked-only excludes untracked from --all
+# ============================================================================
+new_repo
+sed -i '' '1s/.*/Changed alpha./' alpha.txt
+echo "untracked content" > untracked.txt
+
+"$GIT_HUNK" discard --all --tracked-only > /dev/null
+[[ -f untracked.txt ]] || fail "test 61: untracked file should survive --tracked-only discard"
+REMAINING61="$("$GIT_HUNK" list --tracked-only --porcelain --oneline)"
+[[ -z "$REMAINING61" ]] || fail "test 61: tracked hunks should be discarded"
+pass "test 61: discard --tracked-only excludes untracked from --all"
+
 report_results
