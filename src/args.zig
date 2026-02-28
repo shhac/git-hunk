@@ -86,6 +86,7 @@ pub fn parseAddResetArgs(allocator: Allocator, args: []const [:0]u8) !AddResetOp
             if (i >= args.len) return error.MissingArgument;
             opts.context = std.fmt.parseInt(u32, args[i], 10) catch return error.InvalidArgument;
         } else if (std.mem.startsWith(u8, arg, "-")) {
+            std.debug.print("error: unknown flag '{s}'\n", .{arg});
             return error.UnknownFlag;
         } else {
             const sha_arg = parseShaArg(allocator, arg) catch return error.InvalidArgument;
@@ -133,6 +134,7 @@ pub fn parseShowArgs(allocator: Allocator, args: []const [:0]u8) !ShowOptions {
             if (i >= args.len) return error.MissingArgument;
             opts.context = std.fmt.parseInt(u32, args[i], 10) catch return error.InvalidArgument;
         } else if (std.mem.startsWith(u8, arg, "-")) {
+            std.debug.print("error: unknown flag '{s}'\n", .{arg});
             return error.UnknownFlag;
         } else {
             const sha_arg = parseShaArg(allocator, arg) catch return error.InvalidArgument;
@@ -175,6 +177,7 @@ pub fn parseCountArgs(args: []const [:0]u8) !CountOptions {
             opts.context = std.fmt.parseInt(u32, args[i], 10) catch return error.InvalidArgument;
         } else {
             if (std.mem.startsWith(u8, arg, "-")) {
+                std.debug.print("error: unknown flag '{s}'\n", .{arg});
                 return error.UnknownFlag;
             }
             std.debug.print("error: count does not accept arguments\n", .{});
@@ -218,6 +221,7 @@ pub fn parseCheckArgs(allocator: Allocator, args: []const [:0]u8) !CheckOptions 
             if (i >= args.len) return error.MissingArgument;
             opts.context = std.fmt.parseInt(u32, args[i], 10) catch return error.InvalidArgument;
         } else if (std.mem.startsWith(u8, arg, "-")) {
+            std.debug.print("error: unknown flag '{s}'\n", .{arg});
             return error.UnknownFlag;
         } else {
             const sha_arg = parseShaArg(allocator, arg) catch return error.InvalidArgument;
@@ -274,6 +278,7 @@ pub fn parseDiscardArgs(allocator: Allocator, args: []const [:0]u8) !DiscardOpti
             if (i >= args.len) return error.MissingArgument;
             opts.context = std.fmt.parseInt(u32, args[i], 10) catch return error.InvalidArgument;
         } else if (std.mem.startsWith(u8, arg, "-")) {
+            std.debug.print("error: unknown flag '{s}'\n", .{arg});
             return error.UnknownFlag;
         } else {
             const sha_arg = parseShaArg(allocator, arg) catch return error.InvalidArgument;
@@ -353,6 +358,7 @@ pub fn parseStashArgs(allocator: Allocator, args: []const [:0]u8) !StashOptions 
             if (i >= args.len) return error.MissingArgument;
             opts.context = std.fmt.parseInt(u32, args[i], 10) catch return error.InvalidArgument;
         } else if (std.mem.startsWith(u8, arg, "-")) {
+            std.debug.print("error: unknown flag '{s}'\n", .{arg});
             return error.UnknownFlag;
         } else {
             const sha_arg = parseShaArg(allocator, arg) catch return error.InvalidArgument;
