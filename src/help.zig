@@ -157,6 +157,7 @@ const discard_help: []const u8 =
     \\OPTIONS
     \\  --all             Discard all unstaged hunks (DESTRUCTIVE)
     \\  --file <path>     Discard all hunks in the given file
+    \\  --force           Required to discard untracked files (deletes them permanently)
     \\  --dry-run         Show what would be discarded without making changes
     \\  --porcelain       Machine-readable output
     \\  --no-color        Disable colored output
@@ -164,6 +165,7 @@ const discard_help: []const u8 =
     \\  --help, -h        Show this help
     \\
     \\  WARNING: This command is DESTRUCTIVE. Discarded changes cannot be recovered.
+    \\  Untracked files require --force to discard (they will be deleted entirely).
     \\  Use --dry-run to preview before discarding.
     \\
     \\EXAMPLES
@@ -171,6 +173,7 @@ const discard_help: []const u8 =
     \\  git-hunk discard --all                 Discard all unstaged changes
     \\  git-hunk discard --dry-run a3f7c21     Preview what would be discarded
     \\  git-hunk discard a3f7:3-5              Discard specific lines from a hunk
+    \\  git-hunk discard --force a3f7c21       Discard an untracked file (deletes it)
     \\
 ;
 

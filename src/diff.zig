@@ -231,6 +231,7 @@ pub fn parseDiff(arena: Allocator, diff: []const u8, mode: DiffMode, hunks: *std
                 .sha_hex = sha,
                 .is_new_file = is_new_file,
                 .is_deleted_file = is_deleted_file,
+                .is_untracked = false,
                 .patch_header = patch_header,
             });
         }

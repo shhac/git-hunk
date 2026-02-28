@@ -16,6 +16,7 @@ pub const Hunk = struct {
     sha_hex: [40]u8,
     is_new_file: bool,
     is_deleted_file: bool,
+    is_untracked: bool,
     /// Patch header for applying: ---/+++ lines (and diff --git + mode for new/deleted).
     patch_header: []const u8,
 };
@@ -98,6 +99,7 @@ pub const DiscardOptions = struct {
     file_filter: ?[]const u8 = null,
     select_all: bool = false,
     dry_run: bool = false,
+    force: bool = false,
     output: OutputMode = .human,
     no_color: bool = false,
     context: ?u32 = null,
@@ -132,6 +134,7 @@ pub fn testMakeHunk(file_path: []const u8, old_start: u32, old_count: u32, new_s
         .sha_hex = [_]u8{0} ** 40,
         .is_new_file = false,
         .is_deleted_file = false,
+        .is_untracked = false,
         .patch_header = "",
     };
 }

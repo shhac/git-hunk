@@ -157,8 +157,70 @@ pub fn runGitApply(allocator: Allocator, patch: []const u8, reverse: bool, targe
     }
 }
 
-pub fn countUntrackedFiles(allocator: Allocator) !u32 {
-    const argv: []const []const u8 = &.{ "git", "ls-files", "--others", "--exclude-standard" };
+/// Generate diff output for untracked files using `git diff --no-index`.
+/// The output matches the standard `git diff` format expected by parseDiff.
+/// Only files matching `file_filter` are included (null = all untracked files).
+/// Allocates the result with `allocator`; caller must free the returned slice.
+pub fn diffUntrackedFiles(allocator: Allocator, file_filter: ?[]const u8) ![]u8 {
+    // Get list of untracked file paths
+    const ls_argv: []const []const u8 = &.{ "git", "ls-files", "--others", "--exclude-standard" };
+
+    var ls_child = std.process.Child.init(ls_argv, allocator);
+    ls_child.stdout_behavior = .Pipe;
+    ls_child.stderr_behavior = .Pipe;
+    try ls_child.spawn();
+
+    var ls_stdout: std.ArrayList(u8) = .empty;
+    defer ls_stdout.deinit(allocator);
+    var ls_stderr: std.ArrayList(u8) = .empty;
+    defer ls_stderr.deinit(allocator);
+
+    const ls_max = 1 * 1024 * 1024;
+    try ls_child.collectOutput(allocator, &ls_stdout, &ls_stderr, ls_max);
+    const ls_term = try ls_child.wait();
+
+    switch (ls_term) {
+        .Exited => |code| {
+            if (code != 0) return try allocator.alloc(u8, 0);
+        },
+        else => return try allocator.alloc(u8, 0),
+    }
+
+    const ls_output = std.mem.trimRight(u8, ls_stdout.items, "\n");
+    if (ls_output.len == 0) return try allocator.alloc(u8, 0);
+
+    // Collect diffs for each untracked file
+    var result: std.ArrayList(u8) = .empty;
+    errdefer result.deinit(allocator);
+
+    var iter = std.mem.splitScalar(u8, ls_output, '\n');
+    while (iter.next()) |file_path| {
+        if (file_path.len == 0) continue;
+
+        // Apply file filter
+        if (file_filter) |filter| {
+            if (!std.mem.eql(u8, file_path, filter)) continue;
+        }
+
+        const diff = diffSingleUntrackedFile(allocator, file_path) catch continue;
+        defer allocator.free(diff);
+
+        if (diff.len > 0) {
+            try result.appendSlice(allocator, diff);
+        }
+    }
+
+    return try result.toOwnedSlice(allocator);
+}
+
+/// Run `git diff --no-index --src-prefix=a/ --dst-prefix=b/ --no-color -- /dev/null <file>`
+/// for a single untracked file. Exit code 1 is expected (differences found).
+fn diffSingleUntrackedFile(allocator: Allocator, file_path: []const u8) ![]u8 {
+    const argv: []const []const u8 = &.{
+        "git",             "diff",            "--no-index",
+        "--src-prefix=a/", "--dst-prefix=b/", "--no-color",
+        "--",              "/dev/null",       file_path,
+    };
 
     var child = std.process.Child.init(argv, allocator);
     child.stdout_behavior = .Pipe;
@@ -167,29 +229,32 @@ pub fn countUntrackedFiles(allocator: Allocator) !u32 {
     try child.spawn();
 
     var child_stdout: std.ArrayList(u8) = .empty;
-    defer child_stdout.deinit(allocator);
+    errdefer child_stdout.deinit(allocator);
     var child_stderr: std.ArrayList(u8) = .empty;
     defer child_stderr.deinit(allocator);
 
-    const max_bytes = 1 * 1024 * 1024; // 1 MB
-    try child.collectOutput(allocator, &child_stdout, &child_stderr, max_bytes);
+    const max_bytes = 10 * 1024 * 1024; // 10 MB
+    child.collectOutput(allocator, &child_stdout, &child_stderr, max_bytes) catch |err| {
+        if (err == error.StreamTooLong) return error.StreamTooLong;
+        return err;
+    };
     const term = try child.wait();
 
     switch (term) {
         .Exited => |code| {
-            if (code != 0) return 0; // Best-effort: silently ignore errors
+            // Exit code 1 means "differences found" — this is expected for --no-index
+            if (code != 0 and code != 1) {
+                child_stdout.deinit(allocator);
+                return try allocator.alloc(u8, 0);
+            }
         },
-        else => return 0,
+        else => {
+            child_stdout.deinit(allocator);
+            return try allocator.alloc(u8, 0);
+        },
     }
 
-    const output = std.mem.trimRight(u8, child_stdout.items, "\n");
-    if (output.len == 0) return 0;
-
-    var count: u32 = 1;
-    for (output) |c| {
-        if (c == '\n') count += 1;
-    }
-    return count;
+    return try child_stdout.toOwnedSlice(allocator);
 }
 
 // ─── Stash plumbing helpers ───────────────────────────────────────────

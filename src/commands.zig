@@ -21,22 +21,59 @@ const CheckOptions = types.CheckOptions;
 const DiscardOptions = types.DiscardOptions;
 const StashOptions = types.StashOptions;
 
+/// Get diff output including untracked files (unstaged mode only).
+/// Returns the tracked diff output and, separately, the untracked diff output.
+/// Both must remain alive while hunks reference them (hunks contain sub-slices).
+/// Hunks from untracked files have `is_untracked = true`.
+fn getDiffWithUntracked(
+    allocator: Allocator,
+    arena: Allocator,
+    mode: DiffMode,
+    context: ?u32,
+    file_filter: ?[]const u8,
+    hunks: *std.ArrayList(Hunk),
+) !struct { tracked: []u8, untracked: []u8 } {
+    const diff_output = try git.runGitDiff(allocator, mode, context);
+    errdefer allocator.free(diff_output);
+
+    if (diff_output.len > 0) {
+        try diff_mod.parseDiff(arena, diff_output, mode, hunks);
+    }
+
+    // Untracked files only appear in unstaged mode
+    if (mode == .unstaged) {
+        const untracked_diff = try git.diffUntrackedFiles(allocator, file_filter);
+        errdefer allocator.free(untracked_diff);
+
+        if (untracked_diff.len > 0) {
+            const before_count = hunks.items.len;
+            try diff_mod.parseDiff(arena, untracked_diff, .unstaged, hunks);
+            // Mark newly-added hunks as untracked
+            for (hunks.items[before_count..]) |*h| {
+                h.is_untracked = true;
+            }
+        }
+
+        return .{ .tracked = diff_output, .untracked = untracked_diff };
+    }
+
+    return .{ .tracked = diff_output, .untracked = try allocator.alloc(u8, 0) };
+}
+
 pub fn cmdList(allocator: Allocator, stdout: *std.Io.Writer, opts: ListOptions) !void {
-    const diff_output = try git.runGitDiff(allocator, opts.mode, opts.context);
-    defer allocator.free(diff_output);
-
-    if (diff_output.len == 0) return;
-
     // Use arena for all hunk-related allocations
     var arena_state = std.heap.ArenaAllocator.init(allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
     var hunks: std.ArrayList(Hunk) = .empty;
-    // Arena owns all hunk data; ArrayList itself also uses arena
     defer hunks.deinit(arena);
 
-    try diff_mod.parseDiff(arena, diff_output, opts.mode, &hunks);
+    const diffs = try getDiffWithUntracked(allocator, arena, opts.mode, opts.context, opts.file_filter, &hunks);
+    defer allocator.free(diffs.tracked);
+    defer allocator.free(diffs.untracked);
+
+    if (hunks.items.len == 0) return;
 
     // Compute display parameters for human mode
     const use_color = opts.output == .human and !opts.no_color and
@@ -88,31 +125,19 @@ pub fn cmdList(allocator: Allocator, stdout: *std.Io.Writer, opts: ListOptions) 
         std.debug.print("{d} hunks across {d} files\n", .{ hunk_count, file_count });
     }
 
-    // Hint about untracked files (human output, unstaged mode only)
-    if (opts.output == .human and opts.mode == .unstaged) {
-        const untracked = git.countUntrackedFiles(allocator) catch 0;
-        if (untracked > 0) {
-            std.debug.print("hint: {d} untracked file(s) not shown -- use 'git add -N <file>' to include\n", .{untracked});
-        }
-    }
 }
 
 pub fn cmdCount(allocator: Allocator, stdout: *std.Io.Writer, opts: CountOptions) !void {
-    const diff_output = try git.runGitDiff(allocator, opts.mode, opts.context);
-    defer allocator.free(diff_output);
-
-    if (diff_output.len == 0) {
-        try stdout.print("0\n", .{});
-        return;
-    }
-
     var arena_state = std.heap.ArenaAllocator.init(allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
-    try diff_mod.parseDiff(arena, diff_output, opts.mode, &hunks);
+
+    const diffs = try getDiffWithUntracked(allocator, arena, opts.mode, opts.context, opts.file_filter, &hunks);
+    defer allocator.free(diffs.tracked);
+    defer allocator.free(diffs.untracked);
 
     var count: usize = 0;
     for (hunks.items) |h| {
@@ -126,18 +151,16 @@ pub fn cmdCount(allocator: Allocator, stdout: *std.Io.Writer, opts: CountOptions
 }
 
 pub fn cmdCheck(allocator: Allocator, stdout: *std.Io.Writer, opts: CheckOptions) !void {
-    const diff_output = try git.runGitDiff(allocator, opts.mode, opts.context);
-    defer allocator.free(diff_output);
-
     var arena_state = std.heap.ArenaAllocator.init(allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
-    if (diff_output.len > 0) {
-        try diff_mod.parseDiff(arena, diff_output, opts.mode, &hunks);
-    }
+
+    const diffs = try getDiffWithUntracked(allocator, arena, opts.mode, opts.context, opts.file_filter, &hunks);
+    defer allocator.free(diffs.tracked);
+    defer allocator.free(diffs.untracked);
 
     const use_color = opts.output == .human and !opts.no_color and
         std.fs.File.stdout().isTty() and posix.getenv("NO_COLOR") == null;
@@ -584,10 +607,18 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddRemoveOp
         .unstage => .staged,
     };
 
-    const diff_output = try git.runGitDiff(allocator, diff_mode, opts.context);
-    defer allocator.free(diff_output);
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
 
-    if (diff_output.len == 0) {
+    var hunks: std.ArrayList(Hunk) = .empty;
+    defer hunks.deinit(arena);
+
+    const diffs = try getDiffWithUntracked(allocator, arena, diff_mode, opts.context, opts.file_filter, &hunks);
+    defer allocator.free(diffs.tracked);
+    defer allocator.free(diffs.untracked);
+
+    if (hunks.items.len == 0) {
         const msg = switch (action) {
             .stage => "no unstaged changes\n",
             .unstage => "no staged changes\n",
@@ -595,14 +626,6 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddRemoveOp
         std.debug.print("{s}", .{msg});
         std.process.exit(1);
     }
-
-    var arena_state = std.heap.ArenaAllocator.init(allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var hunks: std.ArrayList(Hunk) = .empty;
-    defer hunks.deinit(arena);
-    try diff_mod.parseDiff(arena, diff_output, diff_mode, &hunks);
 
     // Resolve hunks to apply: bulk mode (--all or bare --file) or SHA prefix matching
     var matched: std.ArrayList(MatchedHunk) = .empty;
@@ -748,21 +771,21 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddRemoveOp
 
 pub fn cmdDiscard(allocator: Allocator, stdout: *std.Io.Writer, opts: DiscardOptions) !void {
     // Discard always operates on unstaged hunks (worktree vs index)
-    const diff_output = try git.runGitDiff(allocator, .unstaged, opts.context);
-    defer allocator.free(diff_output);
-
-    if (diff_output.len == 0) {
-        std.debug.print("no unstaged changes\n", .{});
-        std.process.exit(1);
-    }
-
     var arena_state = std.heap.ArenaAllocator.init(allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
-    try diff_mod.parseDiff(arena, diff_output, .unstaged, &hunks);
+
+    const diffs = try getDiffWithUntracked(allocator, arena, .unstaged, opts.context, opts.file_filter, &hunks);
+    defer allocator.free(diffs.tracked);
+    defer allocator.free(diffs.untracked);
+
+    if (hunks.items.len == 0) {
+        std.debug.print("no unstaged changes\n", .{});
+        std.process.exit(1);
+    }
 
     // Resolve hunks: bulk mode (--all or bare --file) or SHA prefix matching
     var matched: std.ArrayList(MatchedHunk) = .empty;
@@ -819,6 +842,16 @@ pub fn cmdDiscard(allocator: Allocator, stdout: *std.Io.Writer, opts: DiscardOpt
             std.debug.print("no unstaged changes\n", .{});
         }
         std.process.exit(1);
+    }
+
+    // Gate: untracked files require --force (discarding deletes them permanently)
+    if (!opts.force) {
+        for (matched.items) |m| {
+            if (m.hunk.is_untracked) {
+                std.debug.print("error: {s} is an untracked file — use --force to delete\n", .{m.hunk.sha_hex[0..7]});
+                std.process.exit(1);
+            }
+        }
     }
 
     // Sort hunks for valid combined patch
@@ -880,10 +913,18 @@ pub fn cmdDiscard(allocator: Allocator, stdout: *std.Io.Writer, opts: DiscardOpt
 }
 
 pub fn cmdShow(allocator: Allocator, stdout: *std.Io.Writer, opts: ShowOptions) !void {
-    const diff_output = try git.runGitDiff(allocator, opts.mode, opts.context);
-    defer allocator.free(diff_output);
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
 
-    if (diff_output.len == 0) {
+    var hunks: std.ArrayList(Hunk) = .empty;
+    defer hunks.deinit(arena);
+
+    const diffs = try getDiffWithUntracked(allocator, arena, opts.mode, opts.context, opts.file_filter, &hunks);
+    defer allocator.free(diffs.tracked);
+    defer allocator.free(diffs.untracked);
+
+    if (hunks.items.len == 0) {
         const msg: []const u8 = switch (opts.mode) {
             .unstaged => "no unstaged changes\n",
             .staged => "no staged changes\n",
@@ -891,14 +932,6 @@ pub fn cmdShow(allocator: Allocator, stdout: *std.Io.Writer, opts: ShowOptions) 
         std.debug.print("{s}", .{msg});
         std.process.exit(1);
     }
-
-    var arena_state = std.heap.ArenaAllocator.init(allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var hunks: std.ArrayList(Hunk) = .empty;
-    defer hunks.deinit(arena);
-    try diff_mod.parseDiff(arena, diff_output, opts.mode, &hunks);
 
     // Resolve each SHA arg to a hunk, deduplicating by full SHA
     var matched: std.ArrayList(MatchedHunk) = .empty;
@@ -971,21 +1004,21 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
     }
 
     // Push path: stash selected hunks
-    const diff_output = try git.runGitDiff(allocator, .unstaged, opts.context);
-    defer allocator.free(diff_output);
-
-    if (diff_output.len == 0) {
-        std.debug.print("no unstaged changes\n", .{});
-        std.process.exit(1);
-    }
-
     var arena_state = std.heap.ArenaAllocator.init(allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
-    try diff_mod.parseDiff(arena, diff_output, .unstaged, &hunks);
+
+    const diffs = try getDiffWithUntracked(allocator, arena, .unstaged, opts.context, opts.file_filter, &hunks);
+    defer allocator.free(diffs.tracked);
+    defer allocator.free(diffs.untracked);
+
+    if (hunks.items.len == 0) {
+        std.debug.print("no unstaged changes\n", .{});
+        std.process.exit(1);
+    }
 
     // Resolve hunks: bulk mode (--all or bare --file) or SHA prefix matching
     var matched: std.ArrayList(MatchedHunk) = .empty;
@@ -1042,6 +1075,14 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
             std.debug.print("no unstaged changes\n", .{});
         }
         std.process.exit(1);
+    }
+
+    // Reject untracked files — stash uses git plumbing that doesn't support them yet
+    for (matched.items) |m| {
+        if (m.hunk.is_untracked) {
+            std.debug.print("error: {s} is an untracked file — stash does not support untracked files\n", .{m.hunk.sha_hex[0..7]});
+            std.process.exit(1);
+        }
     }
 
     // Sort and build INDEX_PATCH (index-relative, for worktree reverse-apply)

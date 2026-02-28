@@ -224,6 +224,8 @@ pub fn parseDiscardArgs(allocator: Allocator, args: []const [:0]u8) !DiscardOpti
             opts.select_all = true;
         } else if (std.mem.eql(u8, arg, "--dry-run")) {
             opts.dry_run = true;
+        } else if (std.mem.eql(u8, arg, "--force")) {
+            opts.force = true;
         } else if (std.mem.eql(u8, arg, "--porcelain")) {
             opts.output = .porcelain;
         } else if (std.mem.eql(u8, arg, "--no-color")) {
