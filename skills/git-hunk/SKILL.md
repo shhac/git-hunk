@@ -48,8 +48,9 @@ When to use `git add` instead:
 | `count` | Bare integer hunk count | `--staged`, `--file` |
 | `check` | Verify hashes still valid | `--staged`, `--exclusive`, `--file`, `--porcelain` |
 
-All commands accept `--no-color` and `--context <n>`. SHA prefixes need at least
-4 hex characters. Use `--file` to disambiguate prefix collisions.
+All commands accept `--help`, `--no-color`, and `--context <n>`. SHA prefixes need
+at least 4 hex characters. Use `--file` to disambiguate prefix collisions.
+Use `git-hunk <command> --help` for detailed per-command help.
 
 ## Hash stability
 

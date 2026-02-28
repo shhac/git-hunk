@@ -463,13 +463,22 @@ git-hunk stash a3f7c21 --no-color               # disable color output
 
 ## git-hunk help
 
-Show usage information.
+Show usage information. All commands accept `--help` / `-h` for per-command help.
 
 ```
-git-hunk help
-git-hunk --help
-git-hunk -h
+git-hunk --help                    # global help (commands overview)
+git-hunk -h                        # same
+git-hunk help                      # same
+git-hunk <command> --help          # per-command help (flags, examples, behavior)
+git-hunk <command> -h              # same
+git-hunk help <command>            # same
 ```
+
+### Note on git subcommand usage
+
+When invoked as `git hunk --help`, git intercepts the `--help` flag and opens
+`man git-hunk` instead of passing it to the binary. Use `git hunk help [command]`
+for inline help when using the git subcommand form.
 
 ---
 

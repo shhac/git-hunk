@@ -57,6 +57,17 @@ Once on your PATH, git-hunk works as a git subcommand:
 git hunk list
 ```
 
+## Help
+
+```
+git-hunk --help                    # global help (all commands overview)
+git-hunk <command> --help          # per-command help (flags, examples, behavior)
+git-hunk help <command>            # same as above
+```
+
+When using git-hunk as a git subcommand, `git hunk --help` opens the man page
+(standard git behavior). Use `git hunk help [command]` for inline help instead.
+
 ## Usage
 
 ### List hunks
