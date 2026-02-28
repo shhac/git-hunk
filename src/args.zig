@@ -20,7 +20,9 @@ pub fn parseListArgs(args: []const [:0]u8) !ListOptions {
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
-        if (std.mem.eql(u8, arg, "--staged")) {
+        if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+            return error.HelpRequested;
+        } else if (std.mem.eql(u8, arg, "--staged")) {
             opts.mode = .staged;
         } else if (std.mem.eql(u8, arg, "--porcelain")) {
             opts.output = .porcelain;
@@ -52,7 +54,9 @@ pub fn parseAddRemoveArgs(allocator: Allocator, args: []const [:0]u8) !AddRemove
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
-        if (std.mem.eql(u8, arg, "--file")) {
+        if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+            return error.HelpRequested;
+        } else if (std.mem.eql(u8, arg, "--file")) {
             i += 1;
             if (i >= args.len) return error.MissingArgument;
             opts.file_filter = args[i];
@@ -91,7 +95,9 @@ pub fn parseShowArgs(allocator: Allocator, args: []const [:0]u8) !ShowOptions {
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
-        if (std.mem.eql(u8, arg, "--file")) {
+        if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+            return error.HelpRequested;
+        } else if (std.mem.eql(u8, arg, "--file")) {
             i += 1;
             if (i >= args.len) return error.MissingArgument;
             opts.file_filter = args[i];
@@ -126,7 +132,9 @@ pub fn parseCountArgs(args: []const [:0]u8) !CountOptions {
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
-        if (std.mem.eql(u8, arg, "--staged")) {
+        if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+            return error.HelpRequested;
+        } else if (std.mem.eql(u8, arg, "--staged")) {
             opts.mode = .staged;
         } else if (std.mem.eql(u8, arg, "--porcelain") or std.mem.eql(u8, arg, "--no-color")) {
             // Accepted for consistency, no effect
@@ -158,7 +166,9 @@ pub fn parseCheckArgs(allocator: Allocator, args: []const [:0]u8) !CheckOptions 
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
-        if (std.mem.eql(u8, arg, "--staged")) {
+        if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+            return error.HelpRequested;
+        } else if (std.mem.eql(u8, arg, "--staged")) {
             opts.mode = .staged;
         } else if (std.mem.eql(u8, arg, "--exclusive")) {
             opts.exclusive = true;
@@ -204,7 +214,9 @@ pub fn parseDiscardArgs(allocator: Allocator, args: []const [:0]u8) !DiscardOpti
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
-        if (std.mem.eql(u8, arg, "--file")) {
+        if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+            return error.HelpRequested;
+        } else if (std.mem.eql(u8, arg, "--file")) {
             i += 1;
             if (i >= args.len) return error.MissingArgument;
             opts.file_filter = args[i];
@@ -245,7 +257,9 @@ pub fn parseStashArgs(allocator: Allocator, args: []const [:0]u8) !StashOptions 
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
-        if (std.mem.eql(u8, arg, "--file")) {
+        if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+            return error.HelpRequested;
+        } else if (std.mem.eql(u8, arg, "--file")) {
             i += 1;
             if (i >= args.len) return error.MissingArgument;
             opts.file_filter = args[i];

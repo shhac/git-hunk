@@ -44,14 +44,24 @@ fn run() !void {
     const subcmd = process_args[1];
 
     if (std.mem.eql(u8, subcmd, "list")) {
-        const opts = args_mod.parseListArgs(process_args[2..]) catch {
+        const opts = args_mod.parseListArgs(process_args[2..]) catch |err| {
+            if (err == error.HelpRequested) {
+                try help.printCommandHelp(stdout, .list);
+                try stdout.flush();
+                std.process.exit(0);
+            }
             try printUsage(stdout);
             try stdout.flush();
             std.process.exit(1);
         };
         try commands.cmdList(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "add")) {
-        var opts = args_mod.parseAddRemoveArgs(allocator, process_args[2..]) catch {
+        var opts = args_mod.parseAddRemoveArgs(allocator, process_args[2..]) catch |err| {
+            if (err == error.HelpRequested) {
+                try help.printCommandHelp(stdout, .add);
+                try stdout.flush();
+                std.process.exit(0);
+            }
             try printUsage(stdout);
             try stdout.flush();
             std.process.exit(1);
@@ -59,7 +69,12 @@ fn run() !void {
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
         try commands.cmdAdd(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "remove")) {
-        var opts = args_mod.parseAddRemoveArgs(allocator, process_args[2..]) catch {
+        var opts = args_mod.parseAddRemoveArgs(allocator, process_args[2..]) catch |err| {
+            if (err == error.HelpRequested) {
+                try help.printCommandHelp(stdout, .remove);
+                try stdout.flush();
+                std.process.exit(0);
+            }
             try printUsage(stdout);
             try stdout.flush();
             std.process.exit(1);
@@ -67,14 +82,24 @@ fn run() !void {
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
         try commands.cmdRemove(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "count")) {
-        const opts = args_mod.parseCountArgs(process_args[2..]) catch {
+        const opts = args_mod.parseCountArgs(process_args[2..]) catch |err| {
+            if (err == error.HelpRequested) {
+                try help.printCommandHelp(stdout, .count);
+                try stdout.flush();
+                std.process.exit(0);
+            }
             try printUsage(stdout);
             try stdout.flush();
             std.process.exit(1);
         };
         try commands.cmdCount(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "check")) {
-        var opts = args_mod.parseCheckArgs(allocator, process_args[2..]) catch {
+        var opts = args_mod.parseCheckArgs(allocator, process_args[2..]) catch |err| {
+            if (err == error.HelpRequested) {
+                try help.printCommandHelp(stdout, .check);
+                try stdout.flush();
+                std.process.exit(0);
+            }
             try printUsage(stdout);
             try stdout.flush();
             std.process.exit(1);
@@ -82,7 +107,12 @@ fn run() !void {
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
         try commands.cmdCheck(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "discard")) {
-        var opts = args_mod.parseDiscardArgs(allocator, process_args[2..]) catch {
+        var opts = args_mod.parseDiscardArgs(allocator, process_args[2..]) catch |err| {
+            if (err == error.HelpRequested) {
+                try help.printCommandHelp(stdout, .discard);
+                try stdout.flush();
+                std.process.exit(0);
+            }
             try printUsage(stdout);
             try stdout.flush();
             std.process.exit(1);
@@ -90,7 +120,12 @@ fn run() !void {
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
         try commands.cmdDiscard(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "show")) {
-        var opts = args_mod.parseShowArgs(allocator, process_args[2..]) catch {
+        var opts = args_mod.parseShowArgs(allocator, process_args[2..]) catch |err| {
+            if (err == error.HelpRequested) {
+                try help.printCommandHelp(stdout, .show);
+                try stdout.flush();
+                std.process.exit(0);
+            }
             try printUsage(stdout);
             try stdout.flush();
             std.process.exit(1);
@@ -98,7 +133,12 @@ fn run() !void {
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
         try commands.cmdShow(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "stash")) {
-        var opts = args_mod.parseStashArgs(allocator, process_args[2..]) catch {
+        var opts = args_mod.parseStashArgs(allocator, process_args[2..]) catch |err| {
+            if (err == error.HelpRequested) {
+                try help.printCommandHelp(stdout, .stash);
+                try stdout.flush();
+                std.process.exit(0);
+            }
             try printUsage(stdout);
             try stdout.flush();
             std.process.exit(1);
@@ -108,7 +148,18 @@ fn run() !void {
     } else if (std.mem.eql(u8, subcmd, "--version") or std.mem.eql(u8, subcmd, "-V")) {
         try stdout.print("git-hunk {s}\n", .{build_options.version});
     } else if (std.mem.eql(u8, subcmd, "--help") or std.mem.eql(u8, subcmd, "-h") or std.mem.eql(u8, subcmd, "help")) {
-        try printUsage(stdout);
+        if (process_args.len > 2) {
+            if (help.commandFromString(process_args[2])) |cmd| {
+                try help.printCommandHelp(stdout, cmd);
+            } else {
+                std.debug.print("error: unknown command '{s}'\n", .{process_args[2]});
+                try printUsage(stdout);
+                try stdout.flush();
+                std.process.exit(1);
+            }
+        } else {
+            try printUsage(stdout);
+        }
     } else {
         std.debug.print("error: unknown command '{s}'\n", .{subcmd});
         try printUsage(stdout);
