@@ -1,0 +1,129 @@
+.TH GIT\-HUNK 1 "2026-02-28" "git-hunk" "User Commands"
+.SH NAME
+git\-hunk \- non\-interactive hunk staging for git
+.SH SYNOPSIS
+.B git\-hunk
+.I <command>
+.RI [ options ]
+.RI [ args ]
+.SH DESCRIPTION
+.B git\-hunk
+replaces interactive
+.B git add \-p
+with a deterministic enumerate\-then\-select workflow.
+Diff hunks are identified by stable content hashes, allowing precise,
+scriptable, and repeatable partial staging without interactive prompts.
+.SH COMMANDS
+.TP
+.B list
+List diff hunks with content hashes. Shows unstaged hunks by default;
+use \fB\-\-staged\fR to show staged hunks.
+.TP
+.B show
+Show the diff content of specific hunks identified by hash.
+.TP
+.B add
+Stage hunks (or selected lines within a hunk) by hash.
+Use \fB\-\-all\fR to stage all hunks.
+.TP
+.B remove
+Unstage hunks (or selected lines within a hunk) by hash.
+Use \fB\-\-all\fR to unstage all staged hunks.
+.TP
+.B discard
+Discard unstaged worktree changes by hash.
+Use \fB\-\-all\fR to discard all unstaged changes.
+.TP
+.B count
+Count diff hunks. Outputs a bare integer for scripting.
+.TP
+.B check
+Validate that hunk hashes exist in the current diff.
+Exits 0 if all hashes are valid, non\-zero otherwise.
+.TP
+.B stash
+Stash hunks into git stash, removing them from the worktree.
+.SH GLOBAL OPTIONS
+.TP
+.BR \-h ", " \-\-help
+Show help. Use \fBgit\-hunk \fI<command>\fR \fB\-\-help\fR for command\-specific details.
+.TP
+.BR \-V ", " \-\-version
+Show version.
+.TP
+.BI \-\-context " n"
+Lines of diff context (default: git's \fBdiff.context\fR or 3).
+.TP
+.BI \-\-file " path"
+Restrict to hunks in a specific file.
+.TP
+.B \-\-porcelain
+Machine\-readable tab\-separated output.
+.TP
+.B \-\-no\-color
+Disable colored output.
+.SH EXAMPLES
+List all unstaged hunks:
+.PP
+.RS 4
+.nf
+$ git\-hunk list
+.fi
+.RE
+.PP
+Stage a specific hunk by hash:
+.PP
+.RS 4
+.nf
+$ git\-hunk add a3f7c21
+.fi
+.RE
+.PP
+Stage all unstaged hunks:
+.PP
+.RS 4
+.nf
+$ git\-hunk add \-\-all
+.fi
+.RE
+.PP
+List staged hunks in compact format:
+.PP
+.RS 4
+.nf
+$ git\-hunk list \-\-staged \-\-oneline
+.fi
+.RE
+.PP
+Stage only lines 3\-5 and 8 of a hunk:
+.PP
+.RS 4
+.nf
+$ git\-hunk add a3f7c21:3\-5,8
+.fi
+.RE
+.SH LINE SELECTION
+Individual lines within a hunk can be selected using the syntax
+\fI<sha>\fB:\fI<lines>\fR, where \fI<lines>\fR is a comma\-separated list of
+line numbers or ranges.
+Line numbers are 1\-based and relative to the hunk (not the file).
+.PP
+Examples:
+.TP
+.B a3f7c21:3
+Select only line 3 of the hunk.
+.TP
+.B a3f7c21:3\-5,8
+Select lines 3 through 5 and line 8.
+.TP
+.B a3f7c21:1,4\-6,10
+Select lines 1, 4 through 6, and 10.
+.SH HASH STABILITY
+Hunk hashes are deterministic: the same diff content always produces the
+same hash. Hashes remain stable across invocations as long as the
+underlying diff has not changed. This makes them suitable for use in
+scripts and automated workflows.
+.SH SEE ALSO
+.BR git\-add (1),
+.BR git\-diff (1),
+.BR git\-stash (1)
