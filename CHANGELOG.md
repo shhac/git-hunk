@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.7.0] - 2026-02-28
+
+### Added
+- `--verbose` / `-v` flag on `add`, `reset`, and `stash` commands
+- Unknown flag errors now print the offending flag name
+
+### Changed
+- Hint messages (staging hash hint, stash next-steps) only shown with `--verbose`
+
 ## [0.6.0] - 2026-02-28
 
 ### Added
