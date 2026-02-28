@@ -1018,3 +1018,118 @@ test "parseDiscardArgs bare file flag" {
     try std.testing.expectEqualStrings("src/main.zig", opts.file_filter.?);
     try std.testing.expectEqual(@as(usize, 0), opts.sha_args.items.len);
 }
+
+test "parseStashArgs valid sha" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{@constCast("abcd1234")};
+    var opts = try parseStashArgs(allocator, &args_arr);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expectEqual(@as(usize, 1), opts.sha_args.items.len);
+    try std.testing.expect(std.mem.startsWith(u8, &opts.sha_args.items[0].sha_hex, "abcd1234"));
+    try std.testing.expect(!opts.pop);
+}
+
+test "parseStashArgs missing sha" {
+    const allocator = std.testing.allocator;
+    try std.testing.expectError(error.MissingArgument, parseStashArgs(allocator, &.{}));
+}
+
+test "parseStashArgs select all" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{@constCast("--all")};
+    var opts = try parseStashArgs(allocator, &args_arr);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expect(opts.select_all);
+}
+
+test "parseStashArgs pop flag" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{@constCast("--pop")};
+    var opts = try parseStashArgs(allocator, &args_arr);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expect(opts.pop);
+}
+
+test "parseStashArgs message long flag" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("--all"), @constCast("--message"), @constCast("my stash") };
+    var opts = try parseStashArgs(allocator, &args_arr);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expectEqualStrings("my stash", opts.message.?);
+}
+
+test "parseStashArgs message short flag" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("--all"), @constCast("-m"), @constCast("my stash") };
+    var opts = try parseStashArgs(allocator, &args_arr);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expectEqualStrings("my stash", opts.message.?);
+}
+
+test "parseStashArgs message missing value" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("--all"), @constCast("--message") };
+    try std.testing.expectError(error.MissingArgument, parseStashArgs(allocator, &args_arr));
+}
+
+test "parseStashArgs file filter" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("--file"), @constCast("src/main.zig") };
+    var opts = try parseStashArgs(allocator, &args_arr);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expectEqualStrings("src/main.zig", opts.file_filter.?);
+}
+
+test "parseStashArgs porcelain" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("--all"), @constCast("--porcelain") };
+    var opts = try parseStashArgs(allocator, &args_arr);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expectEqual(OutputMode.porcelain, opts.output);
+}
+
+test "parseStashArgs no-color" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("--all"), @constCast("--no-color") };
+    var opts = try parseStashArgs(allocator, &args_arr);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expect(opts.no_color);
+}
+
+test "parseStashArgs context" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("--all"), @constCast("--context"), @constCast("2") };
+    var opts = try parseStashArgs(allocator, &args_arr);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expectEqual(@as(?u32, 2), opts.context);
+}
+
+test "parseStashArgs rejects unknown flags" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("abcd1234"), @constCast("--staged") };
+    try std.testing.expectError(error.UnknownFlag, parseStashArgs(allocator, &args_arr));
+}
+
+test "parseStashArgs rejects line specs" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{@constCast("abcd1234:3-5")};
+    try std.testing.expectError(error.InvalidArgument, parseStashArgs(allocator, &args_arr));
+}
+
+test "parseStashArgs pop rejects sha args" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("--pop"), @constCast("abcd1234") };
+    try std.testing.expectError(error.InvalidArgument, parseStashArgs(allocator, &args_arr));
+}
+
+test "parseStashArgs pop rejects --all" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("--pop"), @constCast("--all") };
+    try std.testing.expectError(error.InvalidArgument, parseStashArgs(allocator, &args_arr));
+}
+
+test "parseStashArgs pop rejects --message" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("--pop"), @constCast("-m"), @constCast("msg") };
+    try std.testing.expectError(error.InvalidArgument, parseStashArgs(allocator, &args_arr));
+}

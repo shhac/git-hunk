@@ -15,13 +15,9 @@ pass() {
 }
 
 # Create a temporary git repo for all tests.
-TMPDIR="$(mktemp -d)"
+TMPDIR="$(bash "$(dirname "$0")/setup-repo.sh")"
 trap 'rm -rf "$TMPDIR"' EXIT
 cd "$TMPDIR"
-
-git init -q
-git config user.email "test@git-hunk.test"
-git config user.name "git-hunk test"
 
 # ============================================================================
 # Test 1: porcelain list shows expected fields
@@ -608,5 +604,148 @@ VERB40="$(echo "$OUT40" | cut -f1)"
     || fail "test 40: expected 'unstaged' verb in remove porcelain, got: '$VERB40'"
 pass "test 40: remove --porcelain uses tab-separated format"
 
+# ============================================================================
+# Stash tests — setup
+# ============================================================================
+git checkout -- . 2>/dev/null || true
+git reset HEAD -q 2>/dev/null || true
+git stash clear 2>/dev/null || true
+echo "stash-alpha original" > stash_alpha.txt
+echo "stash-beta original" > stash_beta.txt
+git add stash_alpha.txt stash_beta.txt
+git commit -m "add stash test fixtures" -q
+echo "stash-alpha changed" > stash_alpha.txt
+echo "stash-beta changed" > stash_beta.txt
+
+# ============================================================================
+# Test 41: basic stash push by SHA
+# ============================================================================
+SHA41="$("$GIT_HUNK" list --porcelain --oneline --file stash_alpha.txt | head -1 | cut -f1)"
+"$GIT_HUNK" stash "$SHA41" > /dev/null
+STASH_LIST41="$(git stash list)"
+[[ -n "$STASH_LIST41" ]] || fail "test 41: expected non-empty stash list"
+ALPHA41="$(cat stash_alpha.txt)"
+[[ "$ALPHA41" == "stash-alpha original" ]] \
+    || fail "test 41: expected stash_alpha.txt reverted, got '$ALPHA41'"
+BETA41="$(cat stash_beta.txt)"
+[[ "$BETA41" == "stash-beta changed" ]] \
+    || fail "test 41: stash_beta.txt should be unchanged, got '$BETA41'"
+pass "test 41: basic stash push by SHA"
+
+# ============================================================================
+# Test 42: stash pop roundtrip
+# ============================================================================
+"$GIT_HUNK" stash --pop > /dev/null 2>/dev/null
+ALPHA42="$(cat stash_alpha.txt)"
+[[ "$ALPHA42" == "stash-alpha changed" ]] \
+    || fail "test 42: expected stash_alpha.txt restored, got '$ALPHA42'"
+STASH_LIST42="$(git stash list)"
+[[ -z "$STASH_LIST42" ]] || fail "test 42: expected empty stash list after pop"
+pass "test 42: stash pop roundtrip"
+
+# ============================================================================
+# Test 43: stash --all
+# ============================================================================
+echo "stash-alpha changed" > stash_alpha.txt
+echo "stash-beta changed" > stash_beta.txt
+"$GIT_HUNK" stash --all > /dev/null
+ALPHA43="$(cat stash_alpha.txt)"
+BETA43="$(cat stash_beta.txt)"
+[[ "$ALPHA43" == "stash-alpha original" ]] \
+    || fail "test 43: expected stash_alpha.txt reverted, got '$ALPHA43'"
+[[ "$BETA43" == "stash-beta original" ]] \
+    || fail "test 43: expected stash_beta.txt reverted, got '$BETA43'"
+git stash show > /dev/null 2>/dev/null \
+    || fail "test 43: git stash show should succeed"
+pass "test 43: stash --all"
+
+# ============================================================================
+# Test 44: stash -m custom message
+# ============================================================================
+"$GIT_HUNK" stash --pop > /dev/null 2>/dev/null
+echo "stash-alpha changed" > stash_alpha.txt
+echo "stash-beta changed" > stash_beta.txt
+"$GIT_HUNK" stash --all -m "custom stash msg" > /dev/null
+STASH_LIST44="$(git stash list)"
+echo "$STASH_LIST44" | grep -q "custom stash msg" \
+    || fail "test 44: expected 'custom stash msg' in stash list, got '$STASH_LIST44'"
+pass "test 44: stash -m custom message"
+
+# ============================================================================
+# Test 45: stash --file filter
+# ============================================================================
+"$GIT_HUNK" stash --pop > /dev/null 2>/dev/null
+echo "stash-alpha changed" > stash_alpha.txt
+echo "stash-beta changed" > stash_beta.txt
+"$GIT_HUNK" stash --file stash_alpha.txt > /dev/null
+ALPHA45="$(cat stash_alpha.txt)"
+BETA45="$(cat stash_beta.txt)"
+[[ "$ALPHA45" == "stash-alpha original" ]] \
+    || fail "test 45: expected stash_alpha.txt reverted, got '$ALPHA45'"
+[[ "$BETA45" == "stash-beta changed" ]] \
+    || fail "test 45: stash_beta.txt should be unchanged, got '$BETA45'"
+pass "test 45: stash --file filter"
+
+# ============================================================================
+# Test 46: stash preserves staged changes
+# ============================================================================
+"$GIT_HUNK" stash --pop > /dev/null 2>/dev/null
+git checkout -- . 2>/dev/null || true
+echo "stash-beta staged" > stash_beta.txt
+git add stash_beta.txt
+echo "stash-alpha changed" > stash_alpha.txt
+SHA46="$("$GIT_HUNK" list --porcelain --oneline --file stash_alpha.txt | head -1 | cut -f1)"
+"$GIT_HUNK" stash "$SHA46" > /dev/null
+STAGED46="$(git diff --cached --name-only)"
+echo "$STAGED46" | grep -q "stash_beta.txt" \
+    || fail "test 46: expected stash_beta.txt still staged, got '$STAGED46'"
+pass "test 46: stash preserves staged changes"
+
+# ============================================================================
+# Test 47: stale SHA error (exit 1)
+# ============================================================================
+if "$GIT_HUNK" stash deadbeef > /dev/null 2>/dev/null; then
+    fail "test 47: expected exit 1 for stale SHA"
+fi
+pass "test 47: stale SHA error"
+
+# ============================================================================
+# Test 48: no-changes error (exit 1)
+# ============================================================================
+git stash clear 2>/dev/null || true
+git reset HEAD -q 2>/dev/null || true
+git checkout -- . 2>/dev/null || true
+if "$GIT_HUNK" stash --all > /dev/null 2>/dev/null; then
+    fail "test 48: expected exit 1 for no unstaged changes"
+fi
+pass "test 48: no-changes error"
+
+# ============================================================================
+# Test 49: pop with no stash entries (exit 1)
+# ============================================================================
+git stash clear 2>/dev/null || true
+if "$GIT_HUNK" stash --pop > /dev/null 2>/dev/null; then
+    fail "test 49: expected exit 1 for pop with no stash"
+fi
+pass "test 49: pop with no stash entries"
+
+# ============================================================================
+# Test 50: --pop rejects conflicting flags (exit 1)
+# ============================================================================
+if "$GIT_HUNK" stash --pop --all > /dev/null 2>/dev/null; then
+    fail "test 50: expected exit 1 for --pop --all"
+fi
+pass "test 50: --pop rejects conflicting flags"
+
+# ============================================================================
+# Test 51: line spec rejection (exit 1)
+# ============================================================================
+echo "stash-alpha changed" > stash_alpha.txt
+SHA51="$("$GIT_HUNK" list --porcelain --oneline --file stash_alpha.txt | head -1 | cut -f1)"
+if "$GIT_HUNK" stash "${SHA51}:1-3" > /dev/null 2>/dev/null; then
+    fail "test 51: expected exit 1 for line spec"
+fi
+pass "test 51: line spec rejection"
+
 echo ""
-echo "ALL INTEGRATION TESTS PASSED (40 tests)"
+echo "ALL INTEGRATION TESTS PASSED (51 tests)"
