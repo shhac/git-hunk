@@ -103,6 +103,17 @@ pub const DiscardOptions = struct {
     context: ?u32 = null,
 };
 
+pub const StashOptions = struct {
+    sha_args: std.ArrayList(ShaArg),
+    file_filter: ?[]const u8 = null,
+    select_all: bool = false,
+    pop: bool = false,
+    message: ?[]const u8 = null,
+    output: OutputMode = .human,
+    no_color: bool = false,
+    context: ?u32 = null,
+};
+
 pub fn fatal(comptime format: []const u8, args: anytype) noreturn {
     std.debug.print("error: " ++ format ++ "\n", args);
     std.process.exit(1);

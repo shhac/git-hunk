@@ -10,6 +10,7 @@ comptime {
     _ = @import("format.zig");
     _ = @import("git.zig");
     _ = @import("patch.zig");
+    _ = @import("stash.zig");
 }
 
 const fatal = types.fatal;
@@ -94,6 +95,14 @@ fn run() !void {
         };
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
         try commands.cmdShow(allocator, stdout, opts);
+    } else if (std.mem.eql(u8, subcmd, "stash")) {
+        var opts = args_mod.parseStashArgs(allocator, process_args[2..]) catch {
+            try printUsage(stdout);
+            try stdout.flush();
+            std.process.exit(1);
+        };
+        defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
+        try commands.cmdStash(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "--version") or std.mem.eql(u8, subcmd, "-V")) {
         try stdout.print("git-hunk {s}\n", .{build_options.version});
     } else if (std.mem.eql(u8, subcmd, "--help") or std.mem.eql(u8, subcmd, "-h") or std.mem.eql(u8, subcmd, "help")) {
@@ -128,6 +137,8 @@ fn printUsage(stdout: *std.Io.Writer) !void {
         \\                                                Count diff hunks
         \\  check [--staged] [--exclusive] [--file <path>] [--porcelain] [--no-color] [--context <n>] <sha>...
         \\                                                Validate hunk hashes exist
+        \\  stash [--all] [--file <path>] [-m <msg>] [--pop] [--porcelain] [--no-color] [--context <n>] [<sha>...]
+        \\                                                Stash hunks, remove from worktree
         \\
         \\options:
         \\  --context <n>  Lines of diff context (default: git's diff.context or 3)

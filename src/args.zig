@@ -13,6 +13,7 @@ const ShowOptions = types.ShowOptions;
 const CountOptions = types.CountOptions;
 const CheckOptions = types.CheckOptions;
 const DiscardOptions = types.DiscardOptions;
+const StashOptions = types.StashOptions;
 
 pub fn parseListArgs(args: []const [:0]u8) !ListOptions {
     var opts: ListOptions = .{};
@@ -229,6 +230,75 @@ pub fn parseDiscardArgs(allocator: Allocator, args: []const [:0]u8) !DiscardOpti
 
     if (opts.sha_args.items.len == 0 and !opts.select_all and opts.file_filter == null) {
         std.debug.print("error: at least one <sha> argument required (or use --all or --file <path>)\n", .{});
+        return error.MissingArgument;
+    }
+
+    return opts;
+}
+
+pub fn parseStashArgs(allocator: Allocator, args: []const [:0]u8) !StashOptions {
+    var opts: StashOptions = .{
+        .sha_args = .empty,
+    };
+    errdefer deinitShaArgs(allocator, &opts.sha_args);
+
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        const arg = args[i];
+        if (std.mem.eql(u8, arg, "--file")) {
+            i += 1;
+            if (i >= args.len) return error.MissingArgument;
+            opts.file_filter = args[i];
+        } else if (std.mem.eql(u8, arg, "--all")) {
+            opts.select_all = true;
+        } else if (std.mem.eql(u8, arg, "--pop")) {
+            opts.pop = true;
+        } else if (std.mem.eql(u8, arg, "--message") or std.mem.eql(u8, arg, "-m")) {
+            i += 1;
+            if (i >= args.len) return error.MissingArgument;
+            opts.message = args[i];
+        } else if (std.mem.eql(u8, arg, "--porcelain")) {
+            opts.output = .porcelain;
+        } else if (std.mem.eql(u8, arg, "--no-color")) {
+            opts.no_color = true;
+        } else if (std.mem.eql(u8, arg, "--context")) {
+            i += 1;
+            if (i >= args.len) return error.MissingArgument;
+            opts.context = std.fmt.parseInt(u32, args[i], 10) catch return error.InvalidArgument;
+        } else if (std.mem.startsWith(u8, arg, "-")) {
+            return error.UnknownFlag;
+        } else {
+            const sha_arg = parseShaArg(allocator, arg) catch return error.InvalidArgument;
+            if (sha_arg.line_spec) |ls| {
+                allocator.free(ls.ranges);
+                std.debug.print("error: line specs not supported for stash\n", .{});
+                return error.InvalidArgument;
+            }
+            try opts.sha_args.append(allocator, sha_arg);
+        }
+    }
+
+    if (opts.pop) {
+        if (opts.sha_args.items.len > 0) {
+            std.debug.print("error: --pop cannot be combined with sha arguments\n", .{});
+            return error.InvalidArgument;
+        }
+        if (opts.select_all) {
+            std.debug.print("error: --pop cannot be combined with --all\n", .{});
+            return error.InvalidArgument;
+        }
+        if (opts.file_filter != null) {
+            std.debug.print("error: --pop cannot be combined with --file\n", .{});
+            return error.InvalidArgument;
+        }
+        if (opts.message != null) {
+            std.debug.print("error: --pop cannot be combined with --message\n", .{});
+            return error.InvalidArgument;
+        }
+    }
+
+    if (!opts.pop and opts.sha_args.items.len == 0 and !opts.select_all and opts.file_filter == null) {
+        std.debug.print("error: at least one <sha> argument required (or use --all, --file <path>, or --pop)\n", .{});
         return error.MissingArgument;
     }
 
