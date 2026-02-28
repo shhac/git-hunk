@@ -3,12 +3,14 @@ const build_options = @import("build_options");
 const types = @import("types.zig");
 const args_mod = @import("args.zig");
 const commands = @import("commands.zig");
+const help = @import("help.zig");
 
 // Import modules to ensure their tests are discovered by `zig build test`
 comptime {
     _ = @import("diff.zig");
     _ = @import("format.zig");
     _ = @import("git.zig");
+    _ = @import("help.zig");
     _ = @import("patch.zig");
     _ = @import("stash.zig");
 }
