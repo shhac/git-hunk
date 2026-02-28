@@ -173,31 +173,36 @@ fn printUsage(stdout: *std.Io.Writer) !void {
     try stdout.print("git-hunk {s}\n", .{build_options.version});
     try stdout.print(
         \\
-        \\usage: git-hunk <command> [<args>]
+        \\usage: git-hunk <command> [options] [args]
         \\
         \\commands:
-        \\  list [--staged] [--file <path>] [--porcelain] [--oneline] [--no-color] [--context <n>]
-        \\                                                List diff hunks
-        \\  show <sha[:lines]>... [--staged] [--file <path>] [--porcelain] [--no-color] [--context <n>]
-        \\                                                Show diff content of hunks
-        \\  add [--all] [--file <path>] [--porcelain] [--no-color] [--context <n>] [<sha[:lines]>...]
-        \\                                                Stage hunks (or selected lines)
-        \\  remove [--all] [--file <path>] [--porcelain] [--no-color] [--context <n>] [<sha[:lines]>...]
-        \\                                                Unstage hunks (or selected lines)
-        \\  discard [--all] [--file <path>] [--dry-run] [--porcelain] [--no-color] [--context <n>] [<sha[:lines]>...]
-        \\                                                Discard unstaged worktree changes
-        \\  count [--staged] [--file <path>] [--context <n>]
-        \\                                                Count diff hunks
-        \\  check [--staged] [--exclusive] [--file <path>] [--porcelain] [--no-color] [--context <n>] <sha>...
-        \\                                                Validate hunk hashes exist
-        \\  stash [--all] [--file <path>] [-m <msg>] [--pop] [--porcelain] [--no-color] [--context <n>] [<sha>...]
-        \\                                                Stash hunks, remove from worktree
+        \\  list      List diff hunks with content hashes
+        \\  show      Show diff content of specific hunks
+        \\  add       Stage hunks (or selected lines) by hash
+        \\  remove    Unstage hunks (or selected lines) by hash
+        \\  discard   Discard unstaged worktree changes by hash
+        \\  count     Count diff hunks (bare integer output)
+        \\  check     Validate hunk hashes exist in current diff
+        \\  stash     Stash hunks into git stash, remove from worktree
         \\
-        \\options:
-        \\  --context <n>  Lines of diff context (default: git's diff.context or 3)
+        \\common options:
+        \\  --context <n>     Lines of diff context (default: git's diff.context or 3)
+        \\  --file <path>     Restrict to hunks in a specific file
+        \\  --porcelain       Machine-readable tab-separated output
+        \\  --no-color        Disable colored output
+        \\  --help, -h        Show help for a command
         \\
-        \\line selection:
-        \\  <sha>:3-5,8    Stage only specific lines from a hunk (1-based, hunk-relative)
+        \\examples:
+        \\  git-hunk list                       List unstaged hunks
+        \\  git-hunk add a3f7c21                Stage a hunk by hash
+        \\  git-hunk add a3f7:3-5,8             Stage specific lines from a hunk
+        \\  git-hunk add --all                  Stage all unstaged hunks
+        \\  git-hunk list --staged --oneline    Verify what's staged
+        \\
+        \\Run 'git-hunk <command> --help' for detailed usage of each command.
+        \\
+        \\note: 'git hunk --help' opens the man page. Use 'git hunk help [command]'
+        \\for inline help when using the git subcommand form.
         \\
     , .{});
 }
