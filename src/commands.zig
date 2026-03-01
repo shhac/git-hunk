@@ -19,7 +19,7 @@ const AddResetOptions = types.AddResetOptions;
 const ShowOptions = types.ShowOptions;
 const CountOptions = types.CountOptions;
 const CheckOptions = types.CheckOptions;
-const DiscardOptions = types.DiscardOptions;
+const RestoreOptions = types.RestoreOptions;
 const StashOptions = types.StashOptions;
 const rangesOverlap = types.rangesOverlap;
 
@@ -780,8 +780,8 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
     }
 }
 
-pub fn cmdDiscard(allocator: Allocator, stdout: *std.Io.Writer, opts: DiscardOptions) !void {
-    // Discard always operates on unstaged hunks (worktree vs index)
+pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOptions) !void {
+    // Restore always operates on unstaged hunks (worktree vs index)
     var arena_state = std.heap.ArenaAllocator.init(allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -822,7 +822,7 @@ pub fn cmdDiscard(allocator: Allocator, stdout: *std.Io.Writer, opts: DiscardOpt
         std.process.exit(1);
     }
 
-    // Gate: untracked files require --force (discarding deletes them permanently)
+    // Gate: untracked files require --force (restoring deletes them permanently)
     // Dry-run bypasses the gate — safe to preview without --force
     if (!opts.force and !opts.dry_run) {
         for (matched.items) |m| {
@@ -843,8 +843,8 @@ pub fn cmdDiscard(allocator: Allocator, stdout: *std.Io.Writer, opts: DiscardOpt
     // Output
     const use_color = format.shouldUseColor(opts.output, opts.no_color);
 
-    const verb: []const u8 = if (opts.dry_run) "would discard" else "discarded";
-    const porcelain_verb: []const u8 = if (opts.dry_run) "would-discard" else "discarded";
+    const verb: []const u8 = if (opts.dry_run) "would restore" else "restored";
+    const porcelain_verb: []const u8 = if (opts.dry_run) "would-restore" else "restored";
 
     var count: usize = 0;
     for (matched.items) |m| {
@@ -876,15 +876,15 @@ pub fn cmdDiscard(allocator: Allocator, stdout: *std.Io.Writer, opts: DiscardOpt
     if (opts.output == .human) {
         if (opts.dry_run) {
             if (count == 1) {
-                std.debug.print("1 hunk would be discarded\n", .{});
+                std.debug.print("1 hunk would be restored\n", .{});
             } else {
-                std.debug.print("{d} hunks would be discarded\n", .{count});
+                std.debug.print("{d} hunks would be restored\n", .{count});
             }
         } else {
             if (count == 1) {
-                std.debug.print("1 hunk discarded\n", .{});
+                std.debug.print("1 hunk restored\n", .{});
             } else {
-                std.debug.print("{d} hunks discarded\n", .{count});
+                std.debug.print("{d} hunks restored\n", .{count});
             }
         }
     }

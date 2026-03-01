@@ -5,7 +5,7 @@ pub const Command = enum {
     show,
     add,
     reset,
-    discard,
+    restore,
     count,
     check,
     stash,
@@ -17,7 +17,7 @@ pub fn commandFromString(s: []const u8) ?Command {
         .{ "show", .show },
         .{ "add", .add },
         .{ "reset", .reset },
-        .{ "discard", .discard },
+        .{ "restore", .restore },
         .{ "count", .count },
         .{ "check", .check },
         .{ "stash", .stash },
@@ -31,7 +31,7 @@ pub fn printCommandHelp(stdout: *std.Io.Writer, cmd: Command) !void {
         .show => show_help,
         .add => add_help,
         .reset => reset_help,
-        .discard => discard_help,
+        .restore => restore_help,
         .count => count_help,
         .check => check_help,
         .stash => stash_help,
@@ -152,21 +152,21 @@ const reset_help: []const u8 =
     \\
 ;
 
-const discard_help: []const u8 =
-    \\git-hunk discard - Discard unstaged worktree changes by hash
+const restore_help: []const u8 =
+    \\git-hunk restore - Restore unstaged worktree changes by hash
     \\
     \\USAGE
-    \\  git-hunk discard [options] [<sha[:lines]>...]
+    \\  git-hunk restore [options] [<sha[:lines]>...]
     \\
     \\ARGUMENTS
-    \\  <sha[:lines]>...  Hunk hashes to discard (prefix match, min 4 hex chars).
+    \\  <sha[:lines]>...  Hunk hashes to restore (prefix match, min 4 hex chars).
     \\                    Append :lines for specific lines. Optional when --all or --file is used.
     \\
     \\OPTIONS
-    \\  --all             Discard all unstaged hunks (DESTRUCTIVE)
-    \\  --file <path>     Discard all hunks in the given file
-    \\  --force           Required to discard untracked files (deletes them permanently)
-    \\  --dry-run         Show what would be discarded without making changes
+    \\  --all             Restore all unstaged hunks (DESTRUCTIVE)
+    \\  --file <path>     Restore all hunks in the given file
+    \\  --force           Required to restore untracked files (deletes them permanently)
+    \\  --dry-run         Show what would be restored without making changes
     \\  --porcelain       Machine-readable output
     \\  --no-color        Disable colored output
     \\  --tracked-only    Only include hunks from tracked files
@@ -174,16 +174,16 @@ const discard_help: []const u8 =
     \\  -U, --unified <n> Lines of diff context (default: git's diff.context or 3)
     \\  --help, -h        Show this help
     \\
-    \\  WARNING: This command is DESTRUCTIVE. Discarded changes cannot be recovered.
-    \\  Untracked files require --force to discard (they will be deleted entirely).
-    \\  Use --dry-run to preview before discarding.
+    \\  WARNING: This command is DESTRUCTIVE. Restored changes cannot be recovered.
+    \\  Untracked files require --force to restore (they will be deleted entirely).
+    \\  Use --dry-run to preview before restoring.
     \\
     \\EXAMPLES
-    \\  git-hunk discard a3f7c21               Discard a single hunk
-    \\  git-hunk discard --all                 Discard all unstaged changes
-    \\  git-hunk discard --dry-run a3f7c21     Preview what would be discarded
-    \\  git-hunk discard a3f7:3-5              Discard specific lines from a hunk
-    \\  git-hunk discard --force a3f7c21       Discard an untracked file (deletes it)
+    \\  git-hunk restore a3f7c21               Restore a single hunk
+    \\  git-hunk restore --all                 Restore all unstaged changes
+    \\  git-hunk restore --dry-run a3f7c21     Preview what would be restored
+    \\  git-hunk restore a3f7:3-5              Restore specific lines from a hunk
+    \\  git-hunk restore --force a3f7c21       Restore an untracked file (deletes it)
     \\
 ;
 

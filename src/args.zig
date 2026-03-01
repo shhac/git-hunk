@@ -13,7 +13,7 @@ const AddResetOptions = types.AddResetOptions;
 const ShowOptions = types.ShowOptions;
 const CountOptions = types.CountOptions;
 const CheckOptions = types.CheckOptions;
-const DiscardOptions = types.DiscardOptions;
+const RestoreOptions = types.RestoreOptions;
 const StashOptions = types.StashOptions;
 
 const CommonFlags = struct {
@@ -225,8 +225,8 @@ pub fn parseCheckArgs(allocator: Allocator, args: []const [:0]u8) !CheckOptions 
     return opts;
 }
 
-pub fn parseDiscardArgs(allocator: Allocator, args: []const [:0]u8) !DiscardOptions {
-    var opts: DiscardOptions = .{
+pub fn parseRestoreArgs(allocator: Allocator, args: []const [:0]u8) !RestoreOptions {
+    var opts: RestoreOptions = .{
         .sha_args = .empty,
     };
     errdefer deinitShaArgs(allocator, &opts.sha_args);
@@ -957,76 +957,76 @@ test "isHexDigit non-hex" {
     try std.testing.expect(!isHexDigit('-'));
 }
 
-test "parseDiscardArgs valid sha" {
+test "parseRestoreArgs valid sha" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]u8{@constCast("abcd1234")};
-    var opts = try parseDiscardArgs(allocator, &args_arr);
+    var opts = try parseRestoreArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expectEqual(@as(usize, 1), opts.sha_args.items.len);
     try std.testing.expectEqualStrings("abcd1234", opts.sha_args.items[0].prefix);
     try std.testing.expect(!opts.dry_run);
 }
 
-test "parseDiscardArgs missing sha" {
+test "parseRestoreArgs missing sha" {
     const allocator = std.testing.allocator;
-    try std.testing.expectError(error.MissingArgument, parseDiscardArgs(allocator, &.{}));
+    try std.testing.expectError(error.MissingArgument, parseRestoreArgs(allocator, &.{}));
 }
 
-test "parseDiscardArgs select all" {
+test "parseRestoreArgs select all" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]u8{@constCast("--all")};
-    var opts = try parseDiscardArgs(allocator, &args_arr);
+    var opts = try parseRestoreArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expect(opts.select_all);
 }
 
-test "parseDiscardArgs dry-run" {
+test "parseRestoreArgs dry-run" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]u8{ @constCast("--all"), @constCast("--dry-run") };
-    var opts = try parseDiscardArgs(allocator, &args_arr);
+    var opts = try parseRestoreArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expect(opts.dry_run);
 }
 
-test "parseDiscardArgs file filter" {
+test "parseRestoreArgs file filter" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]u8{ @constCast("abcd1234"), @constCast("--file"), @constCast("src/main.zig") };
-    var opts = try parseDiscardArgs(allocator, &args_arr);
+    var opts = try parseRestoreArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expectEqualStrings("src/main.zig", opts.file_filter.?);
 }
 
-test "parseDiscardArgs porcelain" {
+test "parseRestoreArgs porcelain" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]u8{ @constCast("--all"), @constCast("--porcelain") };
-    var opts = try parseDiscardArgs(allocator, &args_arr);
+    var opts = try parseRestoreArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expectEqual(OutputMode.porcelain, opts.output);
 }
 
-test "parseDiscardArgs no-color" {
+test "parseRestoreArgs no-color" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]u8{ @constCast("--all"), @constCast("--no-color") };
-    var opts = try parseDiscardArgs(allocator, &args_arr);
+    var opts = try parseRestoreArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expect(opts.no_color);
 }
 
-test "parseDiscardArgs context" {
+test "parseRestoreArgs context" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]u8{ @constCast("--all"), @constCast("--unified"), @constCast("2") };
-    var opts = try parseDiscardArgs(allocator, &args_arr);
+    var opts = try parseRestoreArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expectEqual(@as(?u32, 2), opts.context);
 }
 
-test "parseDiscardArgs rejects unknown flags" {
+test "parseRestoreArgs rejects unknown flags" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]u8{ @constCast("abcd1234"), @constCast("--staged") };
-    try std.testing.expectError(error.UnknownFlag, parseDiscardArgs(allocator, &args_arr));
+    try std.testing.expectError(error.UnknownFlag, parseRestoreArgs(allocator, &args_arr));
 }
 
-test "parseDiscardArgs all flags combined" {
+test "parseRestoreArgs all flags combined" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]u8{
         @constCast("abcd1234"),
@@ -1039,7 +1039,7 @@ test "parseDiscardArgs all flags combined" {
         @constCast("--unified"),
         @constCast("1"),
     };
-    var opts = try parseDiscardArgs(allocator, &args_arr);
+    var opts = try parseRestoreArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expect(opts.select_all);
     try std.testing.expect(opts.dry_run);
@@ -1049,10 +1049,10 @@ test "parseDiscardArgs all flags combined" {
     try std.testing.expectEqual(@as(?u32, 1), opts.context);
 }
 
-test "parseDiscardArgs bare file flag" {
+test "parseRestoreArgs bare file flag" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]u8{ @constCast("--file"), @constCast("src/main.zig") };
-    var opts = try parseDiscardArgs(allocator, &args_arr);
+    var opts = try parseRestoreArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expectEqualStrings("src/main.zig", opts.file_filter.?);
     try std.testing.expectEqual(@as(usize, 0), opts.sha_args.items.len);

@@ -66,11 +66,11 @@ fn run() !void {
             handleParseError(stdout, err, .check);
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
         try commands.cmdCheck(allocator, stdout, opts);
-    } else if (std.mem.eql(u8, subcmd, "discard")) {
-        var opts = args_mod.parseDiscardArgs(allocator, process_args[2..]) catch |err|
-            handleParseError(stdout, err, .discard);
+    } else if (std.mem.eql(u8, subcmd, "restore")) {
+        var opts = args_mod.parseRestoreArgs(allocator, process_args[2..]) catch |err|
+            handleParseError(stdout, err, .restore);
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
-        try commands.cmdDiscard(allocator, stdout, opts);
+        try commands.cmdRestore(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "show")) {
         var opts = args_mod.parseShowArgs(allocator, process_args[2..]) catch |err|
             handleParseError(stdout, err, .show);
@@ -131,7 +131,7 @@ fn printUsage(stdout: *std.Io.Writer) !void {
         \\  show      Show diff content of specific hunks
         \\  add       Stage hunks (or selected lines) by hash
         \\  reset     Unstage hunks (or selected lines) by hash
-        \\  discard   Discard unstaged worktree changes by hash
+        \\  restore   Restore unstaged worktree changes by hash
         \\  count     Count diff hunks (bare integer output)
         \\  check     Validate hunk hashes exist in current diff
         \\  stash     Stash hunks into git stash, remove from worktree

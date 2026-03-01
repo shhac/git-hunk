@@ -44,7 +44,7 @@ pass "test 603: help <unknown> exits 1"
 # ============================================================================
 # Test 604: all commands support --help
 # ============================================================================
-for CMD in list show add reset discard count check stash; do
+for CMD in list show add reset restore count check stash; do
     OUT604="$("$GIT_HUNK" "$CMD" --help)"
     echo "$OUT604" | grep -q "USAGE" \
         || fail "test 604: $CMD --help should contain 'USAGE'"
