@@ -83,8 +83,7 @@ pub fn cmdList(allocator: Allocator, stdout: *std.Io.Writer, opts: ListOptions) 
     if (hunks.items.len == 0) return;
 
     // Compute display parameters for human mode
-    const use_color = opts.output == .human and !opts.no_color and
-        std.fs.File.stdout().isTty() and posix.getenv("NO_COLOR") == null;
+    const use_color = format.shouldUseColor(opts.output, opts.no_color);
     const term_width = if (use_color or opts.output == .human) format.getTerminalWidth() else 80;
 
     // Pre-pass: find max file path length for dynamic column width (human mode only)
@@ -169,8 +168,7 @@ pub fn cmdCheck(allocator: Allocator, stdout: *std.Io.Writer, opts: CheckOptions
     defer allocator.free(diffs.tracked);
     defer allocator.free(diffs.untracked);
 
-    const use_color = opts.output == .human and !opts.no_color and
-        std.fs.File.stdout().isTty() and posix.getenv("NO_COLOR") == null;
+    const use_color = format.shouldUseColor(opts.output, opts.no_color);
 
     // Deduplicate input SHA prefixes
     var unique_prefixes: std.ArrayList([]const u8) = .empty;
@@ -734,8 +732,7 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
     const result_groups = try buildResultGroups(arena, matched.items, old_target_hunks.items, new_hunks.items);
 
     // Report what was applied
-    const use_color = opts.output == .human and !opts.no_color and
-        std.fs.File.stdout().isTty() and posix.getenv("NO_COLOR") == null;
+    const use_color = format.shouldUseColor(opts.output, opts.no_color);
     const verb: []const u8 = switch (action) {
         .stage => "staged",
         .unstage => "unstaged",
@@ -863,8 +860,7 @@ pub fn cmdDiscard(allocator: Allocator, stdout: *std.Io.Writer, opts: DiscardOpt
     try git.runGitApply(allocator, patch, true, .worktree, opts.dry_run);
 
     // Output
-    const use_color = opts.output == .human and !opts.no_color and
-        std.fs.File.stdout().isTty() and posix.getenv("NO_COLOR") == null;
+    const use_color = format.shouldUseColor(opts.output, opts.no_color);
 
     const verb: []const u8 = if (opts.dry_run) "would discard" else "discarded";
     const porcelain_verb: []const u8 = if (opts.dry_run) "would-discard" else "discarded";
@@ -973,8 +969,7 @@ pub fn cmdShow(allocator: Allocator, stdout: *std.Io.Writer, opts: ShowOptions) 
         }
     }
 
-    const use_color = opts.output == .human and !opts.no_color and
-        std.fs.File.stdout().isTty() and posix.getenv("NO_COLOR") == null;
+    const use_color = format.shouldUseColor(opts.output, opts.no_color);
 
     // Print each matched hunk
     for (matched.items) |m| {
@@ -1286,8 +1281,7 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
     }
 
     // Output per-hunk results
-    const use_color = opts.output == .human and !opts.no_color and
-        std.fs.File.stdout().isTty() and posix.getenv("NO_COLOR") == null;
+    const use_color = format.shouldUseColor(opts.output, opts.no_color);
 
     var count: usize = 0;
     for (matched.items) |m| {

@@ -6,6 +6,13 @@ const Hunk = types.Hunk;
 const DiffMode = types.DiffMode;
 const LineSpec = types.LineSpec;
 
+/// Returns true if colored output should be used: human mode, no --no-color flag,
+/// stdout is a TTY, and NO_COLOR env var is unset.
+pub fn shouldUseColor(output: types.OutputMode, no_color: bool) bool {
+    return output == .human and !no_color and
+        std.fs.File.stdout().isTty() and posix.getenv("NO_COLOR") == null;
+}
+
 // ANSI color escape codes — only used in human mode when stdout is a TTY
 pub const COLOR_RESET = "\x1b[0m";
 pub const COLOR_YELLOW = "\x1b[33m"; // SHA hash
