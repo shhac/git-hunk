@@ -91,6 +91,55 @@ pub fn parseDiff(arena: Allocator, diff: []const u8, mode: DiffMode, hunks: *std
 
         if (is_binary or is_submodule) continue;
 
+        // Check for empty files: new/deleted files without ---/+++ lines
+        const peeked = cursor.peek();
+        const has_minus_plus = peeked != null and std.mem.startsWith(u8, peeked.?, "--- ");
+        if (!has_minus_plus and (is_new_file or is_deleted_file)) {
+            // Empty file: no ---/+++ lines, no @@ hunks.
+            // Extract path from diff --git line and synthesize a hunk.
+            const file_path = (try extractPathFromDiffGitLine(arena, diff_git_line)) orelse continue;
+
+            // Build patch header with synthesized ---/+++ lines
+            var ph: std.ArrayList(u8) = .empty;
+            try ph.appendSlice(arena, diff_git_line);
+            try ph.append(arena, '\n');
+            if (is_new_file) {
+                try ph.appendSlice(arena, "new file mode ");
+            } else {
+                try ph.appendSlice(arena, "deleted file mode ");
+            }
+            try ph.appendSlice(arena, file_mode);
+            try ph.append(arena, '\n');
+            if (is_deleted_file) {
+                try ph.appendSlice(arena, "--- a/");
+                try ph.appendSlice(arena, file_path);
+                try ph.append(arena, '\n');
+                try ph.appendSlice(arena, "+++ /dev/null\n");
+            } else {
+                try ph.appendSlice(arena, "--- /dev/null\n+++ b/");
+                try ph.appendSlice(arena, file_path);
+                try ph.append(arena, '\n');
+            }
+
+            const sha = computeHunkSha(file_path, 0, "");
+            try hunks.append(arena, .{
+                .file_path = file_path,
+                .old_start = 0,
+                .old_count = 0,
+                .new_start = 0,
+                .new_count = 0,
+                .context = "",
+                .raw_lines = "",
+                .diff_lines = "",
+                .sha_hex = sha,
+                .is_new_file = is_new_file,
+                .is_deleted_file = is_deleted_file,
+                .is_untracked = false,
+                .patch_header = ph.items,
+            });
+            continue;
+        }
+
         // Expect ---/+++ lines
         const minus_line = cursor.peek() orelse continue;
         if (!std.mem.startsWith(u8, minus_line, "--- ")) continue;
@@ -394,6 +443,46 @@ fn cUnescape(arena: Allocator, input: []const u8) ![]const u8 {
         i += 1;
     }
     return result.items;
+}
+
+/// Extract file path from a "diff --git a/PATH b/PATH" line.
+/// For non-renames, both paths are identical, so we split at the midpoint.
+/// Handles both unquoted and C-quoted paths.
+/// Returns null if the format is unrecognized.
+fn extractPathFromDiffGitLine(arena: Allocator, line: []const u8) !?[]const u8 {
+    const prefix = "diff --git ";
+    if (!std.mem.startsWith(u8, line, prefix)) return null;
+    const rest = line[prefix.len..];
+
+    // Quoted paths: "a/PATH" "b/PATH"
+    if (rest.len > 0 and rest[0] == '"') {
+        // Find closing quote of first path
+        const close1 = std.mem.indexOfScalarPos(u8, rest, 1, '"') orelse return null;
+        // Expect ' "b/' after first quoted path
+        if (close1 + 1 >= rest.len or rest[close1 + 1] != ' ') return null;
+        // Extract from second quoted path: "b/..."
+        if (close1 + 2 >= rest.len or rest[close1 + 2] != '"') return null;
+        const second_start = close1 + 3; // skip '"b' → start after 'b'
+        if (second_start >= rest.len or rest[second_start] != 'b') return null;
+        if (second_start + 1 >= rest.len or rest[second_start + 1] != '/') return null;
+        const path_start = second_start + 2; // skip 'b/'
+        var path_end = rest.len;
+        if (path_end > 0 and rest[path_end - 1] == '"') path_end -= 1;
+        if (path_start > path_end) return null;
+        return try cUnescape(arena, rest[path_start..path_end]);
+    }
+
+    // Unquoted paths: a/PATH b/PATH
+    // Both paths are identical (non-rename), so total is "a/" + PATH + " b/" + PATH
+    // Length: 2 + len + 3 + len = 5 + 2*len → len = (rest.len - 5) / 2
+    if (rest.len < 5) return null;
+    if ((rest.len - 5) % 2 != 0) return null; // must be odd total for symmetric split
+    const path_len = (rest.len - 5) / 2;
+    // Verify structure: starts with "a/", has " b/" at midpoint
+    if (!std.mem.startsWith(u8, rest, "a/")) return null;
+    const mid = 2 + path_len; // position of space before "b/"
+    if (rest[mid] != ' ' or rest[mid + 1] != 'b' or rest[mid + 2] != '/') return null;
+    return rest[2..mid];
 }
 
 /// Extract file path from a ---/+++ diff line, handling both normal and C-quoted paths.
@@ -907,4 +996,118 @@ test "parseDiff staged mode produces different sha" {
         &hunks_unstaged.items[0].sha_hex,
         &hunks_staged.items[0].sha_hex,
     ));
+}
+
+test "parseDiff empty new file" {
+    const diff =
+        \\diff --git a/empty.txt b/empty.txt
+        \\new file mode 100644
+        \\index 0000000..e69de29
+    ;
+
+    const allocator = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var hunks: std.ArrayList(Hunk) = .empty;
+    defer hunks.deinit(arena);
+
+    try parseDiff(arena, diff, .unstaged, &hunks);
+
+    try std.testing.expectEqual(@as(usize, 1), hunks.items.len);
+    try std.testing.expectEqualStrings("empty.txt", hunks.items[0].file_path);
+    try std.testing.expect(hunks.items[0].is_new_file);
+    try std.testing.expectEqualStrings("", hunks.items[0].raw_lines);
+    try std.testing.expectEqualStrings("", hunks.items[0].diff_lines);
+    try std.testing.expect(std.mem.indexOf(u8, hunks.items[0].patch_header, "new file mode") != null);
+    try std.testing.expect(std.mem.indexOf(u8, hunks.items[0].patch_header, "--- /dev/null") != null);
+    try std.testing.expect(std.mem.indexOf(u8, hunks.items[0].patch_header, "+++ b/empty.txt") != null);
+}
+
+test "parseDiff empty deleted file" {
+    const diff =
+        \\diff --git a/empty.txt b/empty.txt
+        \\deleted file mode 100644
+        \\index e69de29..0000000
+    ;
+
+    const allocator = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var hunks: std.ArrayList(Hunk) = .empty;
+    defer hunks.deinit(arena);
+
+    try parseDiff(arena, diff, .staged, &hunks);
+
+    try std.testing.expectEqual(@as(usize, 1), hunks.items.len);
+    try std.testing.expectEqualStrings("empty.txt", hunks.items[0].file_path);
+    try std.testing.expect(hunks.items[0].is_deleted_file);
+    try std.testing.expect(std.mem.indexOf(u8, hunks.items[0].patch_header, "deleted file mode") != null);
+    try std.testing.expect(std.mem.indexOf(u8, hunks.items[0].patch_header, "--- a/empty.txt") != null);
+    try std.testing.expect(std.mem.indexOf(u8, hunks.items[0].patch_header, "+++ /dev/null") != null);
+}
+
+test "parseDiff empty file among non-empty files" {
+    const diff =
+        \\diff --git a/a.txt b/a.txt
+        \\index 1234567..abcdefg 100644
+        \\--- a/a.txt
+        \\+++ b/a.txt
+        \\@@ -1,3 +1,4 @@
+        \\ line 1
+        \\+new line
+        \\ line 2
+        \\ line 3
+        \\diff --git a/empty.txt b/empty.txt
+        \\new file mode 100644
+        \\index 0000000..e69de29
+        \\diff --git a/b.txt b/b.txt
+        \\index 2345678..bcdefga 100644
+        \\--- a/b.txt
+        \\+++ b/b.txt
+        \\@@ -1,2 +1,2 @@
+        \\-old
+        \\+new
+        \\ kept
+    ;
+
+    const allocator = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var hunks: std.ArrayList(Hunk) = .empty;
+    defer hunks.deinit(arena);
+
+    try parseDiff(arena, diff, .unstaged, &hunks);
+
+    try std.testing.expectEqual(@as(usize, 3), hunks.items.len);
+    try std.testing.expectEqualStrings("a.txt", hunks.items[0].file_path);
+    try std.testing.expectEqualStrings("empty.txt", hunks.items[1].file_path);
+    try std.testing.expect(hunks.items[1].is_new_file);
+    try std.testing.expectEqualStrings("b.txt", hunks.items[2].file_path);
+}
+
+test "extractPathFromDiffGitLine unquoted" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try extractPathFromDiffGitLine(arena.allocator(), "diff --git a/foo.txt b/foo.txt");
+    try std.testing.expectEqualStrings("foo.txt", result.?);
+}
+
+test "extractPathFromDiffGitLine nested path" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try extractPathFromDiffGitLine(arena.allocator(), "diff --git a/src/main.zig b/src/main.zig");
+    try std.testing.expectEqualStrings("src/main.zig", result.?);
+}
+
+test "extractPathFromDiffGitLine quoted path" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try extractPathFromDiffGitLine(arena.allocator(), "diff --git \"a/path with spaces.txt\" \"b/path with spaces.txt\"");
+    try std.testing.expectEqualStrings("path with spaces.txt", result.?);
 }
