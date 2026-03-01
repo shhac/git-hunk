@@ -1,11 +1,12 @@
 # Changelog
 
-## [0.8.2] - 2026-03-01
+## [0.8.3] - 2026-03-01
 
 ### Fixed
 - Cross-platform test compatibility: replace BSD-only `sed -i ''` with portable `sed -i.bak`
 - Handle empty file diffs on Linux where git includes `---`/`+++` lines without `@@` hunks
 - Fix default branch name assumption in merge conflict test (`git init -b main`)
+- Use ANSI-C quoting for tab in grep pattern (GNU grep compatibility)
 
 ## [0.8.0] - 2026-03-01
 
