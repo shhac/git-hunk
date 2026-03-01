@@ -5,8 +5,8 @@ source "$(dirname "$0")/harness.sh" "$1"
 # Test 300: check with valid hashes exits 0 (silent success)
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
-sed -i '' '1s/.*/Changed beta./' beta.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed beta./' beta.txt
 
 SHAS300="$("$GIT_HUNK" list --porcelain --oneline)"
 SHA300A="$(echo "$SHAS300" | grep "alpha.txt" | head -1 | cut -f1)"
@@ -30,7 +30,7 @@ pass "test 301: check with stale hash exits 1"
 # Test 302: check --exclusive with exact set exits 0
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
 ALL_ALPHA="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | cut -f1)"
 [[ -n "$ALL_ALPHA" ]] || fail "test 302: no alpha.txt hunks found"
@@ -42,8 +42,8 @@ pass "test 302: check --exclusive with exact set exits 0"
 # Test 303: check --exclusive with extra hunks exits 1
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
-sed -i '' '1s/.*/Changed beta./' beta.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed beta./' beta.txt
 
 SHA303="$("$GIT_HUNK" list --porcelain --oneline | grep "alpha.txt" | head -1 | cut -f1)"
 if OUT303="$("$GIT_HUNK" check --no-color --exclusive "$SHA303" 2>/dev/null)"; then
@@ -56,7 +56,7 @@ pass "test 303: check --exclusive with extra hunks exits 1"
 # Test 304: check --porcelain reports both ok and stale entries
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
 SHA304="$("$GIT_HUNK" list --porcelain --oneline | head -1 | cut -f1)"
 if PORC304="$("$GIT_HUNK" check --porcelain "$SHA304" "deadbeef" 2>/dev/null)"; then
@@ -70,7 +70,7 @@ pass "test 304: check --porcelain reports all entries"
 # Test 305: check rejects line specs
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
 SHA305="$("$GIT_HUNK" list --porcelain --oneline | head -1 | cut -f1)"
 if "$GIT_HUNK" check "${SHA305}:1-3" > /dev/null 2>/dev/null; then
@@ -82,7 +82,7 @@ pass "test 305: check rejects line specs"
 # Test 306: check --staged validates staged hashes
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
 SHA306="$("$GIT_HUNK" list --porcelain --oneline | head -1 | cut -f1)"
 "$GIT_HUNK" add "$SHA306" > /dev/null 2>/dev/null
@@ -95,8 +95,8 @@ pass "test 306: check --staged validates staged hashes"
 # Test 307: check --exclusive --porcelain shows unexpected entries
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
-sed -i '' '1s/.*/Changed beta./' beta.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed beta./' beta.txt
 
 ALL_SHAS307="$("$GIT_HUNK" list --porcelain --oneline | cut -f1)"
 FIRST_SHA307="$(echo "$ALL_SHAS307" | head -1)"
@@ -140,7 +140,7 @@ pass "test 309: check --exclusive accounts for untracked"
 # Test 310: check --tracked-only ignores untracked hashes
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 echo "untracked content" > untracked.txt
 
 UT_SHA310="$("$GIT_HUNK" list --untracked-only --porcelain --oneline | head -1 | cut -f1)"

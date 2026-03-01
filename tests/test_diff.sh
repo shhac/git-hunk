@@ -5,7 +5,7 @@ source "$(dirname "$0")/harness.sh" "$1"
 # Test 900: diff tracked file displays diff content
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
 SHA900="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
 [[ -n "$SHA900" ]] || fail "test 900: no unstaged hunk found"
@@ -31,7 +31,7 @@ pass "test 901: diff untracked file displays new file header and content"
 # Test 902: diff --no-color omits ANSI escape codes
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
 SHA902="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
 OUT902="$("$GIT_HUNK" diff --no-color "$SHA902")"
@@ -42,8 +42,8 @@ pass "test 902: diff --no-color omits ANSI escape codes"
 # Test 903: diff multiple SHAs displays content from both hunks
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
-sed -i '' '1s/.*/Changed beta./' beta.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed beta./' beta.txt
 
 SHAS903="$("$GIT_HUNK" list --porcelain --oneline)"
 SHA903A="$(echo "$SHAS903" | grep "alpha.txt" | head -1 | cut -f1)"
@@ -58,7 +58,7 @@ pass "test 903: diff multiple SHAs displays content from both hunks"
 # Test 904: diff diff header includes filename
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
 SHA904="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
 OUT904="$("$GIT_HUNK" diff --no-color "$SHA904")"
@@ -69,7 +69,7 @@ pass "test 904: diff diff header includes filename"
 # Test 905: diff --porcelain outputs tab-separated metadata
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
 SHA905="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
 OUT905="$("$GIT_HUNK" diff --porcelain "$SHA905")"
@@ -85,7 +85,7 @@ pass "test 905: diff --porcelain outputs tab-separated metadata"
 # Test 906: diff --porcelain output includes raw diff content
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
 SHA906="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
 OUT906="$("$GIT_HUNK" diff --porcelain "$SHA906")"
@@ -109,7 +109,7 @@ pass "test 907: diff --porcelain for untracked file includes filename"
 # Test 908: diff --staged shows staged changes for modified file
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Staged change 908./' alpha.txt
+sed -i.bak '1s/.*/Staged change 908./' alpha.txt
 "$GIT_HUNK" add --all > /dev/null 2>/dev/null
 
 STAGED_SHA908="$("$GIT_HUNK" list --staged --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
@@ -135,7 +135,7 @@ pass "test 909: diff --staged shows deleted file"
 # Test 910: diff --porcelain --staged shows staged hunk metadata
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Staged for porcelain 910./' alpha.txt
+sed -i.bak '1s/.*/Staged for porcelain 910./' alpha.txt
 "$GIT_HUNK" add --all > /dev/null 2>/dev/null
 
 STAGED_SHA910="$("$GIT_HUNK" list --staged --porcelain --oneline | head -1 | cut -f1)"
@@ -150,7 +150,7 @@ pass "test 910: diff --porcelain --staged shows staged hunk metadata"
 # Test 911: diff SHA:1 displays line numbers and > marker for selected line
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
 SHA911="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
 OUT911="$("$GIT_HUNK" diff --no-color "${SHA911}:1")"
@@ -162,7 +162,7 @@ pass "test 911: diff SHA:1 displays line numbers and > marker"
 # Test 912: diff SHA:1-3 marks multiple lines with > markers
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
 SHA912="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
 OUT912="$("$GIT_HUNK" diff --no-color "${SHA912}:1-3")"
@@ -199,7 +199,7 @@ pass "test 914: diff --tracked-only excludes untracked SHA"
 # Test 915: diff --untracked-only excludes tracked SHA
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
 SHA915="$("$GIT_HUNK" list --tracked-only --porcelain --oneline | head -1 | cut -f1)"
 [[ -n "$SHA915" ]] || fail "test 915: no tracked hunk found"
@@ -212,7 +212,7 @@ pass "test 915: diff --untracked-only excludes tracked SHA"
 # Test 916: diff invalid SHA exits 1 with "no hunk" error
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
 if OUT916="$("$GIT_HUNK" diff --no-color "aaaa1111" 2>&1)"; then
     fail "test 916: expected exit 1 for non-matching SHA, got exit 0"
@@ -253,7 +253,7 @@ line 6
 line 7
 EOF
 git add context_test.txt && git commit -m "context test setup" -q
-sed -i '' 's/line 4 to change/line 4 changed/' context_test.txt
+sed -i.bak 's/line 4 to change/line 4 changed/' context_test.txt
 
 # List and diff with matching unified level (SHA is context-dependent)
 SHA919="$("$GIT_HUNK" list --porcelain --oneline --file context_test.txt | head -1 | cut -f1)"
@@ -279,7 +279,7 @@ line 6
 line 7
 EOF
 git add context_test2.txt && git commit -m "context test2 setup" -q
-sed -i '' 's/line 4 to change/line 4 changed/' context_test2.txt
+sed -i.bak 's/line 4 to change/line 4 changed/' context_test2.txt
 
 # Must use --unified 0 when listing to get the SHA for a -U0 diff
 SHA920="$("$GIT_HUNK" list --porcelain --oneline --unified 0 --file context_test2.txt | head -1 | cut -f1)"

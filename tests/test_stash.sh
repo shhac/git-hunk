@@ -5,8 +5,8 @@ source "$(dirname "$0")/harness.sh" "$1"
 # Test 700: basic stash push by SHA
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
-sed -i '' '1s/.*/Changed beta./' beta.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed beta./' beta.txt
 ORIG_ALPHA="$(git show HEAD:alpha.txt | head -1)"
 
 SHA700="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
@@ -23,7 +23,7 @@ pass "test 700: basic stash push by SHA"
 # Test 701: stash pop roundtrip
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 ORIG_ALPHA="$(git show HEAD:alpha.txt | head -1)"
 
 SHA701="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
@@ -41,8 +41,8 @@ pass "test 701: stash pop roundtrip"
 # Test 702: stash --all
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
-sed -i '' '1s/.*/Changed beta./' beta.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed beta./' beta.txt
 ORIG_ALPHA="$(git show HEAD:alpha.txt | head -1)"
 ORIG_BETA="$(git show HEAD:beta.txt | head -1)"
 
@@ -59,7 +59,7 @@ pass "test 702: stash --all"
 # Test 703: stash -m custom message
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
 "$GIT_HUNK" stash --all -m "custom stash msg" > /dev/null
 STASH_LIST703="$(git stash list)"
@@ -71,8 +71,8 @@ pass "test 703: stash -m custom message"
 # Test 704: stash --file filter
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
-sed -i '' '1s/.*/Changed beta./' beta.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed beta./' beta.txt
 ORIG_ALPHA="$(git show HEAD:alpha.txt | head -1)"
 
 "$GIT_HUNK" stash --file alpha.txt > /dev/null
@@ -86,9 +86,9 @@ pass "test 704: stash --file filter"
 # Test 705: stash preserves staged changes
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Staged beta./' beta.txt
+sed -i.bak '1s/.*/Staged beta./' beta.txt
 git add beta.txt
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
 SHA705="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
 "$GIT_HUNK" stash "$SHA705" > /dev/null
@@ -137,7 +137,7 @@ pass "test 709: pop rejects extra flags"
 # Test 710: line spec rejection (exit 1)
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
 SHA710="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
 if "$GIT_HUNK" stash "${SHA710}:1-3" > /dev/null 2>/dev/null; then
@@ -163,7 +163,7 @@ pass "test 711: stash untracked file by hash"
 # Test 712: stash --all -u with mixed tracked+untracked
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 echo "untracked content" > untracked.txt
 ORIG_ALPHA="$(git show HEAD:alpha.txt | head -1)"
 
@@ -197,7 +197,7 @@ pass "test 713: stash pop restores untracked file"
 # Test 714: stash untracked preserves staged changes
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Staged beta./' beta.txt
+sed -i.bak '1s/.*/Staged beta./' beta.txt
 git add beta.txt
 echo "untracked content" > untracked.txt
 
@@ -215,7 +215,7 @@ pass "test 714: stash untracked preserves staged changes"
 # Test 715: stash --all --tracked-only excludes untracked
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 echo "untracked content" > untracked.txt
 ORIG_ALPHA="$(git show HEAD:alpha.txt | head -1)"
 
@@ -246,7 +246,7 @@ pass "test 716: stash untracked preserves executable bit"
 # Test 717: stash --all without -u excludes untracked
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 echo "untracked content" > untracked.txt
 ORIG_ALPHA="$(git show HEAD:alpha.txt | head -1)"
 
@@ -261,7 +261,7 @@ pass "test 717: stash --all without -u excludes untracked"
 # Test 718: stash push explicit keyword works
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 ORIG_ALPHA="$(git show HEAD:alpha.txt | head -1)"
 
 "$GIT_HUNK" stash push --all > /dev/null
@@ -275,7 +275,7 @@ pass "test 718: stash push explicit keyword works"
 # Test 719: stash push --include-untracked works
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 echo "untracked content" > untracked.txt
 ORIG_ALPHA="$(git show HEAD:alpha.txt | head -1)"
 
@@ -304,8 +304,8 @@ pass "test 720: explicit untracked hash works without -u"
 # Test 721: stash with dirty index — staged changes are preserved, not stashed
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Staged change to alpha./' alpha.txt
-sed -i '' '1s/.*/Unstaged change to beta./' beta.txt
+sed -i.bak '1s/.*/Staged change to alpha./' alpha.txt
+sed -i.bak '1s/.*/Unstaged change to beta./' beta.txt
 
 # Stage alpha.txt only (leave beta.txt unstaged)
 git add alpha.txt

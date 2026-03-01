@@ -5,7 +5,7 @@ source "$(dirname "$0")/harness.sh" "$1"
 # Test 200: add (stage) a hunk by SHA
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Modified first line./' alpha.txt
+sed -i.bak '1s/.*/Modified first line./' alpha.txt
 
 SHA="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
 "$GIT_HUNK" add "$SHA" > /dev/null
@@ -17,7 +17,7 @@ pass "test 200: add stages hunk"
 # Test 201: reset (unstage) a hunk by SHA
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Modified first line./' alpha.txt
+sed -i.bak '1s/.*/Modified first line./' alpha.txt
 
 "$GIT_HUNK" add --all > /dev/null 2>/dev/null
 STAGED_SHA="$("$GIT_HUNK" list --staged --porcelain --oneline | head -1 | cut -f1)"
@@ -31,8 +31,8 @@ pass "test 201: reset unstages hunk"
 # Test 202: --all stages all unstaged hunks
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
-sed -i '' '1s/.*/Changed beta./' beta.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed beta./' beta.txt
 
 "$GIT_HUNK" add --all > /dev/null
 UNSTAGED="$("$GIT_HUNK" count)"
@@ -45,7 +45,7 @@ pass "test 202: --all stages all hunks"
 # Test 203: add output shows staged HASH -> HASH  FILE format
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
 SHA="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
 ADD_OUT="$("$GIT_HUNK" add --no-color "$SHA")"
@@ -57,7 +57,7 @@ pass "test 203: add output format (staged X -> Y  file)"
 # Test 204: reset output shows unstaged HASH -> HASH  FILE format
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
 "$GIT_HUNK" add --all > /dev/null 2>/dev/null
 STAGED_SHA="$("$GIT_HUNK" list --staged --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
@@ -70,12 +70,12 @@ pass "test 204: reset output format (unstaged X -> Y  file)"
 # Test 205: overlap/merge case shows consumed hash with + prefix
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Change A./' alpha.txt
+sed -i.bak '1s/.*/Change A./' alpha.txt
 SHA_A="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
 "$GIT_HUNK" add --no-color "$SHA_A" > /dev/null
 
 # Modify same area again to create overlap
-sed -i '' '1s/.*/Change B./' alpha.txt
+sed -i.bak '1s/.*/Change B./' alpha.txt
 SHA_B="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
 MERGE_OUT="$("$GIT_HUNK" add --no-color "$SHA_B")"
 echo "$MERGE_OUT" | grep -qE '^staged [a-f0-9]{7} \+[a-f0-9]{7} → [a-f0-9]{7}  alpha\.txt$' \
@@ -86,7 +86,7 @@ pass "test 205: overlap/merge shows consumed hash"
 # Test 206: porcelain format for add is tab-separated
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
 SHA="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
 PORC_OUT="$("$GIT_HUNK" add --porcelain "$SHA")"
@@ -104,10 +104,10 @@ pass "test 206: porcelain format for add"
 # Test 207: porcelain format for add with merge includes consumed field
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Change A./' alpha.txt
+sed -i.bak '1s/.*/Change A./' alpha.txt
 "$GIT_HUNK" add --all > /dev/null 2>/dev/null
 
-sed -i '' '1s/.*/Change B./' alpha.txt
+sed -i.bak '1s/.*/Change B./' alpha.txt
 SHA="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
 PORC_MERGE="$("$GIT_HUNK" add --porcelain "$SHA")"
 FIELD_COUNT="$(echo "$PORC_MERGE" | awk -F'\t' '{print NF}')"
@@ -120,10 +120,10 @@ pass "test 207: porcelain format includes consumed field on merge"
 # Test 208: summary line shows merged count on stderr
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Change A./' alpha.txt
+sed -i.bak '1s/.*/Change A./' alpha.txt
 "$GIT_HUNK" add --all > /dev/null 2>/dev/null
 
-sed -i '' '1s/.*/Change B./' alpha.txt
+sed -i.bak '1s/.*/Change B./' alpha.txt
 SHA="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
 STDERR208="$("$GIT_HUNK" add --verbose --no-color "$SHA" 2>&1 >/dev/null)"
 echo "$STDERR208" | grep -qE '\(.*merged\)' \
@@ -134,8 +134,8 @@ pass "test 208: summary line shows merged count"
 # Test 209: batch add of multiple hunks in different files
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
-sed -i '' '1s/.*/Changed beta./' beta.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed beta./' beta.txt
 
 SHAS209="$("$GIT_HUNK" list --porcelain --oneline)"
 SHA209A="$(echo "$SHAS209" | grep "alpha.txt" | head -1 | cut -f1)"
@@ -152,7 +152,7 @@ pass "test 209: batch add produces per-file output"
 # Test 210: arrow is always present in add output (even simple case)
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
 SHA="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
 ARROW_OUT="$("$GIT_HUNK" add --no-color "$SHA")"
@@ -179,8 +179,8 @@ line 10
 BRIDGE_EOF
 git add bridge.txt && git commit -m "bridge setup" -q
 
-sed -i '' 's/line 4 original/line 4 changed/' bridge.txt
-sed -i '' 's/line 6 original/line 6 changed/' bridge.txt
+sed -i.bak 's/line 4 original/line 4 changed/' bridge.txt
+sed -i.bak 's/line 6 original/line 6 changed/' bridge.txt
 
 BRIDGE_HUNKS="$("$GIT_HUNK" list --porcelain --oneline --unified 0 --file bridge.txt 2>/dev/null)"
 BRIDGE_COUNT="$(echo "$BRIDGE_HUNKS" | wc -l | tr -d ' ')"
@@ -190,7 +190,7 @@ SHA211_A="$(echo "$BRIDGE_HUNKS" | sort -t$'\t' -k3 -n | head -1 | cut -f1)"
 SHA211_B="$(echo "$BRIDGE_HUNKS" | sort -t$'\t' -k3 -n | tail -1 | cut -f1)"
 "$GIT_HUNK" add --no-color --unified 0 "$SHA211_A" "$SHA211_B" > /dev/null 2>/dev/null
 
-sed -i '' 's/line 5 gap/line 5 changed/' bridge.txt
+sed -i.bak 's/line 5 gap/line 5 changed/' bridge.txt
 SHA211_MID="$("$GIT_HUNK" list --porcelain --oneline --unified 0 --file bridge.txt 2>/dev/null | cut -f1)"
 [[ -n "$SHA211_MID" ]] || fail "test 211: no gap hunk found after modifying line 5"
 
@@ -218,13 +218,13 @@ line 8
 BATCH_EOF
 git add batch.txt && git commit -m "batch setup" -q
 
-sed -i '' 's/line 4 gap/line 4 changed/' batch.txt
+sed -i.bak 's/line 4 gap/line 4 changed/' batch.txt
 SHA212_PRE="$("$GIT_HUNK" list --porcelain --oneline --unified 0 --file batch.txt 2>/dev/null | cut -f1)"
 [[ -n "$SHA212_PRE" ]] || fail "test 212: no hunk found for line 4"
 "$GIT_HUNK" add --no-color --unified 0 "$SHA212_PRE" > /dev/null 2>/dev/null
 
-sed -i '' 's/line 3 original/line 3 changed/' batch.txt
-sed -i '' 's/line 5 original/line 5 changed/' batch.txt
+sed -i.bak 's/line 3 original/line 3 changed/' batch.txt
+sed -i.bak 's/line 5 original/line 5 changed/' batch.txt
 
 BATCH_HUNKS="$("$GIT_HUNK" list --porcelain --oneline --unified 0 --file batch.txt 2>/dev/null)"
 BATCH_COUNT="$(echo "$BATCH_HUNKS" | wc -l | tr -d ' ')"
@@ -249,7 +249,7 @@ pass "test 212: batch add with merge — two applied + one consumed"
 # Test 213: reset --porcelain uses tab-separated format
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
 "$GIT_HUNK" add --all > /dev/null 2>/dev/null
 STAGED_SHA213="$("$GIT_HUNK" list --staged --porcelain --oneline | head -1 | cut -f1)"
@@ -263,7 +263,7 @@ pass "test 213: reset --porcelain uses tab-separated format"
 # Test 214: --all stages both tracked changes and untracked files
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Modified first line./' alpha.txt
+sed -i.bak '1s/.*/Modified first line./' alpha.txt
 echo "brand new untracked content" > untracked_all.txt
 
 "$GIT_HUNK" add --all > /dev/null 2>/dev/null
@@ -307,7 +307,7 @@ pass "test 216: reset returns untracked file to untracked"
 # Test 217: add --tracked-only excludes untracked files
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 echo "untracked content" > untracked.txt
 
 "$GIT_HUNK" add --all --tracked-only > /dev/null
@@ -343,9 +343,9 @@ line 9
 line 10
 LINESPEC_EOF
 git add linespec.txt && git commit -m "linespec setup" -q
-sed -i '' 's/line 3 original/line 3 changed/' linespec.txt
-sed -i '' 's/line 5 original/line 5 changed/' linespec.txt
-sed -i '' 's/line 8 original/line 8 changed/' linespec.txt
+sed -i.bak 's/line 3 original/line 3 changed/' linespec.txt
+sed -i.bak 's/line 5 original/line 5 changed/' linespec.txt
+sed -i.bak 's/line 8 original/line 8 changed/' linespec.txt
 
 SHA219="$("$GIT_HUNK" list --porcelain --oneline --file linespec.txt | head -1 | cut -f1)"
 [[ -n "$SHA219" ]] || fail "test 219: no hunk found"
@@ -382,9 +382,9 @@ line 9
 line 10
 LINESPEC_EOF
 git add linespec.txt && git commit -m "linespec setup" -q
-sed -i '' 's/line 3 original/line 3 changed/' linespec.txt
-sed -i '' 's/line 5 original/line 5 changed/' linespec.txt
-sed -i '' 's/line 8 original/line 8 changed/' linespec.txt
+sed -i.bak 's/line 3 original/line 3 changed/' linespec.txt
+sed -i.bak 's/line 5 original/line 5 changed/' linespec.txt
+sed -i.bak 's/line 8 original/line 8 changed/' linespec.txt
 
 SHA220="$("$GIT_HUNK" list --porcelain --oneline --file linespec.txt | head -1 | cut -f1)"
 [[ -n "$SHA220" ]] || fail "test 220: no hunk found"
@@ -469,9 +469,9 @@ line 9
 line 10
 LINESPEC_EOF
 git add linespec.txt && git commit -m "linespec setup" -q
-sed -i '' 's/line 3 original/line 3 changed/' linespec.txt
-sed -i '' 's/line 5 original/line 5 changed/' linespec.txt
-sed -i '' 's/line 8 original/line 8 changed/' linespec.txt
+sed -i.bak 's/line 3 original/line 3 changed/' linespec.txt
+sed -i.bak 's/line 5 original/line 5 changed/' linespec.txt
+sed -i.bak 's/line 8 original/line 8 changed/' linespec.txt
 
 SHA222="$("$GIT_HUNK" list --porcelain --oneline --file linespec.txt | head -1 | cut -f1)"
 [[ -n "$SHA222" ]] || fail "test 222: no hunk found"
@@ -494,12 +494,12 @@ pass "test 222: add --porcelain includes line spec suffix in applied field"
 # Test 223: add with a stale SHA exits non-zero with an error
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/First change./' alpha.txt
+sed -i.bak '1s/.*/First change./' alpha.txt
 SHA223="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
 [[ -n "$SHA223" ]] || fail "test 223: no hunk found before staleness"
 
 # Overwrite the change so SHA223 no longer matches the diff
-sed -i '' '1s/.*/Second change./' alpha.txt
+sed -i.bak '1s/.*/Second change./' alpha.txt
 
 if "$GIT_HUNK" add "$SHA223" > /dev/null 2>/dev/null; then
     fail "test 223: expected non-zero exit when adding stale SHA"
@@ -510,7 +510,7 @@ pass "test 223: add with stale SHA exits non-zero"
 # Test 224: reset with a stale SHA exits non-zero with an error
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Staged change./' alpha.txt
+sed -i.bak '1s/.*/Staged change./' alpha.txt
 "$GIT_HUNK" add --all > /dev/null 2>/dev/null
 STAGED_SHA224="$("$GIT_HUNK" list --staged --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
 [[ -n "$STAGED_SHA224" ]] || fail "test 224: no staged hunk found"
@@ -527,7 +527,7 @@ pass "test 224: reset with stale SHA exits non-zero"
 # Test 225: round-trip add+reset leaves worktree file byte-exact
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Round-trip test./' alpha.txt
+sed -i.bak '1s/.*/Round-trip test./' alpha.txt
 cp alpha.txt alpha.txt.orig
 
 SHA225="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
@@ -546,7 +546,7 @@ pass "test 225: add+reset roundtrip leaves worktree byte-exact"
 # Test 226: add is not idempotent — second add fails (SHA stale after first)
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Idempotency test./' alpha.txt
+sed -i.bak '1s/.*/Idempotency test./' alpha.txt
 
 SHA226="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
 [[ -n "$SHA226" ]] || fail "test 226: no hunk found"
@@ -561,9 +561,9 @@ pass "test 226: second add of same SHA fails (SHA stale after first add)"
 # Test 227: reset --all unstages all staged hunks across multiple files
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
-sed -i '' '1s/.*/Changed beta./' beta.txt
-sed -i '' '1s/.*/Changed gamma./' gamma.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed beta./' beta.txt
+sed -i.bak '1s/.*/Changed gamma./' gamma.txt
 
 "$GIT_HUNK" add --all > /dev/null 2>/dev/null
 STAGED227_BEFORE="$(git diff --cached --name-only)"

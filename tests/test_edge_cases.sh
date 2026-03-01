@@ -134,16 +134,17 @@ SAVED_REPO840="$CURRENT_REPO"
 CURRENT_REPO="$CONFLICT_REPO"
 cd "$CONFLICT_REPO"
 git init -q
+echo '*.bak' >> .git/info/exclude
 git config user.email "t@t.com"
 git config user.name "T"
 printf "line 1\nline 2\nline 3\n" > conflict.txt
 git add conflict.txt && git commit -q -m "base"
 git checkout -q -b branch-a
-sed -i '' 's/line 3/line 3 branch-a/' conflict.txt
+sed -i.bak 's/line 3/line 3 branch-a/' conflict.txt
 git commit -q -am "branch-a change"
 git checkout -q main
 git checkout -q -b branch-b
-sed -i '' 's/line 3/line 3 branch-b/' conflict.txt
+sed -i.bak 's/line 3/line 3 branch-b/' conflict.txt
 git commit -q -am "branch-b change"
 git merge branch-a 2>/dev/null || true  # expect conflict
 

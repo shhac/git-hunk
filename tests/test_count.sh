@@ -5,8 +5,8 @@ source "$(dirname "$0")/harness.sh" "$1"
 # Test 400: count outputs bare integer
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
-sed -i '' '1s/.*/Changed beta./' beta.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed beta./' beta.txt
 
 COUNT400="$("$GIT_HUNK" count)"
 [[ "$COUNT400" =~ ^[0-9]+$ ]] || fail "test 400: count output not a bare integer, got '$COUNT400'"
@@ -26,8 +26,8 @@ pass "test 401: count --staged returns 0"
 # Test 402: count --file filters to one file
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
-sed -i '' '1s/.*/Changed beta./' beta.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed beta./' beta.txt
 
 TOTAL="$("$GIT_HUNK" count)"
 FILE_COUNT="$("$GIT_HUNK" count --file alpha.txt)"
@@ -51,7 +51,7 @@ pass "test 403: count returns 0 with exit 0 when no changes"
 # Test 404: count includes untracked files
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 echo "untracked content" > untracked.txt
 
 COUNT404="$("$GIT_HUNK" count)"
@@ -72,7 +72,7 @@ pass "test 405: count --staged excludes untracked"
 # Test 406: count --tracked-only + --untracked-only sum equals total
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 echo "untracked content" > untracked_count.txt
 
 TOTAL406="$("$GIT_HUNK" count)"
@@ -87,7 +87,7 @@ pass "test 406: count --tracked-only + --untracked-only equals total"
 # Test 407: count --untracked-only with no untracked files returns 0
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
 COUNT407="$("$GIT_HUNK" count --untracked-only)"
 [[ "$COUNT407" == "0" ]] || fail "test 407: expected 0 untracked count, got '$COUNT407'"

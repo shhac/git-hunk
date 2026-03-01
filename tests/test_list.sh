@@ -5,7 +5,7 @@ source "$(dirname "$0")/harness.sh" "$1"
 # Test 100: porcelain list shows expected fields
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Modified first line of alpha./' alpha.txt
+sed -i.bak '1s/.*/Modified first line of alpha./' alpha.txt
 
 LINE="$("$GIT_HUNK" list --porcelain --oneline | head -1)"
 [[ -n "$LINE" ]] || fail "test 100: expected output from list --porcelain"
@@ -44,8 +44,8 @@ pass "test 102: deleted file in staged list"
 # Test 103: --file filter restricts output to matching file
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
-sed -i '' '1s/.*/Changed beta./' beta.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed beta./' beta.txt
 
 FILTERED="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt)"
 [[ -n "$FILTERED" ]] || fail "test 103: no output with --file alpha.txt"
@@ -60,7 +60,7 @@ pass "test 103: --file filter restricts output"
 # Test 104: human output contains 7-char SHA and file name
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
 HUMAN="$("$GIT_HUNK" list 2>/dev/null | head -1)"
 [[ -n "$HUMAN" ]] || fail "test 104: empty human output"
@@ -116,7 +116,7 @@ pass "test 108: --file filter works with untracked files"
 # Test 109: --tracked-only excludes untracked files
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 echo "untracked content" > untracked_filter.txt
 
 TRACKED_ONLY="$("$GIT_HUNK" list --tracked-only --porcelain --oneline)"
@@ -129,7 +129,7 @@ pass "test 109: --tracked-only excludes untracked files"
 # Test 110: --untracked-only excludes tracked files
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 echo "untracked content" > untracked_filter.txt
 
 UNTRACKED_ONLY="$("$GIT_HUNK" list --untracked-only --porcelain --oneline)"
@@ -142,7 +142,7 @@ pass "test 110: --untracked-only excludes tracked files"
 # Test 111: --untracked-only with no untracked files shows nothing
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
 EMPTY111="$("$GIT_HUNK" list --untracked-only --porcelain --oneline 2>/dev/null || true)"
 [[ -z "$EMPTY111" ]] || fail "test 111: expected no output with --untracked-only and no untracked files, got: '$EMPTY111'"
@@ -168,13 +168,13 @@ pass "test 112: diff displays untracked file content"
 # ============================================================================
 # Repo 1: use new_repo (setup-repo.sh creates deterministic content)
 new_repo
-sed -i '' '1s/.*/Cross-repo SHA test line./' alpha.txt
+sed -i.bak '1s/.*/Cross-repo SHA test line./' alpha.txt
 SHA113A="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
 [[ -n "$SHA113A" ]] || fail "test 113: no hunk found in repo 1"
 
 # Repo 2: new_repo creates another identical repo (same deterministic content)
 new_repo
-sed -i '' '1s/.*/Cross-repo SHA test line./' alpha.txt
+sed -i.bak '1s/.*/Cross-repo SHA test line./' alpha.txt
 SHA113B="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
 [[ -n "$SHA113B" ]] || fail "test 113: no hunk found in repo 2"
 
@@ -196,8 +196,8 @@ line 4 original
 line 5
 PROX_EOF
 git add proximity.txt && git commit -m "proximity setup" -q
-sed -i '' 's/line 2 original/line 2 changed/' proximity.txt
-sed -i '' 's/line 4 original/line 4 changed/' proximity.txt
+sed -i.bak 's/line 2 original/line 2 changed/' proximity.txt
+sed -i.bak 's/line 4 original/line 4 changed/' proximity.txt
 
 SHA114_U0="$("$GIT_HUNK" list --porcelain --oneline --unified 0 --file proximity.txt | head -1 | cut -f1)"
 SHA114_U3="$("$GIT_HUNK" list --porcelain --oneline --unified 3 --file proximity.txt | head -1 | cut -f1)"

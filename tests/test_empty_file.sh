@@ -86,7 +86,7 @@ pass "test 804: stash roundtrip for empty untracked file"
 # Test 805: add --all includes empty files
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 touch empty.txt
 
 COUNT805="$("$GIT_HUNK" count)"
@@ -104,7 +104,7 @@ pass "test 805: add --all includes empty files"
 # Test 806: stash --all with --include-untracked includes empty files
 # ============================================================================
 new_repo
-sed -i '' '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 touch empty.txt
 
 "$GIT_HUNK" stash --all --include-untracked > /dev/null

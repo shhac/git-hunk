@@ -16,6 +16,7 @@ REPO="$(mktemp -d)"
 cd "$REPO"
 
 git init -q
+echo '*.bak' >> .git/info/exclude
 git config user.email "test@git-hunk.test"
 git config user.name "git-hunk test"
 
@@ -125,15 +126,15 @@ git commit -m "initial: three files with lorem ipsum content" -q
 
 # --- Commit 2: modify middle sections of each file ---
 
-sed -i '' '10s/.*/Commodo sed egestas — modified in second commit./' alpha.txt
-sed -i '' '20s/.*/Sollicitudin aliquam — modified in second commit./' alpha.txt
+sed -i.bak '10s/.*/Commodo sed egestas -- modified in second commit./' alpha.txt
+sed -i.bak '20s/.*/Sollicitudin aliquam -- modified in second commit./' alpha.txt
 
-sed -i '' '8s/.*/Quam vulputate — modified in second commit./' beta.txt
-sed -i '' '15s/.*/Quis auctor elit — modified in second commit./' beta.txt
-sed -i '' '25s/.*/Senectus et netus — modified in second commit./' beta.txt
+sed -i.bak '8s/.*/Quam vulputate -- modified in second commit./' beta.txt
+sed -i.bak '15s/.*/Quis auctor elit -- modified in second commit./' beta.txt
+sed -i.bak '25s/.*/Senectus et netus -- modified in second commit./' beta.txt
 
-sed -i '' '12s/.*/Leo in vitae — modified in second commit./' gamma.txt
-sed -i '' '22s/.*/Aliquam sem et — modified in second commit./' gamma.txt
+sed -i.bak '12s/.*/Leo in vitae -- modified in second commit./' gamma.txt
+sed -i.bak '22s/.*/Aliquam sem et -- modified in second commit./' gamma.txt
 
 git add alpha.txt beta.txt gamma.txt
 git commit -m "update: modify middle sections across all files" -q
