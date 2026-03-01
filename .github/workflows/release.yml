@@ -43,8 +43,9 @@ jobs:
 
       - name: Create tarball
         run: |
+          cp doc/git-hunk.1 zig-out/bin/
           cd zig-out/bin
-          tar -czf ../../git-hunk-${{ matrix.platform }}.tar.gz git-hunk
+          tar -czf ../../git-hunk-${{ matrix.platform }}.tar.gz git-hunk git-hunk.1
           cd ../..
 
       - name: Upload artifact
@@ -78,7 +79,7 @@ jobs:
       - name: Create universal binary
         run: |
           lipo -create -output git-hunk git-hunk-x86_64 git-hunk-aarch64
-          tar -czf git-hunk-macos-universal.tar.gz git-hunk
+          tar -czf git-hunk-macos-universal.tar.gz git-hunk git-hunk.1
 
       - name: Upload universal artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

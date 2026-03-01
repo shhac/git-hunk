@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.7.1] - 2026-03-01
+
+### Fixed
+- Include man page (`git-hunk.1`) in release tarballs so `git hunk --help` works after Homebrew install
+
 ## [0.7.0] - 2026-02-28
 
 ### Added
