@@ -1,10 +1,11 @@
 # Changelog
 
-## [0.8.1] - 2026-03-01
+## [0.8.2] - 2026-03-01
 
 ### Fixed
 - Cross-platform test compatibility: replace BSD-only `sed -i ''` with portable `sed -i.bak`
-- Remove em-dashes from test fixture data to avoid encoding issues
+- Handle empty file diffs on Linux where git includes `---`/`+++` lines without `@@` hunks
+- Fix default branch name assumption in merge conflict test (`git init -b main`)
 
 ## [0.8.0] - 2026-03-01
 

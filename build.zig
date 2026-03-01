@@ -4,7 +4,7 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const version_option = b.option([]const u8, "version", "Version string") orelse "0.8.1";
+    const version_option = b.option([]const u8, "version", "Version string") orelse "0.8.2";
     const build_options = b.addOptions();
     build_options.addOption([]const u8, "version", version_option);
 
