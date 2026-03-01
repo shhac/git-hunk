@@ -987,7 +987,11 @@ pub fn cmdShow(allocator: Allocator, stdout: *std.Io.Writer, opts: ShowOptions) 
         switch (opts.output) {
             .human => {
                 try stdout.writeAll(m.hunk.patch_header);
-                if (m.line_spec) |ls| {
+                if (m.hunk.raw_lines.len == 0) {
+                    if (m.line_spec != null) {
+                        std.debug.print("(empty file — no lines to select)\n", .{});
+                    }
+                } else if (m.line_spec) |ls| {
                     try format.printRawLinesWithLineNumbers(stdout, m.hunk.raw_lines, ls, use_color);
                 } else {
                     try format.printRawLinesHuman(stdout, m.hunk.raw_lines, use_color);

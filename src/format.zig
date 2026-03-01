@@ -81,7 +81,10 @@ pub fn printHunkPorcelain(stdout: *std.Io.Writer, h: Hunk, mode: DiffMode) !void
 }
 
 pub fn printDiffHuman(stdout: *std.Io.Writer, h: Hunk, use_color: bool) !void {
-    if (h.raw_lines.len == 0) return;
+    if (h.raw_lines.len == 0) {
+        try stdout.writeAll("\n");
+        return;
+    }
     var iter = std.mem.splitScalar(u8, h.raw_lines, '\n');
     while (iter.next()) |line| {
         if (use_color and line.len > 0) {
@@ -215,7 +218,10 @@ fn formatNumPadded(buf: []u8, num: u32, width: usize) []const u8 {
 }
 
 pub fn printDiffPorcelain(stdout: *std.Io.Writer, h: Hunk) !void {
-    if (h.raw_lines.len == 0) return;
+    if (h.raw_lines.len == 0) {
+        try stdout.writeAll("\n");
+        return;
+    }
     try stdout.writeAll(h.raw_lines);
     if (h.raw_lines[h.raw_lines.len - 1] != '\n') {
         try stdout.writeAll("\n");
@@ -270,6 +276,7 @@ fn firstChangedLine(buf: []u8, diff_lines: []const u8) []const u8 {
 fn formatLineRange(buf: []u8, h: Hunk, mode: DiffMode) []const u8 {
     const start = stableStartLine(h, mode);
     const end = stableEndLine(h, mode);
+    if (start == 0 and end == 0) return "empty";
     return std.fmt.bufPrint(buf, "{d}-{d}", .{ start, end }) catch "";
 }
 
