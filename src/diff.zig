@@ -456,8 +456,18 @@ fn extractPathFromDiffGitLine(arena: Allocator, line: []const u8) !?[]const u8 {
 
     // Quoted paths: "a/PATH" "b/PATH"
     if (rest.len > 0 and rest[0] == '"') {
-        // Find closing quote of first path
-        const close1 = std.mem.indexOfScalarPos(u8, rest, 1, '"') orelse return null;
+        // Find closing quote of first path, skipping escaped quotes
+        var close_idx: ?usize = null;
+        {
+            var i: usize = 1;
+            while (i < rest.len) : (i += 1) {
+                if (rest[i] == '"' and (i == 0 or rest[i - 1] != '\\')) {
+                    close_idx = i;
+                    break;
+                }
+            }
+        }
+        const close1 = close_idx orelse return null;
         // Expect ' "b/' after first quoted path
         if (close1 + 1 >= rest.len or rest[close1 + 1] != ' ') return null;
         // Extract from second quoted path: "b/..."
