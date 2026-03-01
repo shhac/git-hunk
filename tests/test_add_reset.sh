@@ -490,4 +490,37 @@ echo "$APPLIED222" | grep -qE '^[a-f0-9]{7}:3-4$' \
     || fail "test 222: file not 'linespec.txt', got '$FILE222'"
 pass "test 222: add --porcelain includes line spec suffix in applied field"
 
+# ============================================================================
+# Test 223: add with a stale SHA exits non-zero with an error
+# ============================================================================
+new_repo
+sed -i '' '1s/.*/First change./' alpha.txt
+SHA223="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+[[ -n "$SHA223" ]] || fail "test 223: no hunk found before staleness"
+
+# Overwrite the change so SHA223 no longer matches the diff
+sed -i '' '1s/.*/Second change./' alpha.txt
+
+if "$GIT_HUNK" add "$SHA223" > /dev/null 2>/dev/null; then
+    fail "test 223: expected non-zero exit when adding stale SHA"
+fi
+pass "test 223: add with stale SHA exits non-zero"
+
+# ============================================================================
+# Test 224: reset with a stale SHA exits non-zero with an error
+# ============================================================================
+new_repo
+sed -i '' '1s/.*/Staged change./' alpha.txt
+"$GIT_HUNK" add --all > /dev/null 2>/dev/null
+STAGED_SHA224="$("$GIT_HUNK" list --staged --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+[[ -n "$STAGED_SHA224" ]] || fail "test 224: no staged hunk found"
+
+# Unstage so STAGED_SHA224 is no longer in the staged diff
+git reset HEAD alpha.txt -q
+
+if "$GIT_HUNK" reset "$STAGED_SHA224" > /dev/null 2>/dev/null; then
+    fail "test 224: expected non-zero exit when resetting stale SHA"
+fi
+pass "test 224: reset with stale SHA exits non-zero"
+
 report_results

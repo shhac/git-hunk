@@ -266,4 +266,54 @@ echo "$OUT516" | grep -qE '^restored [a-f0-9]{7}:1-2  linespec\.txt$' \
     || fail "test 516: restore output format wrong, got: '$OUT516'"
 pass "test 516: restore output format includes line spec suffix"
 
+# ============================================================================
+# Test 517: restore hunk A does not bleed into adjacent hunk B
+# ============================================================================
+new_repo
+cat > adjacency.txt <<'ADJ_EOF'
+line 1
+line 2 original
+line 3
+line 4
+line 5
+line 6
+line 7
+line 8
+line 9
+line 10
+line 11
+line 12
+line 13
+line 14
+line 15
+line 16
+line 17
+line 18 original
+line 19
+line 20
+ADJ_EOF
+git add adjacency.txt && git commit -m "adjacency setup" -q
+sed -i '' 's/line 2 original/line 2 changed/' adjacency.txt
+sed -i '' 's/line 18 original/line 18 changed/' adjacency.txt
+
+HUNKS517="$("$GIT_HUNK" list --porcelain --oneline --file adjacency.txt)"
+HUNK_COUNT517="$(echo "$HUNKS517" | wc -l | tr -d ' ')"
+[[ "$HUNK_COUNT517" -eq 2 ]] \
+    || fail "test 517: expected 2 hunks, got $HUNK_COUNT517"
+
+SHA517_TOP="$(echo "$HUNKS517" | sort -t$'\t' -k3 -n | head -1 | cut -f1)"
+SHA517_BOT="$(echo "$HUNKS517" | sort -t$'\t' -k3 -n | tail -1 | cut -f1)"
+[[ -n "$SHA517_TOP" && -n "$SHA517_BOT" ]] \
+    || fail "test 517: could not extract both hunk SHAs"
+
+"$GIT_HUNK" restore --no-color "$SHA517_TOP" > /dev/null
+
+WORKTREE517="$(git diff adjacency.txt)"
+if echo "$WORKTREE517" | grep -q "line 2 changed"; then
+    fail "test 517: top hunk should be restored (line 2 should be reverted)"
+fi
+echo "$WORKTREE517" | grep -q "line 18 changed" \
+    || fail "test 517: bottom hunk should still be present in worktree"
+pass "test 517: restore hunk A does not affect adjacent hunk B"
+
 report_results

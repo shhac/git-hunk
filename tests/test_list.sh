@@ -163,4 +163,23 @@ echo "$DIFF_OUT" | grep -qE '(new file|@@)' \
     || fail "test 112: diff output missing new file or @@ header, got: '$DIFF_OUT'"
 pass "test 112: diff displays untracked file content"
 
+# ============================================================================
+# Test 113: SHA depends only on file path + content, not repo location
+# ============================================================================
+# Repo 1: use new_repo (setup-repo.sh creates deterministic content)
+new_repo
+sed -i '' '1s/.*/Cross-repo SHA test line./' alpha.txt
+SHA113A="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+[[ -n "$SHA113A" ]] || fail "test 113: no hunk found in repo 1"
+
+# Repo 2: new_repo creates another identical repo (same deterministic content)
+new_repo
+sed -i '' '1s/.*/Cross-repo SHA test line./' alpha.txt
+SHA113B="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+[[ -n "$SHA113B" ]] || fail "test 113: no hunk found in repo 2"
+
+[[ "$SHA113A" == "$SHA113B" ]] \
+    || fail "test 113: SHAs differ across repos: '$SHA113A' vs '$SHA113B'"
+pass "test 113: SHA is identical across two repos with same content"
+
 report_results
