@@ -16,39 +16,70 @@ const CheckOptions = types.CheckOptions;
 const DiscardOptions = types.DiscardOptions;
 const StashOptions = types.StashOptions;
 
+const CommonFlags = struct {
+    file_filter: ?[]const u8 = null,
+    diff_filter: DiffFilter = .all,
+    no_color: bool = false,
+    output: OutputMode = .human,
+    context: ?u32 = null,
+};
+
+/// Try to parse arg as a common flag shared across all parsers.
+/// Returns true if the arg was consumed (for value-taking flags like --file,
+/// also increments i.* so the loop's `: (i += 1)` advances past the value).
+/// Returns false if arg is not a common flag (caller handles it).
+/// Returns error on parse failure or HelpRequested.
+fn parseCommonFlag(arg: []const u8, i: *usize, args: []const [:0]u8, c: *CommonFlags) !bool {
+    if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+        return error.HelpRequested;
+    } else if (std.mem.eql(u8, arg, "--file")) {
+        i.* += 1;
+        if (i.* >= args.len) return error.MissingArgument;
+        c.file_filter = args[i.*];
+        return true;
+    } else if (std.mem.eql(u8, arg, "--tracked-only")) {
+        if (c.diff_filter == .untracked_only) return error.ConflictingFilter;
+        c.diff_filter = .tracked_only;
+        return true;
+    } else if (std.mem.eql(u8, arg, "--untracked-only")) {
+        if (c.diff_filter == .tracked_only) return error.ConflictingFilter;
+        c.diff_filter = .untracked_only;
+        return true;
+    } else if (std.mem.eql(u8, arg, "--no-color")) {
+        c.no_color = true;
+        return true;
+    } else if (std.mem.eql(u8, arg, "--porcelain")) {
+        c.output = .porcelain;
+        return true;
+    } else if (std.mem.eql(u8, arg, "--unified") or std.mem.eql(u8, arg, "-U")) {
+        i.* += 1;
+        if (i.* >= args.len) return error.MissingArgument;
+        c.context = std.fmt.parseInt(u32, args[i.*], 10) catch return error.InvalidArgument;
+        return true;
+    }
+    return false;
+}
+
 pub fn parseListArgs(args: []const [:0]u8) !ListOptions {
     var opts: ListOptions = .{};
+    var common: CommonFlags = .{};
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
-        if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
-            return error.HelpRequested;
-        } else if (std.mem.eql(u8, arg, "--staged")) {
+        if (try parseCommonFlag(arg, &i, args, &common)) continue;
+        if (std.mem.eql(u8, arg, "--staged")) {
             opts.mode = .staged;
-        } else if (std.mem.eql(u8, arg, "--porcelain")) {
-            opts.output = .porcelain;
         } else if (std.mem.eql(u8, arg, "--oneline")) {
             opts.oneline = true;
-        } else if (std.mem.eql(u8, arg, "--no-color")) {
-            opts.no_color = true;
-        } else if (std.mem.eql(u8, arg, "--file")) {
-            i += 1;
-            if (i >= args.len) return error.MissingArgument;
-            opts.file_filter = args[i];
-        } else if (std.mem.eql(u8, arg, "--tracked-only")) {
-            if (opts.diff_filter == .untracked_only) return error.ConflictingFilter;
-            opts.diff_filter = .tracked_only;
-        } else if (std.mem.eql(u8, arg, "--untracked-only")) {
-            if (opts.diff_filter == .tracked_only) return error.ConflictingFilter;
-            opts.diff_filter = .untracked_only;
-        } else if (std.mem.eql(u8, arg, "--unified") or std.mem.eql(u8, arg, "-U")) {
-            i += 1;
-            if (i >= args.len) return error.MissingArgument;
-            opts.context = std.fmt.parseInt(u32, args[i], 10) catch return error.InvalidArgument;
         } else {
             return error.UnknownFlag;
         }
     }
+    opts.file_filter = common.file_filter;
+    opts.diff_filter = common.diff_filter;
+    opts.no_color = common.no_color;
+    opts.output = common.output;
+    opts.context = common.context;
     return opts;
 }
 
@@ -58,33 +89,15 @@ pub fn parseAddResetArgs(allocator: Allocator, args: []const [:0]u8) !AddResetOp
     };
     errdefer deinitShaArgs(allocator, &opts.sha_args);
 
+    var common: CommonFlags = .{};
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
-        if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
-            return error.HelpRequested;
-        } else if (std.mem.eql(u8, arg, "--file")) {
-            i += 1;
-            if (i >= args.len) return error.MissingArgument;
-            opts.file_filter = args[i];
-        } else if (std.mem.eql(u8, arg, "--all")) {
+        if (try parseCommonFlag(arg, &i, args, &common)) continue;
+        if (std.mem.eql(u8, arg, "--all")) {
             opts.select_all = true;
-        } else if (std.mem.eql(u8, arg, "--porcelain")) {
-            opts.output = .porcelain;
-        } else if (std.mem.eql(u8, arg, "--no-color")) {
-            opts.no_color = true;
         } else if (std.mem.eql(u8, arg, "--verbose") or std.mem.eql(u8, arg, "-v")) {
             opts.verbose = true;
-        } else if (std.mem.eql(u8, arg, "--tracked-only")) {
-            if (opts.diff_filter == .untracked_only) return error.ConflictingFilter;
-            opts.diff_filter = .tracked_only;
-        } else if (std.mem.eql(u8, arg, "--untracked-only")) {
-            if (opts.diff_filter == .tracked_only) return error.ConflictingFilter;
-            opts.diff_filter = .untracked_only;
-        } else if (std.mem.eql(u8, arg, "--unified") or std.mem.eql(u8, arg, "-U")) {
-            i += 1;
-            if (i >= args.len) return error.MissingArgument;
-            opts.context = std.fmt.parseInt(u32, args[i], 10) catch return error.InvalidArgument;
         } else if (std.mem.startsWith(u8, arg, "-")) {
             std.debug.print("error: unknown flag '{s}'\n", .{arg});
             return error.UnknownFlag;
@@ -93,6 +106,12 @@ pub fn parseAddResetArgs(allocator: Allocator, args: []const [:0]u8) !AddResetOp
             try opts.sha_args.append(allocator, sha_arg);
         }
     }
+
+    opts.file_filter = common.file_filter;
+    opts.diff_filter = common.diff_filter;
+    opts.no_color = common.no_color;
+    opts.output = common.output;
+    opts.context = common.context;
 
     if (opts.sha_args.items.len == 0 and !opts.select_all and opts.file_filter == null) {
         std.debug.print("error: at least one <sha> argument required (or use --all or --file <path>)\n", .{});
@@ -108,31 +127,13 @@ pub fn parseShowArgs(allocator: Allocator, args: []const [:0]u8) !ShowOptions {
     };
     errdefer deinitShaArgs(allocator, &opts.sha_args);
 
+    var common: CommonFlags = .{};
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
-        if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
-            return error.HelpRequested;
-        } else if (std.mem.eql(u8, arg, "--file")) {
-            i += 1;
-            if (i >= args.len) return error.MissingArgument;
-            opts.file_filter = args[i];
-        } else if (std.mem.eql(u8, arg, "--staged")) {
+        if (try parseCommonFlag(arg, &i, args, &common)) continue;
+        if (std.mem.eql(u8, arg, "--staged")) {
             opts.mode = .staged;
-        } else if (std.mem.eql(u8, arg, "--porcelain")) {
-            opts.output = .porcelain;
-        } else if (std.mem.eql(u8, arg, "--no-color")) {
-            opts.no_color = true;
-        } else if (std.mem.eql(u8, arg, "--tracked-only")) {
-            if (opts.diff_filter == .untracked_only) return error.ConflictingFilter;
-            opts.diff_filter = .tracked_only;
-        } else if (std.mem.eql(u8, arg, "--untracked-only")) {
-            if (opts.diff_filter == .tracked_only) return error.ConflictingFilter;
-            opts.diff_filter = .untracked_only;
-        } else if (std.mem.eql(u8, arg, "--unified") or std.mem.eql(u8, arg, "-U")) {
-            i += 1;
-            if (i >= args.len) return error.MissingArgument;
-            opts.context = std.fmt.parseInt(u32, args[i], 10) catch return error.InvalidArgument;
         } else if (std.mem.startsWith(u8, arg, "-")) {
             std.debug.print("error: unknown flag '{s}'\n", .{arg});
             return error.UnknownFlag;
@@ -141,6 +142,12 @@ pub fn parseShowArgs(allocator: Allocator, args: []const [:0]u8) !ShowOptions {
             try opts.sha_args.append(allocator, sha_arg);
         }
     }
+
+    opts.file_filter = common.file_filter;
+    opts.diff_filter = common.diff_filter;
+    opts.no_color = common.no_color;
+    opts.output = common.output;
+    opts.context = common.context;
 
     if (opts.sha_args.items.len == 0) {
         std.debug.print("error: at least one <sha> argument required\n", .{});
@@ -152,29 +159,13 @@ pub fn parseShowArgs(allocator: Allocator, args: []const [:0]u8) !ShowOptions {
 
 pub fn parseCountArgs(args: []const [:0]u8) !CountOptions {
     var opts: CountOptions = .{};
+    var common: CommonFlags = .{};
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
-        if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
-            return error.HelpRequested;
-        } else if (std.mem.eql(u8, arg, "--staged")) {
+        if (try parseCommonFlag(arg, &i, args, &common)) continue;
+        if (std.mem.eql(u8, arg, "--staged")) {
             opts.mode = .staged;
-        } else if (std.mem.eql(u8, arg, "--porcelain") or std.mem.eql(u8, arg, "--no-color")) {
-            // Accepted for consistency, no effect
-        } else if (std.mem.eql(u8, arg, "--tracked-only")) {
-            if (opts.diff_filter == .untracked_only) return error.ConflictingFilter;
-            opts.diff_filter = .tracked_only;
-        } else if (std.mem.eql(u8, arg, "--untracked-only")) {
-            if (opts.diff_filter == .tracked_only) return error.ConflictingFilter;
-            opts.diff_filter = .untracked_only;
-        } else if (std.mem.eql(u8, arg, "--file")) {
-            i += 1;
-            if (i >= args.len) return error.MissingArgument;
-            opts.file_filter = args[i];
-        } else if (std.mem.eql(u8, arg, "--unified") or std.mem.eql(u8, arg, "-U")) {
-            i += 1;
-            if (i >= args.len) return error.MissingArgument;
-            opts.context = std.fmt.parseInt(u32, args[i], 10) catch return error.InvalidArgument;
         } else {
             if (std.mem.startsWith(u8, arg, "-")) {
                 std.debug.print("error: unknown flag '{s}'\n", .{arg});
@@ -184,6 +175,10 @@ pub fn parseCountArgs(args: []const [:0]u8) !CountOptions {
             return error.InvalidArgument;
         }
     }
+    // Apply only the fields CountOptions has (no_color and output not present)
+    opts.file_filter = common.file_filter;
+    opts.diff_filter = common.diff_filter;
+    opts.context = common.context;
     return opts;
 }
 
@@ -193,33 +188,15 @@ pub fn parseCheckArgs(allocator: Allocator, args: []const [:0]u8) !CheckOptions 
     };
     errdefer deinitShaArgs(allocator, &opts.sha_args);
 
+    var common: CommonFlags = .{};
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
-        if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
-            return error.HelpRequested;
-        } else if (std.mem.eql(u8, arg, "--staged")) {
+        if (try parseCommonFlag(arg, &i, args, &common)) continue;
+        if (std.mem.eql(u8, arg, "--staged")) {
             opts.mode = .staged;
         } else if (std.mem.eql(u8, arg, "--exclusive")) {
             opts.exclusive = true;
-        } else if (std.mem.eql(u8, arg, "--tracked-only")) {
-            if (opts.diff_filter == .untracked_only) return error.ConflictingFilter;
-            opts.diff_filter = .tracked_only;
-        } else if (std.mem.eql(u8, arg, "--untracked-only")) {
-            if (opts.diff_filter == .tracked_only) return error.ConflictingFilter;
-            opts.diff_filter = .untracked_only;
-        } else if (std.mem.eql(u8, arg, "--file")) {
-            i += 1;
-            if (i >= args.len) return error.MissingArgument;
-            opts.file_filter = args[i];
-        } else if (std.mem.eql(u8, arg, "--porcelain")) {
-            opts.output = .porcelain;
-        } else if (std.mem.eql(u8, arg, "--no-color")) {
-            opts.no_color = true;
-        } else if (std.mem.eql(u8, arg, "--unified") or std.mem.eql(u8, arg, "-U")) {
-            i += 1;
-            if (i >= args.len) return error.MissingArgument;
-            opts.context = std.fmt.parseInt(u32, args[i], 10) catch return error.InvalidArgument;
         } else if (std.mem.startsWith(u8, arg, "-")) {
             std.debug.print("error: unknown flag '{s}'\n", .{arg});
             return error.UnknownFlag;
@@ -233,6 +210,12 @@ pub fn parseCheckArgs(allocator: Allocator, args: []const [:0]u8) !CheckOptions 
             try opts.sha_args.append(allocator, sha_arg);
         }
     }
+
+    opts.file_filter = common.file_filter;
+    opts.diff_filter = common.diff_filter;
+    opts.no_color = common.no_color;
+    opts.output = common.output;
+    opts.context = common.context;
 
     if (opts.sha_args.items.len == 0) {
         std.debug.print("error: at least one <sha> argument required\n", .{});
@@ -248,35 +231,17 @@ pub fn parseDiscardArgs(allocator: Allocator, args: []const [:0]u8) !DiscardOpti
     };
     errdefer deinitShaArgs(allocator, &opts.sha_args);
 
+    var common: CommonFlags = .{};
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
-        if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
-            return error.HelpRequested;
-        } else if (std.mem.eql(u8, arg, "--file")) {
-            i += 1;
-            if (i >= args.len) return error.MissingArgument;
-            opts.file_filter = args[i];
-        } else if (std.mem.eql(u8, arg, "--all")) {
+        if (try parseCommonFlag(arg, &i, args, &common)) continue;
+        if (std.mem.eql(u8, arg, "--all")) {
             opts.select_all = true;
         } else if (std.mem.eql(u8, arg, "--dry-run")) {
             opts.dry_run = true;
         } else if (std.mem.eql(u8, arg, "--force")) {
             opts.force = true;
-        } else if (std.mem.eql(u8, arg, "--tracked-only")) {
-            if (opts.diff_filter == .untracked_only) return error.ConflictingFilter;
-            opts.diff_filter = .tracked_only;
-        } else if (std.mem.eql(u8, arg, "--untracked-only")) {
-            if (opts.diff_filter == .tracked_only) return error.ConflictingFilter;
-            opts.diff_filter = .untracked_only;
-        } else if (std.mem.eql(u8, arg, "--porcelain")) {
-            opts.output = .porcelain;
-        } else if (std.mem.eql(u8, arg, "--no-color")) {
-            opts.no_color = true;
-        } else if (std.mem.eql(u8, arg, "--unified") or std.mem.eql(u8, arg, "-U")) {
-            i += 1;
-            if (i >= args.len) return error.MissingArgument;
-            opts.context = std.fmt.parseInt(u32, args[i], 10) catch return error.InvalidArgument;
         } else if (std.mem.startsWith(u8, arg, "-")) {
             std.debug.print("error: unknown flag '{s}'\n", .{arg});
             return error.UnknownFlag;
@@ -285,6 +250,12 @@ pub fn parseDiscardArgs(allocator: Allocator, args: []const [:0]u8) !DiscardOpti
             try opts.sha_args.append(allocator, sha_arg);
         }
     }
+
+    opts.file_filter = common.file_filter;
+    opts.diff_filter = common.diff_filter;
+    opts.no_color = common.no_color;
+    opts.output = common.output;
+    opts.context = common.context;
 
     if (opts.sha_args.items.len == 0 and !opts.select_all and opts.file_filter == null) {
         std.debug.print("error: at least one <sha> argument required (or use --all or --file <path>)\n", .{});
@@ -325,38 +296,20 @@ pub fn parseStashArgs(allocator: Allocator, args: []const [:0]u8) !StashOptions 
         // Otherwise: not a subcommand keyword, treat as flags/hash (implicit push)
     }
 
+    var common: CommonFlags = .{};
     while (i < args.len) : (i += 1) {
         const arg = args[i];
-        if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
-            return error.HelpRequested;
-        } else if (std.mem.eql(u8, arg, "--file")) {
-            i += 1;
-            if (i >= args.len) return error.MissingArgument;
-            opts.file_filter = args[i];
-        } else if (std.mem.eql(u8, arg, "--all")) {
+        if (try parseCommonFlag(arg, &i, args, &common)) continue;
+        if (std.mem.eql(u8, arg, "--all")) {
             opts.select_all = true;
         } else if (std.mem.eql(u8, arg, "--include-untracked") or std.mem.eql(u8, arg, "-u")) {
             opts.include_untracked = true;
-        } else if (std.mem.eql(u8, arg, "--tracked-only")) {
-            if (opts.diff_filter == .untracked_only) return error.ConflictingFilter;
-            opts.diff_filter = .tracked_only;
-        } else if (std.mem.eql(u8, arg, "--untracked-only")) {
-            if (opts.diff_filter == .tracked_only) return error.ConflictingFilter;
-            opts.diff_filter = .untracked_only;
         } else if (std.mem.eql(u8, arg, "--message") or std.mem.eql(u8, arg, "-m")) {
             i += 1;
             if (i >= args.len) return error.MissingArgument;
             opts.message = args[i];
-        } else if (std.mem.eql(u8, arg, "--porcelain")) {
-            opts.output = .porcelain;
-        } else if (std.mem.eql(u8, arg, "--no-color")) {
-            opts.no_color = true;
         } else if (std.mem.eql(u8, arg, "--verbose") or std.mem.eql(u8, arg, "-v")) {
             opts.verbose = true;
-        } else if (std.mem.eql(u8, arg, "--unified") or std.mem.eql(u8, arg, "-U")) {
-            i += 1;
-            if (i >= args.len) return error.MissingArgument;
-            opts.context = std.fmt.parseInt(u32, args[i], 10) catch return error.InvalidArgument;
         } else if (std.mem.startsWith(u8, arg, "-")) {
             std.debug.print("error: unknown flag '{s}'\n", .{arg});
             return error.UnknownFlag;
@@ -370,6 +323,12 @@ pub fn parseStashArgs(allocator: Allocator, args: []const [:0]u8) !StashOptions 
             try opts.sha_args.append(allocator, sha_arg);
         }
     }
+
+    opts.file_filter = common.file_filter;
+    opts.diff_filter = common.diff_filter;
+    opts.no_color = common.no_color;
+    opts.output = common.output;
+    opts.context = common.context;
 
     // --include-untracked conflicts with --tracked-only
     if (opts.include_untracked and opts.diff_filter == .tracked_only) {
