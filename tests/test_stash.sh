@@ -300,4 +300,30 @@ STASH_LIST720="$(git stash list)"
 [[ -n "$STASH_LIST720" ]] || fail "test 720: expected non-empty stash list"
 pass "test 720: explicit untracked hash works without -u"
 
+# ============================================================================
+# Test 721: stash with dirty index — staged changes are preserved, not stashed
+# ============================================================================
+new_repo
+sed -i '' '1s/.*/Staged change to alpha./' alpha.txt
+sed -i '' '1s/.*/Unstaged change to beta./' beta.txt
+
+# Stage alpha.txt only (leave beta.txt unstaged)
+git add alpha.txt
+
+SHA721="$("$GIT_HUNK" list --porcelain --oneline --file beta.txt | head -1 | cut -f1)"
+[[ -n "$SHA721" ]] || fail "test 721: no unstaged hunk found for beta.txt"
+"$GIT_HUNK" stash "$SHA721" > /dev/null
+
+STASH_SHOW721="$(git stash show)"
+echo "$STASH_SHOW721" | grep -q "beta.txt" \
+    || fail "test 721: stash should contain beta.txt, got: '$STASH_SHOW721'"
+if echo "$STASH_SHOW721" | grep -q "alpha.txt"; then
+    fail "test 721: stash should not contain alpha.txt (it was staged)"
+fi
+
+STAGED721="$(git diff --cached --name-only)"
+echo "$STAGED721" | grep -q "alpha.txt" \
+    || fail "test 721: alpha.txt should still be staged after stashing beta.txt"
+pass "test 721: stash preserves staged index, only stashes the specified hunk"
+
 report_results

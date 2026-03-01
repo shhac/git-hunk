@@ -523,4 +523,63 @@ if "$GIT_HUNK" reset "$STAGED_SHA224" > /dev/null 2>/dev/null; then
 fi
 pass "test 224: reset with stale SHA exits non-zero"
 
+# ============================================================================
+# Test 225: round-trip add+reset leaves worktree file byte-exact
+# ============================================================================
+new_repo
+sed -i '' '1s/.*/Round-trip test./' alpha.txt
+cp alpha.txt alpha.txt.orig
+
+SHA225="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+[[ -n "$SHA225" ]] || fail "test 225: no hunk found"
+"$GIT_HUNK" add "$SHA225" > /dev/null
+SHA225_STAGED="$("$GIT_HUNK" list --staged --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+[[ -n "$SHA225_STAGED" ]] || fail "test 225: no staged hunk found after add"
+"$GIT_HUNK" reset "$SHA225_STAGED" > /dev/null
+
+diff alpha.txt alpha.txt.orig > /dev/null \
+    || fail "test 225: add+reset left worktree file modified"
+rm alpha.txt.orig
+pass "test 225: add+reset roundtrip leaves worktree byte-exact"
+
+# ============================================================================
+# Test 226: add is not idempotent — second add fails (SHA stale after first)
+# ============================================================================
+new_repo
+sed -i '' '1s/.*/Idempotency test./' alpha.txt
+
+SHA226="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+[[ -n "$SHA226" ]] || fail "test 226: no hunk found"
+"$GIT_HUNK" add "$SHA226" > /dev/null
+
+if "$GIT_HUNK" add "$SHA226" > /dev/null 2>/dev/null; then
+    fail "test 226: expected non-zero exit on second add of same SHA"
+fi
+pass "test 226: second add of same SHA fails (SHA stale after first add)"
+
+# ============================================================================
+# Test 227: reset --all unstages all staged hunks across multiple files
+# ============================================================================
+new_repo
+sed -i '' '1s/.*/Changed alpha./' alpha.txt
+sed -i '' '1s/.*/Changed beta./' beta.txt
+sed -i '' '1s/.*/Changed gamma./' gamma.txt
+
+"$GIT_HUNK" add --all > /dev/null 2>/dev/null
+STAGED227_BEFORE="$(git diff --cached --name-only)"
+echo "$STAGED227_BEFORE" | grep -q "alpha.txt" || fail "test 227: alpha.txt should be staged"
+echo "$STAGED227_BEFORE" | grep -q "beta.txt" || fail "test 227: beta.txt should be staged"
+echo "$STAGED227_BEFORE" | grep -q "gamma.txt" || fail "test 227: gamma.txt should be staged"
+
+"$GIT_HUNK" reset --all > /dev/null 2>/dev/null
+STAGED227_AFTER="$(git diff --cached --name-only)"
+[[ -z "$STAGED227_AFTER" ]] \
+    || fail "test 227: git diff --cached should be empty after reset --all, got: '$STAGED227_AFTER'"
+
+UNSTAGED227="$(git diff --name-only)"
+echo "$UNSTAGED227" | grep -q "alpha.txt" || fail "test 227: alpha.txt should still be unstaged-modified"
+echo "$UNSTAGED227" | grep -q "beta.txt" || fail "test 227: beta.txt should still be unstaged-modified"
+echo "$UNSTAGED227" | grep -q "gamma.txt" || fail "test 227: gamma.txt should still be unstaged-modified"
+pass "test 227: reset --all unstages all staged hunks across multiple files"
+
 report_results
