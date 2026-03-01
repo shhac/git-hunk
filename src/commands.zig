@@ -597,6 +597,21 @@ fn printResultGroupPorcelain(stdout: *std.Io.Writer, verb: []const u8, rg: Resul
     try stdout.print("\n", .{});
 }
 
+fn collectUniqueFilePaths(arena: Allocator, matches: []const MatchedHunk) ![]const []const u8 {
+    var list: std.ArrayList([]const u8) = .empty;
+    for (matches) |m| {
+        var already_present = false;
+        for (list.items) |fp| {
+            if (std.mem.eql(u8, fp, m.hunk.file_path)) {
+                already_present = true;
+                break;
+            }
+        }
+        if (!already_present) try list.append(arena, m.hunk.file_path);
+    }
+    return list.items;
+}
+
 fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOptions, action: ApplyAction) !void {
     // For staging: diff unstaged hunks (index vs worktree)
     // For unstaging: diff staged hunks (HEAD vs index)
@@ -685,20 +700,7 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
     const reverse = action == .unstage;
 
     // Collect unique file paths from matched hunks for scoped diff queries
-    var file_paths: std.ArrayList([]const u8) = .empty;
-    defer file_paths.deinit(arena);
-    for (matched.items) |m| {
-        var already_present = false;
-        for (file_paths.items) |fp| {
-            if (std.mem.eql(u8, fp, m.hunk.file_path)) {
-                already_present = true;
-                break;
-            }
-        }
-        if (!already_present) {
-            try file_paths.append(arena, m.hunk.file_path);
-        }
-    }
+    const file_paths = try collectUniqueFilePaths(arena, matched.items);
 
     // Capture target-side hunks BEFORE applying, so we can detect merges.
     // For add (stage): target is staged (HEAD vs index) → parse git diff --cached
@@ -709,7 +711,7 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
     };
     var old_target_hunks: std.ArrayList(Hunk) = .empty;
     defer old_target_hunks.deinit(arena);
-    if (git.runGitDiffFiles(arena, target_mode, opts.context, file_paths.items)) |target_diff| {
+    if (git.runGitDiffFiles(arena, target_mode, opts.context, file_paths)) |target_diff| {
         if (target_diff.len > 0) {
             diff_mod.parseDiff(arena, target_diff, target_mode, &old_target_hunks) catch {};
         }
@@ -722,7 +724,7 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
     // Re-parse that diff to show the user the hash mapping.
     var new_hunks: std.ArrayList(Hunk) = .empty;
     defer new_hunks.deinit(arena);
-    if (git.runGitDiffFiles(arena, target_mode, opts.context, file_paths.items)) |new_diff| {
+    if (git.runGitDiffFiles(arena, target_mode, opts.context, file_paths)) |new_diff| {
         if (new_diff.len > 0) {
             diff_mod.parseDiff(arena, new_diff, target_mode, &new_hunks) catch {};
         }
@@ -1122,22 +1124,10 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
         index_patch = try patch_mod.buildCombinedPatch(arena, tracked_matched.items);
 
         // Collect unique file paths from tracked hunks for HEAD diff
-        var tracked_file_paths: std.ArrayList([]const u8) = .empty;
-        for (tracked_matched.items) |m| {
-            var already_present = false;
-            for (tracked_file_paths.items) |fp| {
-                if (std.mem.eql(u8, fp, m.hunk.file_path)) {
-                    already_present = true;
-                    break;
-                }
-            }
-            if (!already_present) {
-                try tracked_file_paths.append(arena, m.hunk.file_path);
-            }
-        }
+        const tracked_file_paths = try collectUniqueFilePaths(arena, tracked_matched.items);
 
         // Run HEAD-relative diff + parse
-        const head_diff_output = try git.runGitDiffHead(allocator, opts.context, tracked_file_paths.items);
+        const head_diff_output = try git.runGitDiffHead(allocator, opts.context, tracked_file_paths);
         defer allocator.free(head_diff_output);
 
         var head_hunks: std.ArrayList(Hunk) = .empty;
@@ -1231,25 +1221,13 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
     defer if (untracked_commit) |uc| allocator.free(uc);
 
     // Collect ALL file paths for stash message
-    var all_file_paths: std.ArrayList([]const u8) = .empty;
-    for (matched.items) |m| {
-        var already_present = false;
-        for (all_file_paths.items) |fp| {
-            if (std.mem.eql(u8, fp, m.hunk.file_path)) {
-                already_present = true;
-                break;
-            }
-        }
-        if (!already_present) {
-            try all_file_paths.append(arena, m.hunk.file_path);
-        }
-    }
+    const all_file_paths = try collectUniqueFilePaths(arena, matched.items);
 
     // Build stash message
     const stash_msg = if (opts.message) |m| m else blk: {
         var msg_buf: std.ArrayList(u8) = .empty;
         try msg_buf.appendSlice(arena, "git-hunk stash: ");
-        for (all_file_paths.items, 0..) |fp, i| {
+        for (all_file_paths, 0..) |fp, i| {
             if (i > 0) try msg_buf.appendSlice(arena, ", ");
             try msg_buf.appendSlice(arena, fp);
         }
