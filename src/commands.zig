@@ -16,7 +16,7 @@ const DiffMode = types.DiffMode;
 const DiffFilter = types.DiffFilter;
 const ListOptions = types.ListOptions;
 const AddResetOptions = types.AddResetOptions;
-const ShowOptions = types.ShowOptions;
+const DiffOptions = types.DiffOptions;
 const CountOptions = types.CountOptions;
 const CheckOptions = types.CheckOptions;
 const RestoreOptions = types.RestoreOptions;
@@ -890,7 +890,7 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
     }
 }
 
-pub fn cmdShow(allocator: Allocator, stdout: *std.Io.Writer, opts: ShowOptions) !void {
+pub fn cmdDiff(allocator: Allocator, stdout: *std.Io.Writer, opts: DiffOptions) !void {
     var arena_state = std.heap.ArenaAllocator.init(allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();

@@ -71,11 +71,11 @@ fn run() !void {
             handleParseError(stdout, err, .restore);
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
         try commands.cmdRestore(allocator, stdout, opts);
-    } else if (std.mem.eql(u8, subcmd, "show")) {
-        var opts = args_mod.parseShowArgs(allocator, process_args[2..]) catch |err|
-            handleParseError(stdout, err, .show);
+    } else if (std.mem.eql(u8, subcmd, "diff")) {
+        var opts = args_mod.parseDiffArgs(allocator, process_args[2..]) catch |err|
+            handleParseError(stdout, err, .diff);
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
-        try commands.cmdShow(allocator, stdout, opts);
+        try commands.cmdDiff(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "stash")) {
         var opts = args_mod.parseStashArgs(allocator, process_args[2..]) catch |err|
             handleParseError(stdout, err, .stash);
@@ -128,7 +128,7 @@ fn printUsage(stdout: *std.Io.Writer) !void {
         \\
         \\commands:
         \\  list      List diff hunks with content hashes
-        \\  show      Show diff content of specific hunks
+        \\  diff      Show diff content of specific hunks
         \\  add       Stage hunks (or selected lines) by hash
         \\  reset     Unstage hunks (or selected lines) by hash
         \\  restore   Restore unstaged worktree changes by hash

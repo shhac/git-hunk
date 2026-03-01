@@ -74,7 +74,7 @@ pub const AddResetOptions = struct {
     context: ?u32 = null,
 };
 
-pub const ShowOptions = struct {
+pub const DiffOptions = struct {
     sha_args: std.ArrayList(ShaArg),
     diff_filter: DiffFilter = .all,
     file_filter: ?[]const u8 = null,

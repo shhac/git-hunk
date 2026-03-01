@@ -149,18 +149,18 @@ EMPTY111="$("$GIT_HUNK" list --untracked-only --porcelain --oneline 2>/dev/null 
 pass "test 111: --untracked-only with no untracked files shows nothing"
 
 # ============================================================================
-# Test 112: show displays untracked file content
+# Test 112: diff displays untracked file content
 # ============================================================================
 new_repo
 echo "unique_marker_for_show_test" > untracked_show.txt
 
 SHA112="$("$GIT_HUNK" list --porcelain --oneline --file untracked_show.txt | head -1 | cut -f1)"
 [[ -n "$SHA112" ]] || fail "test 112: no untracked hunk found"
-SHOW_OUT="$("$GIT_HUNK" show --no-color "$SHA112")"
-echo "$SHOW_OUT" | grep -q "unique_marker_for_show_test" \
-    || fail "test 112: show output missing file content, got: '$SHOW_OUT'"
-echo "$SHOW_OUT" | grep -qE '(new file|@@)' \
-    || fail "test 112: show output missing new file or @@ header, got: '$SHOW_OUT'"
-pass "test 112: show displays untracked file content"
+DIFF_OUT="$("$GIT_HUNK" diff --no-color "$SHA112")"
+echo "$DIFF_OUT" | grep -q "unique_marker_for_show_test" \
+    || fail "test 112: diff output missing file content, got: '$DIFF_OUT'"
+echo "$DIFF_OUT" | grep -qE '(new file|@@)' \
+    || fail "test 112: diff output missing new file or @@ header, got: '$DIFF_OUT'"
+pass "test 112: diff displays untracked file content"
 
 report_results

@@ -10,7 +10,7 @@ const DiffFilter = types.DiffFilter;
 const OutputMode = types.OutputMode;
 const ListOptions = types.ListOptions;
 const AddResetOptions = types.AddResetOptions;
-const ShowOptions = types.ShowOptions;
+const DiffOptions = types.DiffOptions;
 const CountOptions = types.CountOptions;
 const CheckOptions = types.CheckOptions;
 const RestoreOptions = types.RestoreOptions;
@@ -121,8 +121,8 @@ pub fn parseAddResetArgs(allocator: Allocator, args: []const [:0]u8) !AddResetOp
     return opts;
 }
 
-pub fn parseShowArgs(allocator: Allocator, args: []const [:0]u8) !ShowOptions {
-    var opts: ShowOptions = .{
+pub fn parseDiffArgs(allocator: Allocator, args: []const [:0]u8) !DiffOptions {
+    var opts: DiffOptions = .{
         .sha_args = .empty,
     };
     errdefer deinitShaArgs(allocator, &opts.sha_args);
@@ -618,61 +618,61 @@ test "parseAddResetArgs context missing arg" {
     try std.testing.expectError(error.MissingArgument, parseAddResetArgs(allocator, &args_arr));
 }
 
-test "parseShowArgs valid sha" {
+test "parseDiffArgs valid sha" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]u8{@constCast("abcd1234")};
-    var opts = try parseShowArgs(allocator, &args_arr);
+    var opts = try parseDiffArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expectEqual(@as(usize, 1), opts.sha_args.items.len);
 }
 
-test "parseShowArgs staged flag" {
+test "parseDiffArgs staged flag" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]u8{ @constCast("abcd1234"), @constCast("--staged") };
-    var opts = try parseShowArgs(allocator, &args_arr);
+    var opts = try parseDiffArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expectEqual(DiffMode.staged, opts.mode);
 }
 
-test "parseShowArgs porcelain flag" {
+test "parseDiffArgs porcelain flag" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]u8{ @constCast("abcd1234"), @constCast("--porcelain") };
-    var opts = try parseShowArgs(allocator, &args_arr);
+    var opts = try parseDiffArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expectEqual(OutputMode.porcelain, opts.output);
 }
 
-test "parseShowArgs no-color flag" {
+test "parseDiffArgs no-color flag" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]u8{ @constCast("abcd1234"), @constCast("--no-color") };
-    var opts = try parseShowArgs(allocator, &args_arr);
+    var opts = try parseDiffArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expect(opts.no_color);
 }
 
-test "parseShowArgs unknown flag" {
+test "parseDiffArgs unknown flag" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]u8{ @constCast("abcd1234"), @constCast("--unknown") };
-    try std.testing.expectError(error.UnknownFlag, parseShowArgs(allocator, &args_arr));
+    try std.testing.expectError(error.UnknownFlag, parseDiffArgs(allocator, &args_arr));
 }
 
-test "parseShowArgs missing sha" {
+test "parseDiffArgs missing sha" {
     const allocator = std.testing.allocator;
-    try std.testing.expectError(error.MissingArgument, parseShowArgs(allocator, &.{}));
+    try std.testing.expectError(error.MissingArgument, parseDiffArgs(allocator, &.{}));
 }
 
-test "parseShowArgs context" {
+test "parseDiffArgs context" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]u8{ @constCast("abcd1234"), @constCast("--unified"), @constCast("2") };
-    var opts = try parseShowArgs(allocator, &args_arr);
+    var opts = try parseDiffArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expectEqual(@as(?u32, 2), opts.context);
 }
 
-test "parseShowArgs context missing arg" {
+test "parseDiffArgs context missing arg" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]u8{ @constCast("abcd1234"), @constCast("--unified") };
-    try std.testing.expectError(error.MissingArgument, parseShowArgs(allocator, &args_arr));
+    try std.testing.expectError(error.MissingArgument, parseDiffArgs(allocator, &args_arr));
 }
 
 test "parseShaArg plain sha" {
@@ -751,10 +751,10 @@ test "parseAddResetArgs sha with line spec" {
     try std.testing.expectEqual(@as(u32, 5), opts.sha_args.items[0].line_spec.?.ranges[0].end);
 }
 
-test "parseShowArgs sha with line spec" {
+test "parseDiffArgs sha with line spec" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]u8{@constCast("abcd1234:1-3,7")};
-    var opts = try parseShowArgs(allocator, &args_arr);
+    var opts = try parseDiffArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expectEqual(@as(usize, 1), opts.sha_args.items.len);
     try std.testing.expect(opts.sha_args.items[0].line_spec != null);

@@ -2,7 +2,7 @@ const std = @import("std");
 
 pub const Command = enum {
     list,
-    show,
+    diff,
     add,
     reset,
     restore,
@@ -14,7 +14,7 @@ pub const Command = enum {
 pub fn commandFromString(s: []const u8) ?Command {
     const map = std.StaticStringMap(Command).initComptime(.{
         .{ "list", .list },
-        .{ "show", .show },
+        .{ "diff", .diff },
         .{ "add", .add },
         .{ "reset", .reset },
         .{ "restore", .restore },
@@ -28,7 +28,7 @@ pub fn commandFromString(s: []const u8) ?Command {
 pub fn printCommandHelp(stdout: *std.Io.Writer, cmd: Command) !void {
     const text = switch (cmd) {
         .list => list_help,
-        .show => show_help,
+        .diff => diff_help,
         .add => add_help,
         .reset => reset_help,
         .restore => restore_help,
@@ -66,11 +66,11 @@ const list_help: []const u8 =
     \\
 ;
 
-const show_help: []const u8 =
-    \\git-hunk show - Show diff content of specific hunks
+const diff_help: []const u8 =
+    \\git-hunk diff - Show diff content of specific hunks
     \\
     \\USAGE
-    \\  git-hunk show [options] <sha[:lines]>...
+    \\  git-hunk diff [options] <sha[:lines]>...
     \\
     \\ARGUMENTS
     \\  <sha[:lines]>...  One or more hunk hashes (prefix match, min 4 hex chars).
@@ -87,10 +87,10 @@ const show_help: []const u8 =
     \\  --help, -h        Show this help
     \\
     \\EXAMPLES
-    \\  git-hunk show a3f7c21                  Show a hunk by full hash
-    \\  git-hunk show a3f7 b82e                Show multiple hunks by prefix
-    \\  git-hunk show a3f7c21 --staged         Show a staged hunk
-    \\  git-hunk show a3f7:3-5,8               Show specific lines of a hunk
+    \\  git-hunk diff a3f7c21                  Show a hunk by full hash
+    \\  git-hunk diff a3f7 b82e                Show multiple hunks by prefix
+    \\  git-hunk diff a3f7c21 --staged         Show a staged hunk
+    \\  git-hunk diff a3f7:3-5,8               Show specific lines of a hunk
     \\
 ;
 

@@ -47,20 +47,20 @@ STATUS802="$(git status --short empty.txt)"
 pass "test 802: reset unstages empty file"
 
 # ============================================================================
-# Test 803: show displays patch header for empty file
+# Test 803: diff displays patch header for empty file
 # ============================================================================
 new_repo
 touch empty.txt
 
 SHA803="$("$GIT_HUNK" list --porcelain --oneline | grep empty.txt | cut -f1)"
-SHOW803="$("$GIT_HUNK" show "$SHA803")"
-echo "$SHOW803" | grep -q 'new file mode' \
-    || fail "test 803: expected 'new file mode' in show output"
-echo "$SHOW803" | grep -q '\-\-\- /dev/null' \
-    || fail "test 803: expected '--- /dev/null' in show output"
-echo "$SHOW803" | grep -q '+++ b/empty.txt' \
-    || fail "test 803: expected '+++ b/empty.txt' in show output"
-pass "test 803: show displays patch header for empty file"
+DIFF803="$("$GIT_HUNK" diff "$SHA803")"
+echo "$DIFF803" | grep -q 'new file mode' \
+    || fail "test 803: expected 'new file mode' in diff output"
+echo "$DIFF803" | grep -q '\-\-\- /dev/null' \
+    || fail "test 803: expected '--- /dev/null' in diff output"
+echo "$DIFF803" | grep -q '+++ b/empty.txt' \
+    || fail "test 803: expected '+++ b/empty.txt' in diff output"
+pass "test 803: diff displays patch header for empty file"
 
 # ============================================================================
 # Test 804: stash roundtrip for empty untracked file
@@ -134,9 +134,9 @@ OUT807="$("$GIT_HUNK" list --staged --porcelain --oneline)"
 echo "$OUT807" | grep -q 'empty.txt' \
     || fail "test 807: expected empty.txt in staged list output, got: '$OUT807'"
 SHA807="$(echo "$OUT807" | grep empty.txt | cut -f1)"
-SHOW807="$("$GIT_HUNK" show "$SHA807" --staged)"
-echo "$SHOW807" | grep -q 'deleted file mode' \
-    || fail "test 807: expected 'deleted file mode' in show output"
+DIFF807="$("$GIT_HUNK" diff "$SHA807" --staged)"
+echo "$DIFF807" | grep -q 'deleted file mode' \
+    || fail "test 807: expected 'deleted file mode' in diff output"
 "$GIT_HUNK" reset "$SHA807" > /dev/null
 STATUS807="$(git status --short empty.txt)"
 [[ "$STATUS807" == " D empty.txt" ]] \

@@ -107,7 +107,7 @@ pub fn printDiffHuman(stdout: *std.Io.Writer, h: Hunk, use_color: bool) !void {
 }
 
 /// Print raw hunk lines (@@-header + body) with optional color for +/- lines.
-/// Used by cmdShow human mode.
+/// Used by cmdDiff human mode.
 pub fn printRawLinesHuman(stdout: *std.Io.Writer, raw_lines: []const u8, use_color: bool) !void {
     if (raw_lines.len == 0) return;
     var iter = std.mem.splitScalar(u8, raw_lines, '\n');
@@ -124,7 +124,7 @@ pub fn printRawLinesHuman(stdout: *std.Io.Writer, raw_lines: []const u8, use_col
 }
 
 /// Print raw hunk lines with line numbers and selection markers.
-/// Used by cmdShow when a line spec is present.
+/// Used by cmdDiff when a line spec is present.
 pub fn printRawLinesWithLineNumbers(stdout: *std.Io.Writer, raw_lines: []const u8, line_spec: LineSpec, use_color: bool) !void {
     if (raw_lines.len == 0) return;
 
