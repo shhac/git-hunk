@@ -612,6 +612,53 @@ fn collectUniqueFilePaths(arena: Allocator, matches: []const MatchedHunk) ![]con
     return list.items;
 }
 
+/// Resolve SHA prefix args to matched hunks, deduplicating by full SHA and merging
+/// line specs. Appends results to `matched`. Exits on NotFound/AmbiguousPrefix errors.
+fn resolveMatchedHunks(
+    arena: Allocator,
+    hunks: []const Hunk,
+    sha_args: []const types.ShaArg,
+    file_filter: ?[]const u8,
+    matched: *std.ArrayList(MatchedHunk),
+) !void {
+    for (sha_args) |sha_arg| {
+        const hunk = patch_mod.findHunkByShaPrefix(hunks, sha_arg.prefix, file_filter) catch |err| switch (err) {
+            error.NotFound => {
+                std.debug.print("error: no hunk matching '{s}'\n", .{sha_arg.prefix});
+                std.process.exit(1);
+            },
+            error.AmbiguousPrefix => {
+                std.debug.print("error: ambiguous prefix '{s}' — matches multiple hunks\n", .{sha_arg.prefix});
+                std.process.exit(1);
+            },
+            else => return err,
+        };
+        // Deduplicate: merge line specs for same hunk, or skip if already whole-hunk
+        var found_existing = false;
+        for (matched.items) |*existing| {
+            if (std.mem.eql(u8, &existing.hunk.sha_hex, &hunk.sha_hex)) {
+                // Merge: if either has no line_spec, result is whole hunk
+                if (existing.line_spec == null or sha_arg.line_spec == null) {
+                    existing.line_spec = null;
+                } else {
+                    // Merge ranges by concatenation
+                    const old_ranges = existing.line_spec.?.ranges;
+                    const new_ranges = sha_arg.line_spec.?.ranges;
+                    const merged = try arena.alloc(LineRange, old_ranges.len + new_ranges.len);
+                    @memcpy(merged[0..old_ranges.len], old_ranges);
+                    @memcpy(merged[old_ranges.len..], new_ranges);
+                    existing.line_spec = .{ .ranges = merged };
+                }
+                found_existing = true;
+                break;
+            }
+        }
+        if (!found_existing) {
+            try matched.append(arena, .{ .hunk = hunk, .line_spec = sha_arg.line_spec });
+        }
+    }
+}
+
 fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOptions, action: ApplyAction) !void {
     // For staging: diff unstaged hunks (index vs worktree)
     // For unstaging: diff staged hunks (HEAD vs index)
@@ -654,42 +701,7 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
         }
     } else {
         // SHA prefix matching mode
-        for (opts.sha_args.items) |sha_arg| {
-            const hunk = patch_mod.findHunkByShaPrefix(hunks.items, sha_arg.prefix, opts.file_filter) catch |err| switch (err) {
-                error.NotFound => {
-                    std.debug.print("error: no hunk matching '{s}'\n", .{sha_arg.prefix});
-                    std.process.exit(1);
-                },
-                error.AmbiguousPrefix => {
-                    std.debug.print("error: ambiguous prefix '{s}' — matches multiple hunks\n", .{sha_arg.prefix});
-                    std.process.exit(1);
-                },
-                else => return err,
-            };
-            // Deduplicate: merge line specs for same hunk, or skip if already whole-hunk
-            var found_existing = false;
-            for (matched.items) |*existing| {
-                if (std.mem.eql(u8, &existing.hunk.sha_hex, &hunk.sha_hex)) {
-                    // Merge: if either has no line_spec, result is whole hunk
-                    if (existing.line_spec == null or sha_arg.line_spec == null) {
-                        existing.line_spec = null;
-                    } else {
-                        // Merge ranges by concatenation
-                        const old_ranges = existing.line_spec.?.ranges;
-                        const new_ranges = sha_arg.line_spec.?.ranges;
-                        const merged = try arena.alloc(LineRange, old_ranges.len + new_ranges.len);
-                        @memcpy(merged[0..old_ranges.len], old_ranges);
-                        @memcpy(merged[old_ranges.len..], new_ranges);
-                        existing.line_spec = .{ .ranges = merged };
-                    }
-                    found_existing = true;
-                    break;
-                }
-            }
-            if (!found_existing) {
-                try matched.append(arena, .{ .hunk = hunk, .line_spec = sha_arg.line_spec });
-            }
-        }
+        try resolveMatchedHunks(arena, hunks.items, opts.sha_args.items, opts.file_filter, &matched);
     }
 
     // Sort hunks by file path and line order for a valid combined patch
@@ -798,40 +810,7 @@ pub fn cmdDiscard(allocator: Allocator, stdout: *std.Io.Writer, opts: DiscardOpt
             try matched.append(arena, .{ .hunk = h, .line_spec = null });
         }
     } else {
-        for (opts.sha_args.items) |sha_arg| {
-            const hunk = patch_mod.findHunkByShaPrefix(hunks.items, sha_arg.prefix, opts.file_filter) catch |err| switch (err) {
-                error.NotFound => {
-                    std.debug.print("error: no hunk matching '{s}'\n", .{sha_arg.prefix});
-                    std.process.exit(1);
-                },
-                error.AmbiguousPrefix => {
-                    std.debug.print("error: ambiguous prefix '{s}' — matches multiple hunks\n", .{sha_arg.prefix});
-                    std.process.exit(1);
-                },
-                else => return err,
-            };
-            // Deduplicate: merge line specs for same hunk
-            var found_existing = false;
-            for (matched.items) |*existing| {
-                if (std.mem.eql(u8, &existing.hunk.sha_hex, &hunk.sha_hex)) {
-                    if (existing.line_spec == null or sha_arg.line_spec == null) {
-                        existing.line_spec = null;
-                    } else {
-                        const old_ranges = existing.line_spec.?.ranges;
-                        const new_ranges = sha_arg.line_spec.?.ranges;
-                        const merged = try arena.alloc(types.LineRange, old_ranges.len + new_ranges.len);
-                        @memcpy(merged[0..old_ranges.len], old_ranges);
-                        @memcpy(merged[old_ranges.len..], new_ranges);
-                        existing.line_spec = .{ .ranges = merged };
-                    }
-                    found_existing = true;
-                    break;
-                }
-            }
-            if (!found_existing) {
-                try matched.append(arena, .{ .hunk = hunk, .line_spec = sha_arg.line_spec });
-            }
-        }
+        try resolveMatchedHunks(arena, hunks.items, opts.sha_args.items, opts.file_filter, &matched);
     }
 
     if (matched.items.len == 0) {
@@ -936,40 +915,7 @@ pub fn cmdShow(allocator: Allocator, stdout: *std.Io.Writer, opts: ShowOptions) 
     var matched: std.ArrayList(MatchedHunk) = .empty;
     defer matched.deinit(arena);
 
-    for (opts.sha_args.items) |sha_arg| {
-        const hunk = patch_mod.findHunkByShaPrefix(hunks.items, sha_arg.prefix, opts.file_filter) catch |err| switch (err) {
-            error.NotFound => {
-                std.debug.print("error: no hunk matching '{s}'\n", .{sha_arg.prefix});
-                std.process.exit(1);
-            },
-            error.AmbiguousPrefix => {
-                std.debug.print("error: ambiguous prefix '{s}' — matches multiple hunks\n", .{sha_arg.prefix});
-                std.process.exit(1);
-            },
-            else => return err,
-        };
-        // Deduplicate with line spec merging
-        var found_existing = false;
-        for (matched.items) |*existing| {
-            if (std.mem.eql(u8, &existing.hunk.sha_hex, &hunk.sha_hex)) {
-                if (existing.line_spec == null or sha_arg.line_spec == null) {
-                    existing.line_spec = null;
-                } else {
-                    const old_ranges = existing.line_spec.?.ranges;
-                    const new_ranges = sha_arg.line_spec.?.ranges;
-                    const merged = try arena.alloc(LineRange, old_ranges.len + new_ranges.len);
-                    @memcpy(merged[0..old_ranges.len], old_ranges);
-                    @memcpy(merged[old_ranges.len..], new_ranges);
-                    existing.line_spec = .{ .ranges = merged };
-                }
-                found_existing = true;
-                break;
-            }
-        }
-        if (!found_existing) {
-            try matched.append(arena, .{ .hunk = hunk, .line_spec = sha_arg.line_spec });
-        }
-    }
+    try resolveMatchedHunks(arena, hunks.items, opts.sha_args.items, opts.file_filter, &matched);
 
     const use_color = format.shouldUseColor(opts.output, opts.no_color);
 
@@ -1041,40 +987,7 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
             try matched.append(arena, .{ .hunk = h, .line_spec = null });
         }
     } else {
-        for (opts.sha_args.items) |sha_arg| {
-            const hunk = patch_mod.findHunkByShaPrefix(hunks.items, sha_arg.prefix, opts.file_filter) catch |err| switch (err) {
-                error.NotFound => {
-                    std.debug.print("error: no hunk matching '{s}'\n", .{sha_arg.prefix});
-                    std.process.exit(1);
-                },
-                error.AmbiguousPrefix => {
-                    std.debug.print("error: ambiguous prefix '{s}' — matches multiple hunks\n", .{sha_arg.prefix});
-                    std.process.exit(1);
-                },
-                else => return err,
-            };
-            // Deduplicate: merge line specs for same hunk
-            var found_existing = false;
-            for (matched.items) |*existing| {
-                if (std.mem.eql(u8, &existing.hunk.sha_hex, &hunk.sha_hex)) {
-                    if (existing.line_spec == null or sha_arg.line_spec == null) {
-                        existing.line_spec = null;
-                    } else {
-                        const old_ranges = existing.line_spec.?.ranges;
-                        const new_ranges = sha_arg.line_spec.?.ranges;
-                        const merged = try arena.alloc(LineRange, old_ranges.len + new_ranges.len);
-                        @memcpy(merged[0..old_ranges.len], old_ranges);
-                        @memcpy(merged[old_ranges.len..], new_ranges);
-                        existing.line_spec = .{ .ranges = merged };
-                    }
-                    found_existing = true;
-                    break;
-                }
-            }
-            if (!found_existing) {
-                try matched.append(arena, .{ .hunk = hunk, .line_spec = sha_arg.line_spec });
-            }
-        }
+        try resolveMatchedHunks(arena, hunks.items, opts.sha_args.items, opts.file_filter, &matched);
     }
 
     if (matched.items.len == 0) {
