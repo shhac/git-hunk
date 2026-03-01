@@ -6,6 +6,7 @@ const Hunk = types.Hunk;
 const MatchedHunk = types.MatchedHunk;
 const LineSpec = types.LineSpec;
 const LineRange = types.LineRange;
+const rangesOverlap = types.rangesOverlap;
 
 /// Worktree line range [start, end] inclusive.
 const WorktreeRange = struct {
@@ -20,13 +21,6 @@ fn worktreeRange(ns: u32, nc: u32) WorktreeRange {
         .start = ns,
         .end = if (nc == 0) ns else ns + nc - 1,
     };
-}
-
-/// Check whether two line ranges overlap (treating count=0 as spanning 1 line).
-fn rangesOverlap(a_start: u32, a_count: u32, b_start: u32, b_count: u32) bool {
-    const a_end = a_start + @max(a_count, 1) - 1;
-    const b_end = b_start + @max(b_count, 1) - 1;
-    return a_start <= b_end and b_start <= a_end;
 }
 
 /// Check if a worktree line position falls within any of the target ranges.
@@ -287,25 +281,6 @@ fn computeLineSpecForRanges(
 
 const testMakeHunk = types.testMakeHunk;
 const computeHunkSha = @import("diff.zig").computeHunkSha;
-
-test "rangesOverlap basic overlap" {
-    try std.testing.expect(rangesOverlap(1, 5, 3, 5)); // [1,5] ∩ [3,7]
-    try std.testing.expect(rangesOverlap(3, 5, 1, 5)); // symmetric
-}
-
-test "rangesOverlap no overlap" {
-    try std.testing.expect(!rangesOverlap(1, 3, 5, 3)); // [1,3] and [5,7]
-    try std.testing.expect(!rangesOverlap(5, 3, 1, 3)); // symmetric
-}
-
-test "rangesOverlap adjacent not overlapping" {
-    try std.testing.expect(!rangesOverlap(1, 3, 4, 3)); // [1,3] and [4,6]
-}
-
-test "rangesOverlap count zero treated as 1" {
-    try std.testing.expect(rangesOverlap(5, 0, 5, 1)); // [5,5] ∩ [5,5]
-    try std.testing.expect(!rangesOverlap(5, 0, 6, 1)); // [5,5] and [6,6]
-}
 
 test "computeLineSpecForOverlap merged hunk walkthrough" {
     // From investigation notes: HEAD diff merges B→X (staged) and D→Y (unstaged)

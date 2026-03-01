@@ -21,6 +21,7 @@ const CountOptions = types.CountOptions;
 const CheckOptions = types.CheckOptions;
 const DiscardOptions = types.DiscardOptions;
 const StashOptions = types.StashOptions;
+const rangesOverlap = types.rangesOverlap;
 
 /// Get diff output including untracked files (unstaged mode only).
 /// Returns the tracked diff output and, separately, the untracked diff output.
@@ -342,13 +343,6 @@ const ResultGroup = struct {
     /// File path.
     file_path: []const u8,
 };
-
-/// Check whether two line ranges overlap (treating count=0 as spanning 1 line).
-fn rangesOverlap(a_start: u32, a_count: u32, b_start: u32, b_count: u32) bool {
-    const a_end = a_start + @max(a_count, 1) - 1;
-    const b_end = b_start + @max(b_count, 1) - 1;
-    return a_start <= b_end and b_start <= a_end;
-}
 
 /// Build result groups by comparing old vs new target-side hunks and matching
 /// applied/consumed inputs to created results.
@@ -1338,35 +1332,6 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
 // ============================================================================
 // Tests
 // ============================================================================
-
-test "rangesOverlap basic cases" {
-    // Overlapping ranges
-    try std.testing.expect(rangesOverlap(10, 5, 12, 5)); // [10,14] vs [12,16]
-    try std.testing.expect(rangesOverlap(12, 5, 10, 5)); // symmetric
-
-    // Adjacent (touching) ranges do NOT overlap
-    try std.testing.expect(!rangesOverlap(10, 5, 15, 5)); // [10,14] vs [15,19]
-
-    // Non-overlapping ranges
-    try std.testing.expect(!rangesOverlap(10, 5, 20, 5)); // [10,14] vs [20,24]
-
-    // Contained range
-    try std.testing.expect(rangesOverlap(10, 10, 12, 3)); // [10,19] vs [12,14]
-
-    // Same range
-    try std.testing.expect(rangesOverlap(10, 5, 10, 5));
-
-    // Single-line ranges
-    try std.testing.expect(rangesOverlap(10, 1, 10, 1));
-    try std.testing.expect(!rangesOverlap(10, 1, 11, 1));
-}
-
-test "rangesOverlap zero count (pure insertion)" {
-    // count=0 is treated as spanning 1 line at start
-    try std.testing.expect(rangesOverlap(10, 0, 10, 5)); // insertion at 10 vs [10,14]
-    try std.testing.expect(rangesOverlap(10, 5, 10, 0)); // symmetric
-    try std.testing.expect(!rangesOverlap(10, 0, 11, 5)); // insertion at 10 vs [11,15]
-}
 
 test "buildResultGroups simple 1-to-1 mapping" {
     const allocator = std.testing.allocator;

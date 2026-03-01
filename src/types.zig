@@ -128,6 +128,13 @@ pub const StashOptions = struct {
     context: ?u32 = null,
 };
 
+/// Check whether two line ranges overlap (treating count=0 as spanning 1 line).
+pub fn rangesOverlap(a_start: u32, a_count: u32, b_start: u32, b_count: u32) bool {
+    const a_end = a_start + @max(a_count, 1) - 1;
+    const b_end = b_start + @max(b_count, 1) - 1;
+    return a_start <= b_end and b_start <= a_end;
+}
+
 pub fn fatal(comptime format: []const u8, args: anytype) noreturn {
     std.debug.print("error: " ++ format ++ "\n", args);
     std.process.exit(1);
@@ -154,6 +161,42 @@ pub fn testMakeHunk(file_path: []const u8, old_start: u32, old_count: u32, new_s
 // ============================================================================
 // Tests
 // ============================================================================
+
+test "rangesOverlap basic cases" {
+    // Overlapping ranges
+    try std.testing.expect(rangesOverlap(1, 5, 3, 5)); // [1,5] ∩ [3,7]
+    try std.testing.expect(rangesOverlap(3, 5, 1, 5)); // symmetric
+    try std.testing.expect(rangesOverlap(10, 5, 12, 5)); // [10,14] vs [12,16]
+    try std.testing.expect(rangesOverlap(12, 5, 10, 5)); // symmetric
+
+    // Adjacent (touching) ranges do NOT overlap
+    try std.testing.expect(!rangesOverlap(1, 3, 4, 3)); // [1,3] and [4,6]
+    try std.testing.expect(!rangesOverlap(10, 5, 15, 5)); // [10,14] vs [15,19]
+
+    // Non-overlapping ranges
+    try std.testing.expect(!rangesOverlap(1, 3, 5, 3)); // [1,3] and [5,7]
+    try std.testing.expect(!rangesOverlap(5, 3, 1, 3)); // symmetric
+    try std.testing.expect(!rangesOverlap(10, 5, 20, 5)); // [10,14] vs [20,24]
+
+    // Contained range
+    try std.testing.expect(rangesOverlap(10, 10, 12, 3)); // [10,19] vs [12,14]
+
+    // Same range
+    try std.testing.expect(rangesOverlap(10, 5, 10, 5));
+
+    // Single-line ranges
+    try std.testing.expect(rangesOverlap(10, 1, 10, 1));
+    try std.testing.expect(!rangesOverlap(10, 1, 11, 1));
+}
+
+test "rangesOverlap zero count (pure insertion/deletion)" {
+    // count=0 is treated as spanning 1 line at start
+    try std.testing.expect(rangesOverlap(5, 0, 5, 1)); // [5,5] ∩ [5,5]
+    try std.testing.expect(rangesOverlap(10, 0, 10, 5)); // insertion at 10 vs [10,14]
+    try std.testing.expect(rangesOverlap(10, 5, 10, 0)); // symmetric
+    try std.testing.expect(!rangesOverlap(5, 0, 6, 1)); // [5,5] and [6,6]
+    try std.testing.expect(!rangesOverlap(10, 0, 11, 5)); // insertion at 10 vs [11,15]
+}
 
 test "LineSpec.containsLine single range" {
     const ranges = [_]LineRange{.{ .start = 3, .end = 7 }};
