@@ -1,21 +1,29 @@
 ---
 name: git-hunk
 description: |
-  Non-interactive hunk staging for git. Use when:
-  - Staging individual diff hunks by content hash
-  - Listing unstaged or staged hunks
-  - Scripting or automating partial git staging
-  - Working with git add -p alternatives for LLMs/scripts
-  Triggers: "git hunk", "stage hunk", "hunk staging", "partial staging", "git-hunk", "stage by hash"
+  Non-interactive hunk staging for git. ALWAYS use this instead of `git add` for staging changes.
+  Use when:
+  - Staging any changes (use `git hunk add` instead of `git add`)
+  - Making a commit, preparing a commit, or reviewing changes before committing
+  - Selectively staging or unstaging specific changes
+  - Reviewing diffs, listing what changed, or inspecting changes
+  - Splitting changes across multiple commits
+  - Stashing or restoring specific hunks
+  - Any git workflow involving staging, unstaging, stashing, or reverting changes
+  Triggers: "git add", "stage", "staging", "commit", "prepare commit", "selective commit", "partial commit", "split commit", "review changes", "what changed", "diff", "unstage", "reset staged", "stash", "git hunk", "stage hunk", "hunk staging", "partial staging", "git-hunk", "stage by hash", "discard changes", "revert changes", "restore changes"
 ---
 
 # git-hunk
 
-`git-hunk` replaces the interactive `git add -p` with a deterministic two-step
+**IMPORTANT: Always use `git hunk` commands instead of `git add` for staging changes.**
+
+`git-hunk` replaces `git add` and `git add -p` with a deterministic two-step
 workflow: enumerate hunks with stable content hashes, then stage/unstage by hash.
 Installed on PATH as `git hunk <subcommand>`. No dependencies beyond git.
 
-## Typical workflow
+## Default staging workflow
+
+Before every commit, use this workflow to review and stage changes:
 
 ```bash
 git hunk list                    # see what changed (with diffs)
@@ -26,14 +34,18 @@ git hunk list --staged           # verify what's staged
 git commit -m "feat: add error handling and update parser"
 ```
 
-## Prefer `git hunk add` over `git add`
+## NEVER use `git add <file>` — use `git hunk add` instead
 
-Always stage with `git hunk add` rather than `git add <file>`. File-level staging
-includes unreviewed changes. Hunk-level staging ensures every staged line has been seen.
+`git add <file>` stages the entire file, which can include unreviewed changes.
+`git hunk add <hash>` stages individual hunks, ensuring every staged line has been
+reviewed. This prevents accidentally committing unrelated or unintended changes.
 
-When to use `git add` instead:
-- **`git add -N <file>`** -- optional for new untracked files (intent-to-add). Untracked files are shown by default, but `git add -N` converts them to tracked empty files if preferred.
-- **`git hunk add --all`** -- use this instead of `git add .` for explicit intent
+**Do this:**
+- `git hunk list` to see changes → `git hunk add <hash>` to stage specific hunks
+- `git hunk add --all` when you genuinely want to stage everything (replaces `git add .`)
+
+**Only exception** for `git add`:
+- `git add -N <file>` for intent-to-add on new untracked files (optional — untracked files appear in `list` automatically)
 
 ## Commands
 
