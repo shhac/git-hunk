@@ -2,28 +2,28 @@
 source "$(dirname "$0")/harness.sh" "$1"
 
 # ============================================================================
-# Test 19: count outputs bare integer
+# Test 400: count outputs bare integer
 # ============================================================================
 new_repo
 sed -i '' '1s/.*/Changed alpha./' alpha.txt
 sed -i '' '1s/.*/Changed beta./' beta.txt
 
-COUNT19="$("$GIT_HUNK" count)"
-[[ "$COUNT19" =~ ^[0-9]+$ ]] || fail "test 19: count output not a bare integer, got '$COUNT19'"
-[[ "$COUNT19" -gt 0 ]] || fail "test 19: expected positive count, got '$COUNT19'"
-pass "test 19: count outputs bare integer"
+COUNT400="$("$GIT_HUNK" count)"
+[[ "$COUNT400" =~ ^[0-9]+$ ]] || fail "test 400: count output not a bare integer, got '$COUNT400'"
+[[ "$COUNT400" -gt 0 ]] || fail "test 400: expected positive count, got '$COUNT400'"
+pass "test 400: count outputs bare integer"
 
 # ============================================================================
-# Test 20: count --staged returns 0 when nothing staged
+# Test 401: count --staged returns 0 when nothing staged
 # ============================================================================
 new_repo
 
 STAGED_COUNT="$("$GIT_HUNK" count --staged)"
-[[ "$STAGED_COUNT" == "0" ]] || fail "test 20: expected 0 staged hunks, got '$STAGED_COUNT'"
-pass "test 20: count --staged returns 0"
+[[ "$STAGED_COUNT" == "0" ]] || fail "test 401: expected 0 staged hunks, got '$STAGED_COUNT'"
+pass "test 401: count --staged returns 0"
 
 # ============================================================================
-# Test 21: count --file filters to one file
+# Test 402: count --file filters to one file
 # ============================================================================
 new_repo
 sed -i '' '1s/.*/Changed alpha./' alpha.txt
@@ -31,66 +31,66 @@ sed -i '' '1s/.*/Changed beta./' beta.txt
 
 TOTAL="$("$GIT_HUNK" count)"
 FILE_COUNT="$("$GIT_HUNK" count --file alpha.txt)"
-[[ "$FILE_COUNT" =~ ^[0-9]+$ ]] || fail "test 21: count --file output not integer, got '$FILE_COUNT'"
-[[ "$FILE_COUNT" -gt 0 ]] || fail "test 21: expected positive count for alpha.txt, got '$FILE_COUNT'"
-[[ "$FILE_COUNT" -le "$TOTAL" ]] || fail "test 21: file count $FILE_COUNT > total count $TOTAL"
-pass "test 21: count --file filters to one file"
+[[ "$FILE_COUNT" =~ ^[0-9]+$ ]] || fail "test 402: count --file output not integer, got '$FILE_COUNT'"
+[[ "$FILE_COUNT" -gt 0 ]] || fail "test 402: expected positive count for alpha.txt, got '$FILE_COUNT'"
+[[ "$FILE_COUNT" -le "$TOTAL" ]] || fail "test 402: file count $FILE_COUNT > total count $TOTAL"
+pass "test 402: count --file filters to one file"
 
 # ============================================================================
-# Test 22: count returns 0 with exit 0 when no changes in file
+# Test 403: count returns 0 with exit 0 when no changes in file
 # ============================================================================
 new_repo
 
 ZERO_COUNT="$("$GIT_HUNK" count --file alpha.txt)"
-EXIT22=$?
-[[ "$ZERO_COUNT" == "0" ]] || fail "test 22: expected 0 for clean file, got '$ZERO_COUNT'"
-[[ "$EXIT22" -eq 0 ]] || fail "test 22: expected exit 0, got $EXIT22"
-pass "test 22: count returns 0 with exit 0 when no changes"
+EXIT403=$?
+[[ "$ZERO_COUNT" == "0" ]] || fail "test 403: expected 0 for clean file, got '$ZERO_COUNT'"
+[[ "$EXIT403" -eq 0 ]] || fail "test 403: expected exit 0, got $EXIT403"
+pass "test 403: count returns 0 with exit 0 when no changes"
 
 # ============================================================================
-# Test 60: count includes untracked files
+# Test 404: count includes untracked files
 # ============================================================================
 new_repo
 sed -i '' '1s/.*/Changed alpha./' alpha.txt
 echo "untracked content" > untracked.txt
 
-COUNT60="$("$GIT_HUNK" count)"
-[[ "$COUNT60" -ge 2 ]] || fail "test 60: expected count >= 2 (tracked + untracked), got '$COUNT60'"
-pass "test 60: count includes untracked files"
+COUNT404="$("$GIT_HUNK" count)"
+[[ "$COUNT404" -ge 2 ]] || fail "test 404: expected count >= 2 (tracked + untracked), got '$COUNT404'"
+pass "test 404: count includes untracked files"
 
 # ============================================================================
-# Test 61: count --staged does not include untracked files
+# Test 405: count --staged does not include untracked files
 # ============================================================================
 new_repo
 echo "untracked content" > untracked.txt
 
-COUNT61="$("$GIT_HUNK" count --staged)"
-[[ "$COUNT61" == "0" ]] || fail "test 61: expected 0 staged count with only untracked, got '$COUNT61'"
-pass "test 61: count --staged excludes untracked"
+COUNT405="$("$GIT_HUNK" count --staged)"
+[[ "$COUNT405" == "0" ]] || fail "test 405: expected 0 staged count with only untracked, got '$COUNT405'"
+pass "test 405: count --staged excludes untracked"
 
 # ============================================================================
-# Test 63: count --tracked-only + --untracked-only sum equals total
+# Test 406: count --tracked-only + --untracked-only sum equals total
 # ============================================================================
 new_repo
 sed -i '' '1s/.*/Changed alpha./' alpha.txt
 echo "untracked content" > untracked_count.txt
 
-TOTAL63="$("$GIT_HUNK" count)"
-TRACKED63="$("$GIT_HUNK" count --tracked-only)"
-UNTRACKED63="$("$GIT_HUNK" count --untracked-only)"
-SUM63=$((TRACKED63 + UNTRACKED63))
-[[ "$SUM63" -eq "$TOTAL63" ]] \
-    || fail "test 63: tracked ($TRACKED63) + untracked ($UNTRACKED63) = $SUM63, expected $TOTAL63"
-pass "test 63: count --tracked-only + --untracked-only equals total"
+TOTAL406="$("$GIT_HUNK" count)"
+TRACKED406="$("$GIT_HUNK" count --tracked-only)"
+UNTRACKED406="$("$GIT_HUNK" count --untracked-only)"
+SUM406=$((TRACKED406 + UNTRACKED406))
+[[ "$SUM406" -eq "$TOTAL406" ]] \
+    || fail "test 406: tracked ($TRACKED406) + untracked ($UNTRACKED406) = $SUM406, expected $TOTAL406"
+pass "test 406: count --tracked-only + --untracked-only equals total"
 
 # ============================================================================
-# Test 64: count --untracked-only with no untracked files returns 0
+# Test 407: count --untracked-only with no untracked files returns 0
 # ============================================================================
 new_repo
 sed -i '' '1s/.*/Changed alpha./' alpha.txt
 
-COUNT64="$("$GIT_HUNK" count --untracked-only)"
-[[ "$COUNT64" == "0" ]] || fail "test 64: expected 0 untracked count, got '$COUNT64'"
-pass "test 64: count --untracked-only with no untracked files returns 0"
+COUNT407="$("$GIT_HUNK" count --untracked-only)"
+[[ "$COUNT407" == "0" ]] || fail "test 407: expected 0 untracked count, got '$COUNT407'"
+pass "test 407: count --untracked-only with no untracked files returns 0"
 
 report_results
