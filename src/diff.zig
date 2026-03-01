@@ -1030,7 +1030,7 @@ test "parseDiff empty new file" {
     try std.testing.expect(hunks.items[0].is_new_file);
     try std.testing.expectEqualStrings("", hunks.items[0].raw_lines);
     try std.testing.expectEqualStrings("", hunks.items[0].diff_lines);
-    try std.testing.expect(std.mem.indexOf(u8, hunks.items[0].patch_header, "new file mode") != null);
+    try std.testing.expect(std.mem.indexOf(u8, hunks.items[0].patch_header, "new file mode 100644") != null);
     try std.testing.expect(std.mem.indexOf(u8, hunks.items[0].patch_header, "--- /dev/null") != null);
     try std.testing.expect(std.mem.indexOf(u8, hunks.items[0].patch_header, "+++ b/empty.txt") != null);
 }
@@ -1055,7 +1055,7 @@ test "parseDiff empty deleted file" {
     try std.testing.expectEqual(@as(usize, 1), hunks.items.len);
     try std.testing.expectEqualStrings("empty.txt", hunks.items[0].file_path);
     try std.testing.expect(hunks.items[0].is_deleted_file);
-    try std.testing.expect(std.mem.indexOf(u8, hunks.items[0].patch_header, "deleted file mode") != null);
+    try std.testing.expect(std.mem.indexOf(u8, hunks.items[0].patch_header, "deleted file mode 100644") != null);
     try std.testing.expect(std.mem.indexOf(u8, hunks.items[0].patch_header, "--- a/empty.txt") != null);
     try std.testing.expect(std.mem.indexOf(u8, hunks.items[0].patch_header, "+++ /dev/null") != null);
 }
@@ -1120,4 +1120,35 @@ test "extractPathFromDiffGitLine quoted path" {
     defer arena.deinit();
     const result = try extractPathFromDiffGitLine(arena.allocator(), "diff --git \"a/path with spaces.txt\" \"b/path with spaces.txt\"");
     try std.testing.expectEqualStrings("path with spaces.txt", result.?);
+}
+
+test "extractPathFromDiffGitLine missing prefix" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try extractPathFromDiffGitLine(arena.allocator(), "not a diff line");
+    try std.testing.expectEqual(@as(?[]const u8, null), result);
+}
+
+test "extractPathFromDiffGitLine asymmetric unquoted" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    // Different-length paths make odd total length fail the symmetric split
+    const result = try extractPathFromDiffGitLine(arena.allocator(), "diff --git a/foo.txt b/barbaz.txt");
+    try std.testing.expectEqual(@as(?[]const u8, null), result);
+}
+
+test "extractPathFromDiffGitLine empty rest" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try extractPathFromDiffGitLine(arena.allocator(), "diff --git ");
+    try std.testing.expectEqual(@as(?[]const u8, null), result);
+}
+
+test "extractPathFromDiffGitLine escaped quote in path" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    // Filename contains a literal quote: file"name.txt
+    // Git C-quotes it as: "a/file\"name.txt" "b/file\"name.txt"
+    const result = try extractPathFromDiffGitLine(arena.allocator(), "diff --git \"a/file\\\"name.txt\" \"b/file\\\"name.txt\"");
+    try std.testing.expectEqualStrings("file\"name.txt", result.?);
 }

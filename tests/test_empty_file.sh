@@ -74,7 +74,7 @@ SHA78="$("$GIT_HUNK" list --porcelain --oneline | grep empty.txt | cut -f1)"
 STASH78="$(git stash list)"
 [[ -n "$STASH78" ]] || fail "test 78: expected non-empty stash list"
 
-"$GIT_HUNK" stash pop > /dev/null 2>/dev/null
+"$GIT_HUNK" stash pop > /dev/null
 [[ -f empty.txt ]] || fail "test 78: expected empty.txt restored after pop"
 SIZE78="$(wc -c < empty.txt | tr -d ' ')"
 [[ "$SIZE78" == "0" ]] || fail "test 78: expected 0 bytes after pop, got $SIZE78"
@@ -89,6 +89,8 @@ new_repo
 sed -i '' '1s/.*/Changed alpha./' alpha.txt
 touch empty.txt
 
+COUNT79="$("$GIT_HUNK" count)"
+[[ "$COUNT79" == "2" ]] || fail "test 79: expected 2 hunks before --all, got $COUNT79"
 "$GIT_HUNK" add --all > /dev/null
 UNSTAGED79="$("$GIT_HUNK" count)"
 [[ "$UNSTAGED79" == "0" ]] \
@@ -113,10 +115,51 @@ ALPHA80="$(head -1 alpha.txt)"
 STASH80="$(git stash list)"
 [[ -n "$STASH80" ]] || fail "test 80: expected non-empty stash list"
 
-"$GIT_HUNK" stash pop > /dev/null 2>/dev/null
+"$GIT_HUNK" stash pop > /dev/null
 [[ -f empty.txt ]] || fail "test 80: expected empty.txt restored after pop"
 [[ "$(head -1 alpha.txt)" == "Changed alpha." ]] \
     || fail "test 80: expected alpha.txt restored after pop"
 pass "test 80: stash --all --include-untracked includes empty files"
+
+# ============================================================================
+# Test 81: deleted empty file shows up in staged mode
+# ============================================================================
+new_repo
+touch empty.txt && git add empty.txt && git commit -m "add empty file" -q
+git rm -q empty.txt
+
+COUNT81="$("$GIT_HUNK" count --staged)"
+[[ "$COUNT81" == "1" ]] || fail "test 81: expected 1 staged hunk for deleted empty file, got $COUNT81"
+OUT81="$("$GIT_HUNK" list --staged --porcelain --oneline)"
+echo "$OUT81" | grep -q 'empty.txt' \
+    || fail "test 81: expected empty.txt in staged list output, got: '$OUT81'"
+SHA81="$(echo "$OUT81" | grep empty.txt | cut -f1)"
+SHOW81="$("$GIT_HUNK" show "$SHA81" --staged)"
+echo "$SHOW81" | grep -q 'deleted file mode' \
+    || fail "test 81: expected 'deleted file mode' in show output"
+"$GIT_HUNK" reset "$SHA81" > /dev/null
+STATUS81="$(git status --short empty.txt)"
+[[ "$STATUS81" == " D empty.txt" ]] \
+    || fail "test 81: expected ' D empty.txt' after reset (unstaged deletion), got '$STATUS81'"
+pass "test 81: deleted empty file shows up in staged mode"
+
+# ============================================================================
+# Test 82: filenames with spaces
+# ============================================================================
+new_repo
+touch "empty file.txt"
+
+COUNT82="$("$GIT_HUNK" count)"
+[[ "$COUNT82" == "1" ]] || fail "test 82: expected 1 hunk for file with spaces, got $COUNT82"
+OUT82="$("$GIT_HUNK" list --porcelain --oneline)"
+echo "$OUT82" | grep -q 'empty file.txt' \
+    || fail "test 82: expected 'empty file.txt' in list output, got: '$OUT82'"
+SHA82="$(echo "$OUT82" | grep 'empty file.txt' | cut -f1)"
+[[ -n "$SHA82" ]] || fail "test 82: no SHA for file with spaces"
+"$GIT_HUNK" add "$SHA82" > /dev/null
+STATUS82="$(git status --short "empty file.txt")"
+[[ "$STATUS82" == 'A  "empty file.txt"' ]] \
+    || fail "test 82: expected 'A  \"empty file.txt\"' after add, got '$STATUS82'"
+pass "test 82: filenames with spaces"
 
 report_results
