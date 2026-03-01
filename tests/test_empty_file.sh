@@ -12,7 +12,7 @@ COUNT800="$("$GIT_HUNK" count)"
 OUT800="$("$GIT_HUNK" list --porcelain --oneline)"
 echo "$OUT800" | grep -q 'empty.txt' \
     || fail "test 800: expected empty.txt in list output, got: '$OUT800'"
-echo "$OUT800" | grep -qE '^[a-f0-9]{7}\t' \
+echo "$OUT800" | grep -qE $'^[a-f0-9]{7}\t' \
     || fail "test 800: expected SHA prefix in porcelain output"
 pass "test 800: list shows empty untracked file"
 
