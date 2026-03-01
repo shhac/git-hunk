@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.1] - 2026-03-01
+
+### Fixed
+- Cross-platform test compatibility: replace BSD-only `sed -i ''` with portable `sed -i.bak`
+- Remove em-dashes from test fixture data to avoid encoding issues
+
 ## [0.8.0] - 2026-03-01
 
 ### Added
