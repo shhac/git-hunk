@@ -292,4 +292,28 @@ echo "$OUT920" | grep -q '^ line 3' && fail "test 920: -U0 should not include 'l
 echo "$OUT920" | grep -q 'line 4 changed' || fail "test 920: diff -U0 missing changed content"
 pass "test 920: diff --unified 0 excludes context lines"
 
+# ============================================================================
+# Test 921: -U<n> (no space) does not consume next argument as unified value
+# ============================================================================
+new_repo
+echo "line 1" > file921.txt && git add file921.txt && git commit -m "init" -q
+echo "line 2" >> file921.txt
+SHA921="$("$GIT_HUNK" list --porcelain --oneline | cut -f1)"
+[[ -n "$SHA921" ]] || fail "test 921: no hunk found"
+OUT921="$("$GIT_HUNK" diff -U3 "$SHA921" --no-color 2>&1)"
+echo "$OUT921" | grep -q "file921.txt" || fail "test 921: -U3 <sha> should show diff for file921.txt, got: '$OUT921'"
+pass "test 921: -U<n> does not consume next positional argument as unified value"
+
+# ============================================================================
+# Test 922: -U<n> works with flags interspersed (-U3 --no-color <sha>)
+# ============================================================================
+new_repo
+echo "line 1" > file922.txt && git add file922.txt && git commit -m "init" -q
+echo "line 2" >> file922.txt
+SHA922="$("$GIT_HUNK" list --porcelain --oneline | cut -f1)"
+[[ -n "$SHA922" ]] || fail "test 922: no hunk found"
+OUT922="$("$GIT_HUNK" diff -U3 --no-color "$SHA922" 2>&1)"
+echo "$OUT922" | grep -q "file922.txt" || fail "test 922: -U3 --no-color <sha> should show diff for file922.txt, got: '$OUT922'"
+pass "test 922: -U<n> works with flags interspersed before positional argument"
+
 report_results
