@@ -197,4 +197,73 @@ REMAINING514="$("$GIT_HUNK" list --tracked-only --porcelain --oneline)"
 [[ -z "$REMAINING514" ]] || fail "test 514: tracked hunks should be restored"
 pass "test 514: restore --tracked-only excludes untracked from --all"
 
+# ============================================================================
+# Test 515: restore sha:N-M discards only selected lines, leaves others intact
+# Using pure insertions with --unified 0 so context lines match worktree.
+# ============================================================================
+new_repo
+cat > linespec.txt <<'LINESPEC_EOF'
+line 1
+line 2
+line 3
+line 4
+line 5
+LINESPEC_EOF
+git add linespec.txt && git commit -m "linespec setup" -q
+cat > linespec.txt <<'LINESPEC_EOF'
+line 1
+line 2
+new line A
+new line B
+new line C
+line 3
+line 4
+line 5
+LINESPEC_EOF
+
+SHA515="$("$GIT_HUNK" list --unified 0 --porcelain --oneline --file linespec.txt | head -1 | cut -f1)"
+[[ -n "$SHA515" ]] || fail "test 515: no hunk found"
+"$GIT_HUNK" restore --no-color --unified 0 "${SHA515}:1-2" > /dev/null
+
+WORKTREE515="$(git diff linespec.txt)"
+if echo "$WORKTREE515" | grep -q "new line A"; then
+    fail "test 515: new line A should be restored (removed from worktree)"
+fi
+if echo "$WORKTREE515" | grep -q "new line B"; then
+    fail "test 515: new line B should be restored (removed from worktree)"
+fi
+echo "$WORKTREE515" | grep -q "new line C" \
+    || fail "test 515: new line C should remain in worktree"
+pass "test 515: restore sha:N-M discards only selected lines"
+
+# ============================================================================
+# Test 516: restore with line spec shows sha:N-M suffix in output
+# ============================================================================
+new_repo
+cat > linespec.txt <<'LINESPEC_EOF'
+line 1
+line 2
+line 3
+line 4
+line 5
+LINESPEC_EOF
+git add linespec.txt && git commit -m "linespec setup" -q
+cat > linespec.txt <<'LINESPEC_EOF'
+line 1
+line 2
+new line A
+new line B
+new line C
+line 3
+line 4
+line 5
+LINESPEC_EOF
+
+SHA516="$("$GIT_HUNK" list --unified 0 --porcelain --oneline --file linespec.txt | head -1 | cut -f1)"
+[[ -n "$SHA516" ]] || fail "test 516: no hunk found"
+OUT516="$("$GIT_HUNK" restore --no-color --unified 0 "${SHA516}:1-2")"
+echo "$OUT516" | grep -qE '^restored [a-f0-9]{7}:1-2  linespec\.txt$' \
+    || fail "test 516: restore output format wrong, got: '$OUT516'"
+pass "test 516: restore output format includes line spec suffix"
+
 report_results

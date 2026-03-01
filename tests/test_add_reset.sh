@@ -326,4 +326,168 @@ if "$GIT_HUNK" list --tracked-only --untracked-only 2>/dev/null; then
 fi
 pass "test 218: --tracked-only and --untracked-only conflict detected"
 
+# ============================================================================
+# Test 219: add sha:N-M stages only a single changed line from a multi-change hunk
+# ============================================================================
+new_repo
+cat > linespec.txt <<'LINESPEC_EOF'
+line 1
+line 2
+line 3 original
+line 4
+line 5 original
+line 6
+line 7
+line 8 original
+line 9
+line 10
+LINESPEC_EOF
+git add linespec.txt && git commit -m "linespec setup" -q
+sed -i '' 's/line 3 original/line 3 changed/' linespec.txt
+sed -i '' 's/line 5 original/line 5 changed/' linespec.txt
+sed -i '' 's/line 8 original/line 8 changed/' linespec.txt
+
+SHA219="$("$GIT_HUNK" list --porcelain --oneline --file linespec.txt | head -1 | cut -f1)"
+[[ -n "$SHA219" ]] || fail "test 219: no hunk found"
+"$GIT_HUNK" add --no-color "${SHA219}:3-4" > /dev/null
+
+STAGED219="$(git diff --cached linespec.txt)"
+echo "$STAGED219" | grep -q "line 3 changed" \
+    || fail "test 219: line 3 change should be staged"
+if echo "$STAGED219" | grep -q "line 5 changed"; then
+    fail "test 219: line 5 change should not be staged"
+fi
+if echo "$STAGED219" | grep -q "line 8 changed"; then
+    fail "test 219: line 8 change should not be staged"
+fi
+UNSTAGED219="$(git diff linespec.txt)"
+echo "$UNSTAGED219" | grep -q "line 5 changed" \
+    || fail "test 219: line 5 change should remain unstaged"
+pass "test 219: add sha:N-M stages only selected lines from a multi-change hunk"
+
+# ============================================================================
+# Test 220: add sha:N-M stages a range covering multiple changed lines
+# ============================================================================
+new_repo
+cat > linespec.txt <<'LINESPEC_EOF'
+line 1
+line 2
+line 3 original
+line 4
+line 5 original
+line 6
+line 7
+line 8 original
+line 9
+line 10
+LINESPEC_EOF
+git add linespec.txt && git commit -m "linespec setup" -q
+sed -i '' 's/line 3 original/line 3 changed/' linespec.txt
+sed -i '' 's/line 5 original/line 5 changed/' linespec.txt
+sed -i '' 's/line 8 original/line 8 changed/' linespec.txt
+
+SHA220="$("$GIT_HUNK" list --porcelain --oneline --file linespec.txt | head -1 | cut -f1)"
+[[ -n "$SHA220" ]] || fail "test 220: no hunk found"
+"$GIT_HUNK" add --no-color "${SHA220}:3-7" > /dev/null
+
+STAGED220="$(git diff --cached linespec.txt)"
+echo "$STAGED220" | grep -q "line 3 changed" \
+    || fail "test 220: line 3 change should be staged"
+echo "$STAGED220" | grep -q "line 5 changed" \
+    || fail "test 220: line 5 change should be staged"
+if echo "$STAGED220" | grep -q "line 8 changed"; then
+    fail "test 220: line 8 change should not be staged"
+fi
+UNSTAGED220="$(git diff linespec.txt)"
+echo "$UNSTAGED220" | grep -q "line 8 changed" \
+    || fail "test 220: line 8 change should remain unstaged"
+if echo "$UNSTAGED220" | grep -q "line 3 changed"; then
+    fail "test 220: line 3 change should not be in unstaged diff"
+fi
+pass "test 220: add sha:N-M stages a range covering multiple changes"
+
+# ============================================================================
+# Test 221: reset sha:N-M unstages a subset of a staged hunk (with --unified 0)
+# Using pure insertions so context lines match the index after staging.
+# ============================================================================
+new_repo
+cat > linespec.txt <<'LINESPEC_EOF'
+line 1
+line 2
+line 3
+line 4
+line 5
+LINESPEC_EOF
+git add linespec.txt && git commit -m "linespec setup" -q
+cat > linespec.txt <<'LINESPEC_EOF'
+line 1
+line 2
+new line A
+new line B
+new line C
+line 3
+line 4
+line 5
+LINESPEC_EOF
+
+"$GIT_HUNK" add --all > /dev/null 2>/dev/null
+STAGED_SHA221="$("$GIT_HUNK" list --staged --unified 0 --porcelain --oneline --file linespec.txt | head -1 | cut -f1)"
+[[ -n "$STAGED_SHA221" ]] || fail "test 221: no staged hunk found"
+
+"$GIT_HUNK" reset --no-color --unified 0 "${STAGED_SHA221}:1-2" > /dev/null
+
+STAGED221="$(git diff --cached linespec.txt)"
+echo "$STAGED221" | grep -q "new line C" \
+    || fail "test 221: new line C should remain staged"
+if echo "$STAGED221" | grep -q "new line A"; then
+    fail "test 221: new line A should be unstaged after reset"
+fi
+if echo "$STAGED221" | grep -q "new line B"; then
+    fail "test 221: new line B should be unstaged after reset"
+fi
+UNSTAGED221="$(git diff linespec.txt)"
+echo "$UNSTAGED221" | grep -q "new line A" \
+    || fail "test 221: new line A should be back in unstaged diff"
+echo "$UNSTAGED221" | grep -q "new line B" \
+    || fail "test 221: new line B should be back in unstaged diff"
+pass "test 221: reset sha:N-M unstages a subset of a staged hunk"
+
+# ============================================================================
+# Test 222: add --porcelain with line spec includes sha:N-M in applied field
+# ============================================================================
+new_repo
+cat > linespec.txt <<'LINESPEC_EOF'
+line 1
+line 2
+line 3 original
+line 4
+line 5 original
+line 6
+line 7
+line 8 original
+line 9
+line 10
+LINESPEC_EOF
+git add linespec.txt && git commit -m "linespec setup" -q
+sed -i '' 's/line 3 original/line 3 changed/' linespec.txt
+sed -i '' 's/line 5 original/line 5 changed/' linespec.txt
+sed -i '' 's/line 8 original/line 8 changed/' linespec.txt
+
+SHA222="$("$GIT_HUNK" list --porcelain --oneline --file linespec.txt | head -1 | cut -f1)"
+[[ -n "$SHA222" ]] || fail "test 222: no hunk found"
+PORC222="$("$GIT_HUNK" add --porcelain "${SHA222}:3-4")"
+VERB222="$(echo "$PORC222" | cut -f1)"
+APPLIED222="$(echo "$PORC222" | cut -f2)"
+RESULT222="$(echo "$PORC222" | cut -f3)"
+FILE222="$(echo "$PORC222" | cut -f4)"
+[[ "$VERB222" == "staged" ]] \
+    || fail "test 222: porcelain verb not 'staged', got '$VERB222'"
+echo "$APPLIED222" | grep -qE '^[a-f0-9]{7}:3-4$' \
+    || fail "test 222: applied field should include :3-4 suffix, got '$APPLIED222'"
+[[ ${#RESULT222} -eq 7 ]] \
+    || fail "test 222: result hash not 7 chars, got '$RESULT222'"
+[[ "$FILE222" == "linespec.txt" ]] \
+    || fail "test 222: file not 'linespec.txt', got '$FILE222'"
+pass "test 222: add --porcelain includes line spec suffix in applied field"
+
 report_results
