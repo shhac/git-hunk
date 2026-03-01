@@ -182,4 +182,29 @@ SHA113B="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | c
     || fail "test 113: SHAs differ across repos: '$SHA113A' vs '$SHA113B'"
 pass "test 113: SHA is identical across two repos with same content"
 
+# ============================================================================
+# Test 114: --unified context value affects the SHA
+# Two nearby changes that stay separate with -U0 but merge into one hunk
+# with -U3, producing different diff content and thus different SHAs.
+# ============================================================================
+new_repo
+cat > proximity.txt <<'PROX_EOF'
+line 1
+line 2 original
+line 3
+line 4 original
+line 5
+PROX_EOF
+git add proximity.txt && git commit -m "proximity setup" -q
+sed -i '' 's/line 2 original/line 2 changed/' proximity.txt
+sed -i '' 's/line 4 original/line 4 changed/' proximity.txt
+
+SHA114_U0="$("$GIT_HUNK" list --porcelain --oneline --unified 0 --file proximity.txt | head -1 | cut -f1)"
+SHA114_U3="$("$GIT_HUNK" list --porcelain --oneline --unified 3 --file proximity.txt | head -1 | cut -f1)"
+[[ -n "$SHA114_U0" ]] || fail "test 114: no hunk found with -U0"
+[[ -n "$SHA114_U3" ]] || fail "test 114: no hunk found with -U3"
+[[ "$SHA114_U0" != "$SHA114_U3" ]] \
+    || fail "test 114: -U0 and -U3 produced the same SHA '$SHA114_U0'"
+pass "test 114: --unified context value produces different SHAs"
+
 report_results
