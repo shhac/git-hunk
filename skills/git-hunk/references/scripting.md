@@ -59,13 +59,13 @@ git commit -m "feat: main changes"
 git hunk stash pop
 ```
 
-## Discard unwanted changes
+## Restore worktree
 
-Stage what you want, discard the rest:
+Stage what you want, restore (discard) the rest:
 
 ```bash
 git hunk add a3f7c21 b82e0f4
-git hunk discard --all
+git hunk restore --all
 git commit -m "feat: precise changes only"
 ```
 

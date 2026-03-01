@@ -86,9 +86,9 @@ b82e0f4	src/main.zig	45	52	Replace old parser
 Blank lines are safe as record separators because unified diff hunk body lines
 always start with ` `, `+`, `-`, or `\`.
 
-## Show output
+## Diff command output
 
-`show` prints the full diff content for specific hunks.
+`diff` prints the full diff content for specific hunks.
 
 ### Human mode
 
@@ -275,9 +275,9 @@ staged	a3f7c21 b82e0f4	5e2b1a9	src/main.zig	xxxx123
 staged	a3f7c21:1,10	5e2b1a9,8c3d7f2	src/main.zig
 ```
 
-### Summary line (stderr)
+### Summary line (stderr, `--verbose` only)
 
-After all per-hunk lines, a count summary is printed to stderr:
+After all per-hunk lines, a count summary is printed to stderr when `--verbose` is given:
 
 ```
 1 hunk staged
@@ -288,15 +288,15 @@ After all per-hunk lines, a count summary is printed to stderr:
 The `(N merged)` count reflects how many existing target-side hunks were
 consumed (the `+`-prefixed hashes).
 
-### Hint (stderr, TTY only, `add` only)
+### Hint (stderr, `--verbose` only)
 
 ```
 hint: staged hashes differ from unstaged -- use 'git hunk list --staged' to see them
 ```
 
-## Discard confirmation
+## Restore confirmation
 
-`discard` prints one line per discarded hunk to stdout. Simpler than `add`/`reset`
+`restore` prints one line per restored hunk to stdout. Simpler than `add`/`reset`
 — no arrow, no result hashes, no consumed hashes (the hunk simply disappears
 from the worktree).
 
@@ -308,16 +308,16 @@ from the worktree).
 
 | Token | Meaning |
 |-------|---------|
-| `{verb}` | `discarded` or `would discard` (with `--dry-run`) |
+| `{verb}` | `restored` or `would restore` (with `--dry-run`) |
 | `{sha7}` | 7-char content hash (yellow when color enabled). May include `:line-spec`. |
 | `{file}` | File path (two spaces after hash). |
 
 Examples:
 
 ```
-discarded a3f7c21  src/main.zig
-would discard a3f7c21  src/main.zig
-discarded a3f7c21:3-5  src/main.zig
+restored a3f7c21  src/main.zig
+would restore a3f7c21  src/main.zig
+restored a3f7c21:3-5  src/main.zig
 ```
 
 ### Porcelain mode
@@ -330,25 +330,25 @@ Tab-separated, 3 fields:
 
 | Field | Description |
 |-------|-------------|
-| `verb` | `discarded` or `would-discard` |
+| `verb` | `restored` or `would-restore` |
 | `sha7` | 7-char hash (with `:line-spec` if any) |
 | `file` | File path |
 
 Examples:
 
 ```
-discarded	a3f7c21	src/main.zig
-would-discard	a3f7c21	src/main.zig
-discarded	a3f7c21:3-5	src/main.zig
+restored	a3f7c21	src/main.zig
+would-restore	a3f7c21	src/main.zig
+restored	a3f7c21:3-5	src/main.zig
 ```
 
-### Summary line (stderr, human mode only)
+### Summary line (stderr, `--verbose` only)
 
 ```
-1 hunk discarded
-3 hunks discarded
-1 hunk would be discarded
-3 hunks would be discarded
+1 hunk restored
+3 hunks restored
+1 hunk would be restored
+3 hunks would be restored
 ```
 
 No stderr summary in porcelain mode.
@@ -388,14 +388,14 @@ stashed	a3f7c21	src/main.zig
 stashed	b8e4d2f	src/args.zig
 ```
 
-### Summary line (stderr, human mode only)
+### Summary line (stderr, `--verbose` only)
 
 ```
 1 hunk stashed
 3 hunks stashed
 ```
 
-### Hint (stderr, TTY only)
+### Hint (stderr, `--verbose` only)
 
 ```
 hint: use 'git stash list' to see stashed entries, 'git hunk stash pop' to restore

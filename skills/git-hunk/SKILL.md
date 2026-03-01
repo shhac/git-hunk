@@ -19,7 +19,7 @@ Installed on PATH as `git hunk <subcommand>`. No dependencies beyond git.
 
 ```bash
 git hunk list                    # see what changed (with diffs)
-git hunk show a3f7c21            # inspect a specific hunk
+git hunk diff a3f7c21            # inspect a specific hunk
 git hunk add a3f7c21             # stage only that hunk
 git hunk add b82e0f4             # remaining hashes are unchanged
 git hunk list --staged           # verify what's staged
@@ -40,16 +40,16 @@ When to use `git add` instead:
 | Command | Purpose | Key flags |
 |---------|---------|-----------|
 | `list` | Enumerate hunks with hashes | `--staged`, `--file`, `--porcelain`, `--oneline`, `--unified` |
-| `show` | Inspect full diff of specific hunks | `--staged`, `--file`, `--porcelain` |
+| `diff` | Inspect full diff of specific hunks | `--staged`, `--file`, `--porcelain` |
 | `add` | Stage hunks by hash | `--all`, `--file`, `--porcelain`, line specs (`sha:3-5,8`) |
 | `reset` | Unstage hunks by hash | `--all`, `--file`, `--porcelain`, line specs |
 | `stash` | Save hunks to git stash, remove from worktree | `--all`, `--include-untracked`/`-u`, `--file`, `-m <msg>`, `pop` subcommand |
-| `discard` | Revert worktree hunks (destructive) | `--all`, `--file`, `--force`, `--dry-run`, line specs |
+| `restore` | Revert worktree hunks (destructive) | `--all`, `--file`, `--force`, `--dry-run`, line specs |
 | `count` | Bare integer hunk count | `--staged`, `--file` |
 | `check` | Verify hashes still valid | `--staged`, `--exclusive`, `--file`, `--porcelain` |
 
 All commands accept `--help`, `--no-color`, `--tracked-only`, `--untracked-only`,
-and `-U`/`--unified <n>`. SHA prefixes need at least 4 hex characters. Use `--file`
+`--quiet`/`-q`, `--verbose`/`-v`, and `-U<n>`/`--unified=<n>`. SHA prefixes need at least 4 hex characters. Use `--file`
 to disambiguate prefix collisions. Use `git-hunk <command> --help` for detailed
 per-command help.
 
@@ -80,7 +80,7 @@ All errors go to stderr. Exit 0 on success, 1 on error. Common errors:
 - `error: ambiguous prefix '<sha>'` -- use longer prefix or `--file`
 - `error: patch did not apply cleanly` -- re-run `list` and try again
 - `no unstaged changes` / `no staged changes` -- nothing to operate on
-- `error: <sha> (<file>) is an untracked file -- use --force to delete` -- discard requires `--force` for untracked files (dry-run bypasses this gate)
+- `error: <sha> (<file>) is an untracked file -- use --force to delete` -- restore requires `--force` for untracked files (dry-run bypasses this gate)
 
 ## References
 

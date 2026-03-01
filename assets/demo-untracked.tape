@@ -46,9 +46,9 @@ Sleep 200ms
 Enter
 Sleep 2s
 
-# Discard the scratch file
+# Delete the scratch file
 Enter
-Type "git hunk discard --force f479"
+Type "git hunk restore --force f479"
 Sleep 200ms
 Enter
 Sleep 2s

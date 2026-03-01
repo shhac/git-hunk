@@ -78,7 +78,7 @@ git hunk list --oneline                # compact one-line-per-hunk output
 git hunk list --staged                 # staged hunks
 git hunk list --file src/main.zig      # filter by file
 git hunk list --porcelain              # machine-readable output
-git hunk list -U 1                     # finer-grained hunks
+git hunk list -U1                      # finer-grained hunks
 git hunk list --tracked-only           # exclude untracked files
 git hunk list --no-color               # disable color output
 ```
@@ -103,15 +103,15 @@ inline diff content. Use `--oneline` for compact output without diffs.
 Untracked files are included by default. Use `--tracked-only` or
 `--untracked-only` to filter.
 
-### Show hunk content
+### View hunk diff
 
 ```
-git hunk show a3f7c21                  # show diff for one hunk
-git hunk show a3f7 b82e               # show multiple hunks
-git hunk show a3f7c21 --staged        # show a staged hunk
-git hunk show a3f7 --file src/main.zig # restrict match to file
-git hunk show a3f7c21 --porcelain     # machine-readable output
-git hunk show a3f7:3-5                # preview specific lines (hunk-relative)
+git hunk diff a3f7c21                  # show diff for one hunk
+git hunk diff a3f7 b82e               # show multiple hunks
+git hunk diff a3f7c21 --staged        # show a staged hunk
+git hunk diff a3f7 --file src/main.zig # restrict match to file
+git hunk diff a3f7c21 --porcelain     # machine-readable output
+git hunk diff a3f7:3-5                # preview specific lines (hunk-relative)
 ```
 
 Prints the full unified diff content for the specified hunks. With line
@@ -130,6 +130,12 @@ git hunk add a3f7c21 --porcelain      # machine-readable output
 ```
 
 Output shows the applied (input) and result (output) hashes:
+
+```
+staged a3f7c21 → 5e2b1a9  src/main.zig
+```
+
+With `--verbose`, summary counts and hints are included:
 
 ```
 staged a3f7c21 → 5e2b1a9  src/main.zig
@@ -154,39 +160,39 @@ git hunk reset --file src/main.zig     # unstage all hunks in a file
 git hunk reset a3f7c21 --porcelain    # machine-readable output
 ```
 
-### Discard changes
+### Restore worktree
 
 ```
-git hunk discard a3f7c21               # discard one unstaged hunk from worktree
-git hunk discard a3f7 b82e             # discard multiple hunks
-git hunk discard --all                 # discard all unstaged changes
-git hunk discard --file src/main.zig   # discard all hunks in a file
-git hunk discard a3f7:3-5             # discard specific lines from a hunk
-git hunk discard --dry-run a3f7c21    # preview what would be discarded
-git hunk discard a3f7c21 --porcelain  # machine-readable output
+git hunk restore a3f7c21               # restore one unstaged hunk from worktree
+git hunk restore a3f7 b82e             # restore multiple hunks
+git hunk restore --all                 # restore all unstaged changes
+git hunk restore --file src/main.zig   # restore all hunks in a file
+git hunk restore a3f7:3-5             # restore specific lines from a hunk
+git hunk restore --dry-run a3f7c21    # preview what would be restored
+git hunk restore a3f7c21 --porcelain  # machine-readable output
 ```
 
-Reverts specific worktree changes to match the index. The destructive
-counterpart to `add`/`reset`. Staged changes are unaffected.
+Reverts specific worktree changes to match the index. The destructive counterpart
+to `add`/`reset`. Staged changes are unaffected.
 
-Untracked files require `--force` to discard (they are deleted permanently):
+Untracked files require `--force` to restore (they are deleted permanently):
 
 ```
-git hunk discard --force a3f7c21       # discard/delete an untracked file
+git hunk restore --force a3f7c21       # restore/delete an untracked file
 ```
 
 Output:
 
 ```
-discarded a3f7c21  src/main.zig
-1 hunk discarded
+restored a3f7c21  src/main.zig
+1 hunk restored
 ```
 
-With `--dry-run`, shows what would be discarded without modifying files:
+With `--dry-run`, shows what would be restored without modifying files:
 
 ```
-would discard a3f7c21  src/main.zig
-1 hunk would be discarded
+would restore a3f7c21  src/main.zig
+1 hunk would be restored
 ```
 
 ### Count hunks
@@ -243,6 +249,13 @@ Output:
 ```
 stashed a3f7c21  src/main.zig
 stashed b8e4d2f  src/args.zig
+```
+
+With `--verbose`, summary counts and hints are included:
+
+```
+stashed a3f7c21  src/main.zig
+stashed b8e4d2f  src/args.zig
 2 hunks stashed
 hint: use 'git stash list' to see stashed entries, 'git hunk stash pop' to restore
 ```
@@ -251,7 +264,7 @@ hint: use 'git stash list' to see stashed entries, 'git hunk stash pop' to resto
 
 ```
 git hunk list                          # see what changed (with inline diffs)
-git hunk show a3f7c21                  # inspect a specific hunk
+git hunk diff a3f7c21                  # inspect a specific hunk
 git hunk add a3f7c21                   # stage it
 git hunk add b82e0f4                   # stage another
 git hunk list --staged --oneline       # verify staged
@@ -315,28 +328,50 @@ b82e0f4	src/main.zig	45	52	Replace old parser
 ## Context lines
 
 By default, git-hunk respects git's `diff.context` setting (default: 3 lines).
-Override with `-U N` / `--unified N`:
+Override with `-U<n>`, `-U <n>`, `--unified=<n>`, or `--unified <n>`:
 
 ```
-git hunk list -U 1                     # finer-grained hunks
-git hunk list --unified 0              # zero context (maximum granularity)
+git hunk list -U1                      # finer-grained hunks (no space)
+git hunk list -U 1                     # finer-grained hunks (with space)
+git hunk list --unified=0              # zero context (maximum granularity)
+git hunk list --unified 0              # zero context (with space)
 ```
 
 The `-U`/`--unified` flag is available on all commands. Context must be consistent
 within a workflow -- hashes change with different context values.
+
+## Verbosity
+
+By default, git-hunk prints action output (what was done) to stdout. Summary
+counts and hints are shown with `--verbose` / `-v`:
+
+```
+git hunk add a3f7c21 --verbose         # includes summary count and hints
+git hunk list --verbose                # includes "N hunks across M files" summary
+```
+
+Use `--quiet` / `-q` to suppress all output except errors:
+
+```
+git hunk add a3f7c21 --quiet           # stage silently (exit code only)
+git hunk count --quiet                 # no output (use exit code)
+```
+
+The `--verbose` and `--quiet` flags are available on all commands and are
+mutually exclusive.
 
 ## Line selection
 
 Stage or preview specific lines from a hunk using `sha:line-spec` syntax:
 
 ```
-git hunk show a3f7:3-5                 # preview lines 3-5 (hunk-relative)
-git hunk show a3f7:3-5,8               # preview lines 3-5 and 8
+git hunk diff a3f7:3-5                 # preview lines 3-5 (hunk-relative)
+git hunk diff a3f7:3-5,8               # preview lines 3-5 and 8
 git hunk add a3f7:3-5                  # stage only lines 3-5
 ```
 
 Line numbers are 1-based and relative to the hunk body (line 1 is the first
-line after the `@@` header). Use `show` to preview what would be staged before
+line after the `@@` header). Use `diff` to preview what would be staged before
 running `add`.
 
 When showing a line selection, lines are numbered with `>` markers indicating
@@ -377,7 +412,7 @@ same.
 
 Output is colorized when stdout is a TTY:
 
-- SHA hashes in yellow (in `list`, `show`, `add`, `reset`, `discard`, and `stash` output)
+- SHA hashes in yellow (in `list`, `diff`, `add`, `reset`, `restore`, and `stash` output)
 - Added lines (`+`) in green
 - Removed lines (`-`) in red
 
@@ -398,9 +433,9 @@ accepted by all commands.
 - Ambiguous prefix detection
 - Bulk staging via `--all` or `--file` without SHAs
 - Per-line staging via `sha:line-spec` syntax
-- Configurable context lines via `-U N` / `--unified N`
+- Configurable context lines via `-U<n>` / `-U <n>` / `--unified=<n>` / `--unified <n>`
 - Hash validity checking via `check` with `--exclusive` support
-- Worktree discard via `discard` with `--dry-run` preview and `--force` for untracked
+- Worktree restore via `restore` with `--dry-run` preview and `--force` for untracked
 - Hunk stashing via `stash` with native 3-parent format for untracked files
 - Executable bit preservation in stash
 

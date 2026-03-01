@@ -39,7 +39,7 @@ Enter
 Sleep 2.5s
 
 # Demo: inspect a specific hunk before staging
-Type "git hunk show 760c"
+Type "git hunk diff 760c"
 Sleep 200ms
 Enter
 Sleep 3s
