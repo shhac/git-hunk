@@ -22,6 +22,7 @@ const CheckOptions = types.CheckOptions;
 const RestoreOptions = types.RestoreOptions;
 const StashOptions = types.StashOptions;
 const rangesOverlap = types.rangesOverlap;
+const Verbosity = types.Verbosity;
 
 /// Get diff output including untracked files (unstaged mode only).
 /// Returns the tracked diff output and, separately, the untracked diff output.
@@ -126,8 +127,8 @@ pub fn cmdList(allocator: Allocator, stdout: *std.Io.Writer, opts: ListOptions) 
         }
     }
 
-    // Count summary (human output only, when there are hunks)
-    if (opts.output == .human and hunk_count > 0) {
+    // Count summary (verbose + human output only, when there are hunks)
+    if (opts.verbosity == .verbose and opts.output == .human and hunk_count > 0) {
         std.debug.print("{d} hunks across {d} files\n", .{ hunk_count, file_count });
     }
 
@@ -153,7 +154,9 @@ pub fn cmdCount(allocator: Allocator, stdout: *std.Io.Writer, opts: CountOptions
         count += 1;
     }
 
-    try stdout.print("{d}\n", .{count});
+    if (opts.verbosity != .quiet) {
+        try stdout.print("{d}\n", .{count});
+    }
 }
 
 pub fn cmdCheck(allocator: Allocator, stdout: *std.Io.Writer, opts: CheckOptions) !void {
@@ -242,66 +245,68 @@ pub fn cmdCheck(allocator: Allocator, stdout: *std.Io.Writer, opts: CheckOptions
     }
 
     // Output
-    if (opts.output == .porcelain) {
-        // Porcelain: report ALL entries
-        for (results.items) |r| {
-            switch (r.status) {
-                .ok => try stdout.print("ok\t{s}\t{s}\t{s}\n", .{ r.prefix, r.resolved_sha7, r.file_path }),
-                .stale => try stdout.print("stale\t{s}\n", .{r.prefix}),
-                .ambiguous => try stdout.print("ambiguous\t{s}\n", .{r.prefix}),
+    if (opts.verbosity != .quiet) {
+        if (opts.output == .porcelain) {
+            // Porcelain: report ALL entries
+            for (results.items) |r| {
+                switch (r.status) {
+                    .ok => try stdout.print("ok\t{s}\t{s}\t{s}\n", .{ r.prefix, r.resolved_sha7, r.file_path }),
+                    .stale => try stdout.print("stale\t{s}\n", .{r.prefix}),
+                    .ambiguous => try stdout.print("ambiguous\t{s}\n", .{r.prefix}),
+                }
             }
-        }
-        for (unexpected_hunks.items) |h| {
-            try stdout.print("unexpected\t{s}\t{s}\n", .{ h.sha_hex[0..7], h.file_path });
-        }
-    } else if (has_failure) {
-        // Human mode: output only on failure. Stale/ambiguous first, then unexpected.
-        for (results.items) |r| {
-            switch (r.status) {
-                .ok => {},
-                .stale => {
-                    if (use_color) {
-                        try stdout.print("stale {s}{s}{s}\n", .{ format.COLOR_YELLOW, r.prefix, format.COLOR_RESET });
-                    } else {
-                        try stdout.print("stale {s}\n", .{r.prefix});
-                    }
-                },
-                .ambiguous => {
-                    if (use_color) {
-                        try stdout.print("ambiguous {s}{s}{s}\n", .{ format.COLOR_YELLOW, r.prefix, format.COLOR_RESET });
-                    } else {
-                        try stdout.print("ambiguous {s}\n", .{r.prefix});
-                    }
-                },
+            for (unexpected_hunks.items) |h| {
+                try stdout.print("unexpected\t{s}\t{s}\n", .{ h.sha_hex[0..7], h.file_path });
             }
-        }
-        for (unexpected_hunks.items) |h| {
-            if (use_color) {
-                try stdout.print("unexpected {s}{s}{s}  {s}\n", .{ format.COLOR_YELLOW, h.sha_hex[0..7], format.COLOR_RESET, h.file_path });
-            } else {
-                try stdout.print("unexpected {s}  {s}\n", .{ h.sha_hex[0..7], h.file_path });
+        } else if (has_failure) {
+            // Human mode: output only on failure. Stale/ambiguous first, then unexpected.
+            for (results.items) |r| {
+                switch (r.status) {
+                    .ok => {},
+                    .stale => {
+                        if (use_color) {
+                            try stdout.print("stale {s}{s}{s}\n", .{ format.COLOR_YELLOW, r.prefix, format.COLOR_RESET });
+                        } else {
+                            try stdout.print("stale {s}\n", .{r.prefix});
+                        }
+                    },
+                    .ambiguous => {
+                        if (use_color) {
+                            try stdout.print("ambiguous {s}{s}{s}\n", .{ format.COLOR_YELLOW, r.prefix, format.COLOR_RESET });
+                        } else {
+                            try stdout.print("ambiguous {s}\n", .{r.prefix});
+                        }
+                    },
+                }
             }
-        }
+            for (unexpected_hunks.items) |h| {
+                if (use_color) {
+                    try stdout.print("unexpected {s}{s}{s}  {s}\n", .{ format.COLOR_YELLOW, h.sha_hex[0..7], format.COLOR_RESET, h.file_path });
+                } else {
+                    try stdout.print("unexpected {s}  {s}\n", .{ h.sha_hex[0..7], h.file_path });
+                }
+            }
 
-        // stderr summary (human mode only)
-        var fail_count: usize = 0;
-        for (results.items) |r| {
-            if (r.status != .ok) fail_count += 1;
-        }
-        if (fail_count > 0 and unexpected_hunks.items.len > 0) {
-            std.debug.print("{d} of {d} hashes failed, {d} unexpected hunk{s}\n", .{
-                fail_count,
-                results.items.len,
-                unexpected_hunks.items.len,
-                @as([]const u8, if (unexpected_hunks.items.len == 1) "" else "s"),
-            });
-        } else if (fail_count > 0) {
-            std.debug.print("{d} of {d} hashes failed\n", .{ fail_count, results.items.len });
-        } else if (unexpected_hunks.items.len > 0) {
-            std.debug.print("exclusive check failed: {d} unexpected hunk{s}\n", .{
-                unexpected_hunks.items.len,
-                @as([]const u8, if (unexpected_hunks.items.len == 1) "" else "s"),
-            });
+            // stderr summary (human mode only)
+            var fail_count: usize = 0;
+            for (results.items) |r| {
+                if (r.status != .ok) fail_count += 1;
+            }
+            if (fail_count > 0 and unexpected_hunks.items.len > 0) {
+                std.debug.print("{d} of {d} hashes failed, {d} unexpected hunk{s}\n", .{
+                    fail_count,
+                    results.items.len,
+                    unexpected_hunks.items.len,
+                    @as([]const u8, if (unexpected_hunks.items.len == 1) "" else "s"),
+                });
+            } else if (fail_count > 0) {
+                std.debug.print("{d} of {d} hashes failed\n", .{ fail_count, results.items.len });
+            } else if (unexpected_hunks.items.len > 0) {
+                std.debug.print("exclusive check failed: {d} unexpected hunk{s}\n", .{
+                    unexpected_hunks.items.len,
+                    @as([]const u8, if (unexpected_hunks.items.len == 1) "" else "s"),
+                });
+            }
         }
     }
 
@@ -756,13 +761,15 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
     for (result_groups) |rg| {
         count += rg.applied.len;
         merged_count += rg.consumed.len;
-        switch (opts.output) {
-            .human => try printResultGroupHuman(stdout, verb, rg, use_color),
-            .porcelain => try printResultGroupPorcelain(stdout, verb, rg),
+        if (opts.verbosity != .quiet) {
+            switch (opts.output) {
+                .human => try printResultGroupHuman(stdout, verb, rg, use_color),
+                .porcelain => try printResultGroupPorcelain(stdout, verb, rg),
+            }
         }
     }
-    // Summary count on stderr (human mode only)
-    if (opts.output == .human) {
+    // Summary count on stderr (verbose + human mode only)
+    if (opts.verbosity == .verbose and opts.output == .human) {
         if (count == 1 and merged_count == 0) {
             std.debug.print("1 hunk {s}\n", .{verb});
         } else if (count == 1 and merged_count > 0) {
@@ -775,7 +782,7 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
     }
 
     // Hint about hash changes when staging (only with --verbose)
-    if (action == .stage and opts.verbose and opts.output == .human and std.fs.File.stdout().isTty()) {
+    if (action == .stage and opts.verbosity == .verbose and opts.output == .human) {
         std.debug.print("hint: staged hashes differ from unstaged -- use 'git hunk list --staged' to see them\n", .{});
     }
 }
@@ -849,31 +856,33 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
     var count: usize = 0;
     for (matched.items) |m| {
         count += 1;
-        switch (opts.output) {
-            .human => {
-                try stdout.print("{s} ", .{verb});
-                if (use_color) try stdout.print("{s}", .{format.COLOR_YELLOW});
-                try stdout.print("{s}", .{m.hunk.sha_hex[0..7]});
-                if (m.line_spec) |ls| {
-                    try stdout.print(":", .{});
-                    try writeLineSpec(stdout, ls);
-                }
-                if (use_color) try stdout.print("{s}", .{format.COLOR_RESET});
-                try stdout.print("  {s}\n", .{m.hunk.file_path});
-            },
-            .porcelain => {
-                try stdout.print("{s}\t{s}", .{ porcelain_verb, m.hunk.sha_hex[0..7] });
-                if (m.line_spec) |ls| {
-                    try stdout.print(":", .{});
-                    try writeLineSpec(stdout, ls);
-                }
-                try stdout.print("\t{s}\n", .{m.hunk.file_path});
-            },
+        if (opts.verbosity != .quiet) {
+            switch (opts.output) {
+                .human => {
+                    try stdout.print("{s} ", .{verb});
+                    if (use_color) try stdout.print("{s}", .{format.COLOR_YELLOW});
+                    try stdout.print("{s}", .{m.hunk.sha_hex[0..7]});
+                    if (m.line_spec) |ls| {
+                        try stdout.print(":", .{});
+                        try writeLineSpec(stdout, ls);
+                    }
+                    if (use_color) try stdout.print("{s}", .{format.COLOR_RESET});
+                    try stdout.print("  {s}\n", .{m.hunk.file_path});
+                },
+                .porcelain => {
+                    try stdout.print("{s}\t{s}", .{ porcelain_verb, m.hunk.sha_hex[0..7] });
+                    if (m.line_spec) |ls| {
+                        try stdout.print(":", .{});
+                        try writeLineSpec(stdout, ls);
+                    }
+                    try stdout.print("\t{s}\n", .{m.hunk.file_path});
+                },
+            }
         }
     }
 
-    // Summary on stderr (human mode only)
-    if (opts.output == .human) {
+    // Summary on stderr (verbose + human mode only)
+    if (opts.verbosity == .verbose and opts.output == .human) {
         if (opts.dry_run) {
             if (count == 1) {
                 std.debug.print("1 hunk would be restored\n", .{});
@@ -920,32 +929,36 @@ pub fn cmdDiff(allocator: Allocator, stdout: *std.Io.Writer, opts: DiffOptions) 
     const use_color = format.shouldUseColor(opts.output, opts.no_color);
 
     // Print each matched hunk
-    for (matched.items) |m| {
-        switch (opts.output) {
-            .human => {
-                try stdout.writeAll(m.hunk.patch_header);
-                if (m.hunk.raw_lines.len == 0) {
-                    if (m.line_spec != null) {
-                        std.debug.print("(empty file — no lines to select)\n", .{});
+    if (opts.verbosity != .quiet) {
+        for (matched.items) |m| {
+            switch (opts.output) {
+                .human => {
+                    try stdout.writeAll(m.hunk.patch_header);
+                    if (m.hunk.raw_lines.len == 0) {
+                        if (m.line_spec != null) {
+                            std.debug.print("(empty file — no lines to select)\n", .{});
+                        }
+                    } else if (m.line_spec) |ls| {
+                        try format.printRawLinesWithLineNumbers(stdout, m.hunk.raw_lines, ls, use_color);
+                    } else {
+                        try format.printRawLinesHuman(stdout, m.hunk.raw_lines, use_color);
                     }
-                } else if (m.line_spec) |ls| {
-                    try format.printRawLinesWithLineNumbers(stdout, m.hunk.raw_lines, ls, use_color);
-                } else {
-                    try format.printRawLinesHuman(stdout, m.hunk.raw_lines, use_color);
-                }
-                try stdout.writeAll("\n");
-            },
-            .porcelain => {
-                try format.printHunkPorcelain(stdout, m.hunk.*, opts.mode);
-                try format.printDiffPorcelain(stdout, m.hunk.*);
-            },
+                    try stdout.writeAll("\n");
+                },
+                .porcelain => {
+                    try format.printHunkPorcelain(stdout, m.hunk.*, opts.mode);
+                    try format.printDiffPorcelain(stdout, m.hunk.*);
+                },
+            }
         }
     }
 }
 
-fn stashPop(allocator: Allocator) !void {
+fn stashPop(allocator: Allocator, verbosity: Verbosity) !void {
     try git.runGitStashPop(allocator);
-    std.debug.print("popped stash@{{0}}\n", .{});
+    if (verbosity != .quiet) {
+        std.debug.print("popped stash@{{0}}\n", .{});
+    }
 }
 
 const TrackedStashResult = struct {
@@ -1095,46 +1108,46 @@ fn reportStashResults(stdout: *std.Io.Writer, opts: StashOptions, matched: []con
     var count: usize = 0;
     for (matched) |m| {
         count += 1;
-        switch (opts.output) {
-            .human => {
-                try stdout.print("stashed ", .{});
-                if (use_color) try stdout.print("{s}", .{format.COLOR_YELLOW});
-                try stdout.print("{s}", .{m.hunk.sha_hex[0..7]});
-                if (m.line_spec) |ls| {
-                    try stdout.print(":", .{});
-                    try writeLineSpec(stdout, ls);
-                }
-                if (use_color) try stdout.print("{s}", .{format.COLOR_RESET});
-                try stdout.print("  {s}\n", .{m.hunk.file_path});
-            },
-            .porcelain => {
-                try stdout.print("stashed\t{s}", .{m.hunk.sha_hex[0..7]});
-                if (m.line_spec) |ls| {
-                    try stdout.print(":", .{});
-                    try writeLineSpec(stdout, ls);
-                }
-                try stdout.print("\t{s}\n", .{m.hunk.file_path});
-            },
+        if (opts.verbosity != .quiet) {
+            switch (opts.output) {
+                .human => {
+                    try stdout.print("stashed ", .{});
+                    if (use_color) try stdout.print("{s}", .{format.COLOR_YELLOW});
+                    try stdout.print("{s}", .{m.hunk.sha_hex[0..7]});
+                    if (m.line_spec) |ls| {
+                        try stdout.print(":", .{});
+                        try writeLineSpec(stdout, ls);
+                    }
+                    if (use_color) try stdout.print("{s}", .{format.COLOR_RESET});
+                    try stdout.print("  {s}\n", .{m.hunk.file_path});
+                },
+                .porcelain => {
+                    try stdout.print("stashed\t{s}", .{m.hunk.sha_hex[0..7]});
+                    if (m.line_spec) |ls| {
+                        try stdout.print(":", .{});
+                        try writeLineSpec(stdout, ls);
+                    }
+                    try stdout.print("\t{s}\n", .{m.hunk.file_path});
+                },
+            }
         }
     }
 
-    // Summary on stderr (human mode only)
-    if (opts.output == .human) {
+    // Summary on stderr (verbose + human mode only)
+    if (opts.verbosity == .verbose and opts.output == .human) {
         if (count == 1) {
             std.debug.print("1 hunk stashed\n", .{});
         } else {
             std.debug.print("{d} hunks stashed\n", .{count});
         }
         // Hint on stderr (only with --verbose)
-        if (opts.verbose and std.fs.File.stdout().isTty()) {
-            std.debug.print("hint: use 'git stash list' to see stashed entries, 'git hunk stash pop' to restore\n", .{});
-        }
+        std.debug.print("hint: use 'git stash list' to see stashed entries, 'git hunk stash pop' to restore\n", .{});
     }
 }
 
 pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions) !void {
     if (opts.pop) {
-        try stashPop(allocator);
+        try stashPop(allocator, opts.verbosity);
         return;
     }
 

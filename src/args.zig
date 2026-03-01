@@ -22,6 +22,7 @@ const CommonFlags = struct {
     no_color: bool = false,
     output: OutputMode = .human,
     context: ?u32 = null,
+    verbosity: types.Verbosity = .normal,
 };
 
 /// Try to parse arg as a common flag shared across all parsers.
@@ -69,6 +70,14 @@ fn parseCommonFlag(arg: []const u8, i: *usize, args: []const [:0]u8, c: *CommonF
         if (i.* >= args.len) return error.MissingArgument;
         c.context = std.fmt.parseInt(u32, args[i.*], 10) catch return error.InvalidArgument;
         return true;
+    } else if (std.mem.eql(u8, arg, "--quiet") or std.mem.eql(u8, arg, "-q")) {
+        if (c.verbosity == .verbose) return error.ConflictingVerbosity;
+        c.verbosity = .quiet;
+        return true;
+    } else if (std.mem.eql(u8, arg, "--verbose") or std.mem.eql(u8, arg, "-v")) {
+        if (c.verbosity == .quiet) return error.ConflictingVerbosity;
+        c.verbosity = .verbose;
+        return true;
     }
     return false;
 }
@@ -93,6 +102,7 @@ pub fn parseListArgs(args: []const [:0]u8) !ListOptions {
     opts.no_color = common.no_color;
     opts.output = common.output;
     opts.context = common.context;
+    opts.verbosity = common.verbosity;
     return opts;
 }
 
@@ -109,8 +119,6 @@ pub fn parseAddResetArgs(allocator: Allocator, args: []const [:0]u8) !AddResetOp
         if (try parseCommonFlag(arg, &i, args, &common)) continue;
         if (std.mem.eql(u8, arg, "--all")) {
             opts.select_all = true;
-        } else if (std.mem.eql(u8, arg, "--verbose") or std.mem.eql(u8, arg, "-v")) {
-            opts.verbose = true;
         } else if (std.mem.startsWith(u8, arg, "-")) {
             std.debug.print("error: unknown flag '{s}'\n", .{arg});
             return error.UnknownFlag;
@@ -125,6 +133,7 @@ pub fn parseAddResetArgs(allocator: Allocator, args: []const [:0]u8) !AddResetOp
     opts.no_color = common.no_color;
     opts.output = common.output;
     opts.context = common.context;
+    opts.verbosity = common.verbosity;
 
     if (opts.sha_args.items.len == 0 and !opts.select_all and opts.file_filter == null) {
         std.debug.print("error: at least one <sha> argument required (or use --all or --file <path>)\n", .{});
@@ -161,6 +170,7 @@ pub fn parseDiffArgs(allocator: Allocator, args: []const [:0]u8) !DiffOptions {
     opts.no_color = common.no_color;
     opts.output = common.output;
     opts.context = common.context;
+    opts.verbosity = common.verbosity;
 
     if (opts.sha_args.items.len == 0) {
         std.debug.print("error: at least one <sha> argument required\n", .{});
@@ -192,6 +202,7 @@ pub fn parseCountArgs(args: []const [:0]u8) !CountOptions {
     opts.file_filter = common.file_filter;
     opts.diff_filter = common.diff_filter;
     opts.context = common.context;
+    opts.verbosity = common.verbosity;
     return opts;
 }
 
@@ -229,6 +240,7 @@ pub fn parseCheckArgs(allocator: Allocator, args: []const [:0]u8) !CheckOptions 
     opts.no_color = common.no_color;
     opts.output = common.output;
     opts.context = common.context;
+    opts.verbosity = common.verbosity;
 
     if (opts.sha_args.items.len == 0) {
         std.debug.print("error: at least one <sha> argument required\n", .{});
@@ -269,6 +281,7 @@ pub fn parseRestoreArgs(allocator: Allocator, args: []const [:0]u8) !RestoreOpti
     opts.no_color = common.no_color;
     opts.output = common.output;
     opts.context = common.context;
+    opts.verbosity = common.verbosity;
 
     if (opts.sha_args.items.len == 0 and !opts.select_all and opts.file_filter == null) {
         std.debug.print("error: at least one <sha> argument required (or use --all or --file <path>)\n", .{});
@@ -321,8 +334,6 @@ pub fn parseStashArgs(allocator: Allocator, args: []const [:0]u8) !StashOptions 
             i += 1;
             if (i >= args.len) return error.MissingArgument;
             opts.message = args[i];
-        } else if (std.mem.eql(u8, arg, "--verbose") or std.mem.eql(u8, arg, "-v")) {
-            opts.verbose = true;
         } else if (std.mem.startsWith(u8, arg, "-")) {
             std.debug.print("error: unknown flag '{s}'\n", .{arg});
             return error.UnknownFlag;
@@ -342,6 +353,7 @@ pub fn parseStashArgs(allocator: Allocator, args: []const [:0]u8) !StashOptions 
     opts.no_color = common.no_color;
     opts.output = common.output;
     opts.context = common.context;
+    opts.verbosity = common.verbosity;
 
     // --include-untracked conflicts with --tracked-only
     if (opts.include_untracked and opts.diff_filter == .tracked_only) {
@@ -588,6 +600,89 @@ test "parseListArgs context -U <n> space form" {
     const args_arr = [_][:0]u8{ @constCast("-U"), @constCast("3") };
     const opts = try parseListArgs(&args_arr);
     try std.testing.expectEqual(@as(?u32, 3), opts.context);
+}
+
+test "parseListArgs verbosity default normal" {
+    const opts = try parseListArgs(&.{});
+    try std.testing.expectEqual(types.Verbosity.normal, opts.verbosity);
+}
+
+test "parseListArgs verbosity --quiet" {
+    const args_arr = [_][:0]u8{@constCast("--quiet")};
+    const opts = try parseListArgs(&args_arr);
+    try std.testing.expectEqual(types.Verbosity.quiet, opts.verbosity);
+}
+
+test "parseListArgs verbosity -q" {
+    const args_arr = [_][:0]u8{@constCast("-q")};
+    const opts = try parseListArgs(&args_arr);
+    try std.testing.expectEqual(types.Verbosity.quiet, opts.verbosity);
+}
+
+test "parseListArgs verbosity --verbose" {
+    const args_arr = [_][:0]u8{@constCast("--verbose")};
+    const opts = try parseListArgs(&args_arr);
+    try std.testing.expectEqual(types.Verbosity.verbose, opts.verbosity);
+}
+
+test "parseListArgs verbosity -v" {
+    const args_arr = [_][:0]u8{@constCast("-v")};
+    const opts = try parseListArgs(&args_arr);
+    try std.testing.expectEqual(types.Verbosity.verbose, opts.verbosity);
+}
+
+test "parseListArgs verbosity --quiet --verbose conflict" {
+    const args_arr = [_][:0]u8{ @constCast("--quiet"), @constCast("--verbose") };
+    try std.testing.expectError(error.ConflictingVerbosity, parseListArgs(&args_arr));
+}
+
+test "parseListArgs verbosity --verbose --quiet conflict" {
+    const args_arr = [_][:0]u8{ @constCast("--verbose"), @constCast("--quiet") };
+    try std.testing.expectError(error.ConflictingVerbosity, parseListArgs(&args_arr));
+}
+
+test "parseAddResetArgs verbosity --verbose" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("--all"), @constCast("--verbose") };
+    var opts = try parseAddResetArgs(allocator, &args_arr);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expectEqual(types.Verbosity.verbose, opts.verbosity);
+}
+
+test "parseAddResetArgs verbosity --quiet" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("--all"), @constCast("--quiet") };
+    var opts = try parseAddResetArgs(allocator, &args_arr);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expectEqual(types.Verbosity.quiet, opts.verbosity);
+}
+
+test "parseStashArgs verbosity --verbose" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("--all"), @constCast("--verbose") };
+    var opts = try parseStashArgs(allocator, &args_arr);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expectEqual(types.Verbosity.verbose, opts.verbosity);
+}
+
+test "parseStashArgs verbosity --quiet" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("--all"), @constCast("--quiet") };
+    var opts = try parseStashArgs(allocator, &args_arr);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expectEqual(types.Verbosity.quiet, opts.verbosity);
+}
+
+test "parseCountArgs verbosity --verbose" {
+    const args_arr = [_][:0]u8{@constCast("--verbose")};
+    const opts = try parseCountArgs(&args_arr);
+    try std.testing.expectEqual(types.Verbosity.verbose, opts.verbosity);
+}
+
+test "parseCountArgs verbosity --quiet" {
+    const args_arr = [_][:0]u8{@constCast("--quiet")};
+    const opts = try parseCountArgs(&args_arr);
+    try std.testing.expectEqual(types.Verbosity.quiet, opts.verbosity);
 }
 
 test "parseAddResetArgs valid sha" {

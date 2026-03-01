@@ -125,7 +125,7 @@ sed -i '' '1s/.*/Change A./' alpha.txt
 
 sed -i '' '1s/.*/Change B./' alpha.txt
 SHA="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
-STDERR208="$("$GIT_HUNK" add --no-color "$SHA" 2>&1 >/dev/null)"
+STDERR208="$("$GIT_HUNK" add --verbose --no-color "$SHA" 2>&1 >/dev/null)"
 echo "$STDERR208" | grep -qE '\(.*merged\)' \
     || fail "test 208: summary stderr didn't show merged count, got: '$STDERR208'"
 pass "test 208: summary line shows merged count"

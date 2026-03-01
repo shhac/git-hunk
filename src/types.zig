@@ -53,6 +53,8 @@ pub const DiffFilter = enum { all, tracked_only, untracked_only };
 
 pub const OutputMode = enum { human, porcelain };
 
+pub const Verbosity = enum { quiet, normal, verbose };
+
 pub const ListOptions = struct {
     mode: DiffMode = .unstaged,
     diff_filter: DiffFilter = .all,
@@ -61,6 +63,7 @@ pub const ListOptions = struct {
     oneline: bool = false,
     no_color: bool = false,
     context: ?u32 = null,
+    verbosity: Verbosity = .normal,
 };
 
 pub const AddResetOptions = struct {
@@ -68,7 +71,7 @@ pub const AddResetOptions = struct {
     diff_filter: DiffFilter = .all,
     file_filter: ?[]const u8 = null,
     select_all: bool = false,
-    verbose: bool = false,
+    verbosity: Verbosity = .normal,
     output: OutputMode = .human,
     no_color: bool = false,
     context: ?u32 = null,
@@ -82,6 +85,7 @@ pub const DiffOptions = struct {
     output: OutputMode = .human,
     no_color: bool = false,
     context: ?u32 = null,
+    verbosity: Verbosity = .normal,
 };
 
 pub const CountOptions = struct {
@@ -89,6 +93,7 @@ pub const CountOptions = struct {
     diff_filter: DiffFilter = .all,
     file_filter: ?[]const u8 = null,
     context: ?u32 = null,
+    verbosity: Verbosity = .normal,
 };
 
 pub const CheckOptions = struct {
@@ -100,6 +105,7 @@ pub const CheckOptions = struct {
     output: OutputMode = .human,
     no_color: bool = false,
     context: ?u32 = null,
+    verbosity: Verbosity = .normal,
 };
 
 pub const RestoreOptions = struct {
@@ -112,6 +118,7 @@ pub const RestoreOptions = struct {
     output: OutputMode = .human,
     no_color: bool = false,
     context: ?u32 = null,
+    verbosity: Verbosity = .normal,
 };
 
 pub const StashOptions = struct {
@@ -122,7 +129,7 @@ pub const StashOptions = struct {
     pop: bool = false,
     include_untracked: bool = false,
     message: ?[]const u8 = null,
-    verbose: bool = false,
+    verbosity: Verbosity = .normal,
     output: OutputMode = .human,
     no_color: bool = false,
     context: ?u32 = null,
