@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.8.0] - 2026-03-01
+
+### Added
+- `--quiet` / `-q` flag on all commands (suppress output, exit code only)
+- `--verbose` / `-v` flag on all commands (show summary counts and hints)
+- `-U<n>` flag form (no space, e.g., `-U0`) alongside existing `-U <n>`
+- `--unified=<n>` flag form (with equals) alongside existing `--unified <n>`
+- CI workflow for unit and integration tests on push/PR
+- Comprehensive test coverage: line spec staging, restore adjacency, cross-repo SHA determinism, stale SHA detection, round-trip byte-exact verification, idempotency, unified-value-affects-SHA, stash dirty index, reset --all, binary files, unicode filenames, rename detection, empty repo, merge conflicts, symlinks, --version output
+- Dedicated `test_diff.sh` test suite (23 tests)
+- Edge case test suite (`test_edge_cases.sh`, 9 tests)
+
+### Changed
+- **Breaking:** `discard` command renamed to `restore` (matches `git restore`)
+- **Breaking:** `show` command renamed to `diff` (matches `git diff`)
+- **Breaking:** Summary counts and hint messages now require `--verbose` (previously always shown)
+- `--porcelain` implies quiet for human-readable output
+- Integration tests renumbered to per-file ranges (100s, 200s, etc.) eliminating all cross-file collisions
+
+### Fixed
+- Preserve colored output when git pager is active (`GIT_PAGER_IN_USE` environment variable)
+- Handle empty files in diff parser
+- Handle escaped quotes in C-quoted diff path extraction
+- Improve empty file output formatting
+
+### Internal
+- Extract `resolveMatchedHunks` — deduplicate SHA resolution across 4 commands
+- Extract `collectUniqueFilePaths` — deduplicate file path collection across 3 commands
+- Extract `shouldUseColor` into `format.zig` — deduplicate color computation across 6 sites
+- Deduplicate `rangesOverlap` — move to `types.zig` from two files
+- Decompose `cmdStash` (328 lines) into 5 focused helpers
+- Extract `handleParseError` — reduce `main.zig` dispatch boilerplate by ~80 lines
+- Extract `parseCommonFlag` — reduce `args.zig` flag parsing duplication by ~50%
+
 ## [0.7.1] - 2026-03-01
 
 ### Fixed
