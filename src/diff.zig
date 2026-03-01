@@ -199,6 +199,29 @@ pub fn parseDiff(arena: Allocator, diff: []const u8, mode: DiffMode, hunks: *std
             patch_header = ph.items;
         }
 
+        // Empty new/deleted file: ---/+++ present but no @@ hunk (Linux git behavior)
+        const next_peek = cursor.peek();
+        const has_at_hunk = next_peek != null and std.mem.startsWith(u8, next_peek.?, "@@ ");
+        if (!has_at_hunk and (is_new_file or is_deleted_file)) {
+            const sha = computeHunkSha(file_path, 0, "");
+            try hunks.append(arena, .{
+                .file_path = file_path,
+                .old_start = 0,
+                .old_count = 0,
+                .new_start = 0,
+                .new_count = 0,
+                .context = "",
+                .raw_lines = "",
+                .diff_lines = "",
+                .sha_hex = sha,
+                .is_new_file = is_new_file,
+                .is_deleted_file = is_deleted_file,
+                .is_untracked = false,
+                .patch_header = patch_header,
+            });
+            continue;
+        }
+
         // Parse hunks for this file
         while (cursor.peek()) |hdr| {
             if (!std.mem.startsWith(u8, hdr, "@@ ")) break;

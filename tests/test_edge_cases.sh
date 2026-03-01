@@ -133,7 +133,7 @@ CONFLICT_REPO="$(mktemp -d)"
 SAVED_REPO840="$CURRENT_REPO"
 CURRENT_REPO="$CONFLICT_REPO"
 cd "$CONFLICT_REPO"
-git init -q
+git init -q -b main
 echo '*.bak' >> .git/info/exclude
 git config user.email "t@t.com"
 git config user.name "T"
