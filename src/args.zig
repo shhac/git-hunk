@@ -51,7 +51,20 @@ fn parseCommonFlag(arg: []const u8, i: *usize, args: []const [:0]u8, c: *CommonF
     } else if (std.mem.eql(u8, arg, "--porcelain")) {
         c.output = .porcelain;
         return true;
-    } else if (std.mem.eql(u8, arg, "--unified") or std.mem.eql(u8, arg, "-U")) {
+    } else if (std.mem.startsWith(u8, arg, "--unified=")) {
+        const val = arg["--unified=".len..];
+        c.context = std.fmt.parseInt(u32, val, 10) catch return error.InvalidArgument;
+        return true;
+    } else if (std.mem.eql(u8, arg, "--unified")) {
+        i.* += 1;
+        if (i.* >= args.len) return error.MissingArgument;
+        c.context = std.fmt.parseInt(u32, args[i.*], 10) catch return error.InvalidArgument;
+        return true;
+    } else if (std.mem.startsWith(u8, arg, "-U") and arg.len > 2) {
+        const val = arg[2..];
+        c.context = std.fmt.parseInt(u32, val, 10) catch return error.InvalidArgument;
+        return true;
+    } else if (std.mem.eql(u8, arg, "-U")) {
         i.* += 1;
         if (i.* >= args.len) return error.MissingArgument;
         c.context = std.fmt.parseInt(u32, args[i.*], 10) catch return error.InvalidArgument;
@@ -536,6 +549,45 @@ test "parseListArgs context invalid" {
 test "parseListArgs context default null" {
     const opts = try parseListArgs(&.{});
     try std.testing.expectEqual(@as(?u32, null), opts.context);
+}
+
+test "parseListArgs context -U<n> form" {
+    const args_arr = [_][:0]u8{@constCast("-U3")};
+    const opts = try parseListArgs(&args_arr);
+    try std.testing.expectEqual(@as(?u32, 3), opts.context);
+}
+
+test "parseListArgs context -U0 form" {
+    const args_arr = [_][:0]u8{@constCast("-U0")};
+    const opts = try parseListArgs(&args_arr);
+    try std.testing.expectEqual(@as(?u32, 0), opts.context);
+}
+
+test "parseListArgs context --unified=<n> form" {
+    const args_arr = [_][:0]u8{@constCast("--unified=5")};
+    const opts = try parseListArgs(&args_arr);
+    try std.testing.expectEqual(@as(?u32, 5), opts.context);
+}
+
+test "parseListArgs context -U alone gives error" {
+    const args_arr = [_][:0]u8{@constCast("-U")};
+    try std.testing.expectError(error.MissingArgument, parseListArgs(&args_arr));
+}
+
+test "parseListArgs context -Uabc gives error" {
+    const args_arr = [_][:0]u8{@constCast("-Uabc")};
+    try std.testing.expectError(error.InvalidArgument, parseListArgs(&args_arr));
+}
+
+test "parseListArgs context --unified=abc gives error" {
+    const args_arr = [_][:0]u8{@constCast("--unified=abc")};
+    try std.testing.expectError(error.InvalidArgument, parseListArgs(&args_arr));
+}
+
+test "parseListArgs context -U <n> space form" {
+    const args_arr = [_][:0]u8{ @constCast("-U"), @constCast("3") };
+    const opts = try parseListArgs(&args_arr);
+    try std.testing.expectEqual(@as(?u32, 3), opts.context);
 }
 
 test "parseAddResetArgs valid sha" {
