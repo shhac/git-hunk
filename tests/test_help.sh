@@ -67,4 +67,20 @@ else
     echo "SKIP: test 605: man page not found at $MANPAGE"
 fi
 
+# ============================================================================
+# Test 606: --version outputs git-hunk X.Y.Z format
+# ============================================================================
+OUT606="$("$GIT_HUNK" --version)"
+echo "$OUT606" | grep -qE '^git-hunk [0-9]+\.[0-9]+\.[0-9]+$' \
+    || fail "test 606: --version output format wrong, got '$OUT606'"
+pass "test 606: --version outputs git-hunk X.Y.Z format"
+
+# ============================================================================
+# Test 607: -V outputs same version string as --version
+# ============================================================================
+OUT607="$("$GIT_HUNK" -V)"
+[[ "$OUT607" == "$OUT606" ]] \
+    || fail "test 607: -V output '$OUT607' differs from --version '$OUT606'"
+pass "test 607: -V outputs same version string as --version"
+
 report_results
