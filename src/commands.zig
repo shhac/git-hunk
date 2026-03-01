@@ -943,11 +943,198 @@ pub fn cmdShow(allocator: Allocator, stdout: *std.Io.Writer, opts: ShowOptions) 
     }
 }
 
+fn stashPop(allocator: Allocator) !void {
+    try git.runGitStashPop(allocator);
+    std.debug.print("popped stash@{{0}}\n", .{});
+}
+
+const TrackedStashResult = struct {
+    /// Arena-owned patch (for reverse-apply to worktree during cleanup).
+    index_patch: []const u8,
+    /// Allocator-owned stash tree SHA — caller must free.
+    stash_tree: []const u8,
+};
+
+/// Build the stash tree for tracked hunks using a temporary git index.
+/// Sorts `tracked_matched` in place. Returns index_patch (arena-owned) and
+/// stash_tree (allocator-owned — caller must free).
+fn buildTrackedStashTree(
+    arena: Allocator,
+    allocator: Allocator,
+    tracked_matched: []MatchedHunk,
+    head_tree: []const u8,
+    context: ?u32,
+) !TrackedStashResult {
+    // Sort and build INDEX_PATCH (index-relative, for worktree reverse-apply)
+    std.mem.sort(MatchedHunk, tracked_matched, {}, patch_mod.matchedHunkPatchOrder);
+    const index_patch = try patch_mod.buildCombinedPatch(arena, tracked_matched);
+
+    // Collect unique file paths from tracked hunks for HEAD diff
+    const tracked_file_paths = try collectUniqueFilePaths(arena, tracked_matched);
+
+    // Run HEAD-relative diff + parse
+    const head_diff_output = try git.runGitDiffHead(allocator, context, tracked_file_paths);
+    defer allocator.free(head_diff_output);
+
+    var head_hunks: std.ArrayList(Hunk) = .empty;
+    if (head_diff_output.len > 0) {
+        try diff_mod.parseDiff(arena, head_diff_output, .unstaged, &head_hunks);
+    }
+
+    // Build pointers to selected index hunks for the matcher
+    const selected_ptrs = try arena.alloc(*const Hunk, tracked_matched.len);
+    for (tracked_matched, 0..) |m, i| {
+        selected_ptrs[i] = m.hunk;
+    }
+
+    // Match index hunks to HEAD hunks
+    const head_matched = try stash_mod.matchIndexToHead(arena, selected_ptrs, head_hunks.items);
+
+    if (head_matched.len == 0) {
+        std.debug.print("error: could not match selected hunks to HEAD-relative diff\n", .{});
+        std.process.exit(1);
+    }
+
+    // Sort and build HEAD_PATCH (for temp index apply)
+    const head_matched_sorted = try arena.alloc(MatchedHunk, head_matched.len);
+    @memcpy(head_matched_sorted, head_matched);
+    std.mem.sort(MatchedHunk, head_matched_sorted, {}, patch_mod.matchedHunkPatchOrder);
+    const head_patch = try patch_mod.buildCombinedPatch(arena, head_matched_sorted);
+
+    // Temp index pipeline
+    var random_bytes: [8]u8 = undefined;
+    std.crypto.random.bytes(&random_bytes);
+    const random_val = std.mem.readInt(u64, &random_bytes, .little);
+    var tmp_path_buf: [64]u8 = undefined;
+    const tmp_idx_path = std.fmt.bufPrint(&tmp_path_buf, "/tmp/git-hunk-idx.{x:0>16}", .{random_val}) catch unreachable;
+    const tmp_idx_z = try arena.dupeZ(u8, tmp_idx_path);
+
+    var env_map = try std.process.getEnvMap(allocator);
+    defer env_map.deinit();
+    try env_map.put("GIT_INDEX_FILE", tmp_idx_z);
+
+    defer std.posix.unlink(tmp_idx_z) catch {};
+
+    try git.runGitReadTreeWithEnv(allocator, head_tree, &env_map);
+    try git.runGitApplyWithEnv(allocator, head_patch, &env_map);
+
+    const stash_tree = try git.runGitWriteTreeWithEnv(allocator, &env_map);
+    return .{ .index_patch = index_patch, .stash_tree = stash_tree };
+}
+
+/// Build a git commit containing only the untracked files.
+/// Returns an allocator-owned commit SHA — caller must free.
+fn buildUntrackedCommit(
+    arena: Allocator,
+    allocator: Allocator,
+    head_sha: []const u8,
+    branch_name: []const u8,
+    head_msg: []const u8,
+    untracked_matched: []const MatchedHunk,
+) ![]const u8 {
+    var ut_random: [8]u8 = undefined;
+    std.crypto.random.bytes(&ut_random);
+    const ut_random_val = std.mem.readInt(u64, &ut_random, .little);
+    var ut_path_buf: [80]u8 = undefined;
+    const ut_path = std.fmt.bufPrint(&ut_path_buf, "/tmp/git-hunk-ut-idx.{x:0>16}", .{ut_random_val}) catch unreachable;
+    const ut_path_z = try arena.dupeZ(u8, ut_path);
+
+    var ut_env = try std.process.getEnvMap(allocator);
+    defer ut_env.deinit();
+    try ut_env.put("GIT_INDEX_FILE", ut_path_z);
+
+    defer std.posix.unlink(ut_path_z) catch {};
+
+    // Hash each untracked file and add to temp index
+    for (untracked_matched) |m| {
+        const blob_sha = try git.runGitHashObject(allocator, m.hunk.file_path);
+        defer allocator.free(blob_sha);
+
+        const mode = blk: {
+            const stat = std.fs.cwd().statFile(m.hunk.file_path) catch break :blk "100644";
+            break :blk if (stat.mode & std.posix.S.IXUSR != 0) "100755" else "100644";
+        };
+        try git.runGitUpdateIndexCacheinfo(allocator, mode, blob_sha, m.hunk.file_path, &ut_env);
+    }
+
+    const untracked_tree = try git.runGitWriteTreeWithEnv(allocator, &ut_env);
+    defer allocator.free(untracked_tree);
+
+    const ut_msg = try std.fmt.allocPrint(arena, "untracked files on {s}: {s}", .{ branch_name, head_msg });
+    return git.runGitCommitTree(allocator, untracked_tree, &.{head_sha}, ut_msg);
+}
+
+/// Reverse-apply tracked patch and delete untracked files from the worktree.
+/// Intentionally swallows errors to avoid aborting after a successful stash store.
+fn cleanupWorktree(
+    allocator: Allocator,
+    has_tracked: bool,
+    has_untracked: bool,
+    index_patch: []const u8,
+    untracked_matched: []const MatchedHunk,
+) void {
+    if (has_tracked) {
+        git.runGitApply(allocator, index_patch, true, .worktree, false) catch {
+            std.debug.print("warning: stash created but worktree changes could not be removed\n", .{});
+            std.debug.print("hint: use 'git stash pop' to undo or manually resolve\n", .{});
+        };
+    }
+    if (has_untracked) {
+        for (untracked_matched) |m| {
+            std.fs.cwd().deleteFile(m.hunk.file_path) catch {
+                std.debug.print("warning: could not delete untracked file '{s}'\n", .{m.hunk.file_path});
+            };
+        }
+    }
+}
+
+/// Print per-hunk stash results and summary to stdout/stderr.
+fn reportStashResults(stdout: *std.Io.Writer, opts: StashOptions, matched: []const MatchedHunk) !void {
+    const use_color = format.shouldUseColor(opts.output, opts.no_color);
+
+    var count: usize = 0;
+    for (matched) |m| {
+        count += 1;
+        switch (opts.output) {
+            .human => {
+                try stdout.print("stashed ", .{});
+                if (use_color) try stdout.print("{s}", .{format.COLOR_YELLOW});
+                try stdout.print("{s}", .{m.hunk.sha_hex[0..7]});
+                if (m.line_spec) |ls| {
+                    try stdout.print(":", .{});
+                    try writeLineSpec(stdout, ls);
+                }
+                if (use_color) try stdout.print("{s}", .{format.COLOR_RESET});
+                try stdout.print("  {s}\n", .{m.hunk.file_path});
+            },
+            .porcelain => {
+                try stdout.print("stashed\t{s}", .{m.hunk.sha_hex[0..7]});
+                if (m.line_spec) |ls| {
+                    try stdout.print(":", .{});
+                    try writeLineSpec(stdout, ls);
+                }
+                try stdout.print("\t{s}\n", .{m.hunk.file_path});
+            },
+        }
+    }
+
+    // Summary on stderr (human mode only)
+    if (opts.output == .human) {
+        if (count == 1) {
+            std.debug.print("1 hunk stashed\n", .{});
+        } else {
+            std.debug.print("{d} hunks stashed\n", .{count});
+        }
+        // Hint on stderr (only with --verbose)
+        if (opts.verbose and std.fs.File.stdout().isTty()) {
+            std.debug.print("hint: use 'git stash list' to see stashed entries, 'git hunk stash pop' to restore\n", .{});
+        }
+    }
+}
+
 pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions) !void {
-    // Pop path: just run git stash pop and return
     if (opts.pop) {
-        try git.runGitStashPop(allocator);
-        std.debug.print("popped stash@{{0}}\n", .{});
+        try stashPop(allocator);
         return;
     }
 
@@ -1012,7 +1199,7 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
     const has_tracked = tracked_matched.items.len > 0;
     const has_untracked = untracked_matched.items.len > 0;
 
-    // Common: get HEAD info needed by both pipelines
+    // Get HEAD info needed by both pipelines
     const head_tree = try git.runGitRevParseTree(allocator);
     defer allocator.free(head_tree);
 
@@ -1032,60 +1219,9 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
     var owns_stash_tree = false;
 
     if (has_tracked) {
-        // Sort and build INDEX_PATCH (index-relative, for worktree reverse-apply)
-        std.mem.sort(MatchedHunk, tracked_matched.items, {}, patch_mod.matchedHunkPatchOrder);
-        index_patch = try patch_mod.buildCombinedPatch(arena, tracked_matched.items);
-
-        // Collect unique file paths from tracked hunks for HEAD diff
-        const tracked_file_paths = try collectUniqueFilePaths(arena, tracked_matched.items);
-
-        // Run HEAD-relative diff + parse
-        const head_diff_output = try git.runGitDiffHead(allocator, opts.context, tracked_file_paths);
-        defer allocator.free(head_diff_output);
-
-        var head_hunks: std.ArrayList(Hunk) = .empty;
-        if (head_diff_output.len > 0) {
-            try diff_mod.parseDiff(arena, head_diff_output, .unstaged, &head_hunks);
-        }
-
-        // Build pointers to selected index hunks for the matcher
-        const selected_ptrs = try arena.alloc(*const Hunk, tracked_matched.items.len);
-        for (tracked_matched.items, 0..) |m, i| {
-            selected_ptrs[i] = m.hunk;
-        }
-
-        // Match index hunks to HEAD hunks
-        const head_matched = try stash_mod.matchIndexToHead(arena, selected_ptrs, head_hunks.items);
-
-        if (head_matched.len == 0) {
-            std.debug.print("error: could not match selected hunks to HEAD-relative diff\n", .{});
-            std.process.exit(1);
-        }
-
-        // Sort and build HEAD_PATCH (for temp index apply)
-        const head_matched_sorted = try arena.alloc(MatchedHunk, head_matched.len);
-        @memcpy(head_matched_sorted, head_matched);
-        std.mem.sort(MatchedHunk, head_matched_sorted, {}, patch_mod.matchedHunkPatchOrder);
-        const head_patch = try patch_mod.buildCombinedPatch(arena, head_matched_sorted);
-
-        // Temp index pipeline
-        var random_bytes: [8]u8 = undefined;
-        std.crypto.random.bytes(&random_bytes);
-        const random_val = std.mem.readInt(u64, &random_bytes, .little);
-        var tmp_path_buf: [64]u8 = undefined;
-        const tmp_idx_path = std.fmt.bufPrint(&tmp_path_buf, "/tmp/git-hunk-idx.{x:0>16}", .{random_val}) catch unreachable;
-        const tmp_idx_z = try arena.dupeZ(u8, tmp_idx_path);
-
-        var env_map = try std.process.getEnvMap(allocator);
-        defer env_map.deinit();
-        try env_map.put("GIT_INDEX_FILE", tmp_idx_z);
-
-        defer std.posix.unlink(tmp_idx_z) catch {};
-
-        try git.runGitReadTreeWithEnv(allocator, head_tree, &env_map);
-        try git.runGitApplyWithEnv(allocator, head_patch, &env_map);
-
-        stash_tree = try git.runGitWriteTreeWithEnv(allocator, &env_map);
+        const result = try buildTrackedStashTree(arena, allocator, tracked_matched.items, head_tree, opts.context);
+        index_patch = result.index_patch;
+        stash_tree = result.stash_tree;
         owns_stash_tree = true;
     }
     defer if (owns_stash_tree) allocator.free(stash_tree);
@@ -1097,39 +1233,8 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
 
     // --- Untracked hunks pipeline (parent 3) ---
     var untracked_commit: ?[]const u8 = null;
-
     if (has_untracked) {
-        // Create temp index for untracked files
-        var ut_random: [8]u8 = undefined;
-        std.crypto.random.bytes(&ut_random);
-        const ut_random_val = std.mem.readInt(u64, &ut_random, .little);
-        var ut_path_buf: [80]u8 = undefined;
-        const ut_path = std.fmt.bufPrint(&ut_path_buf, "/tmp/git-hunk-ut-idx.{x:0>16}", .{ut_random_val}) catch unreachable;
-        const ut_path_z = try arena.dupeZ(u8, ut_path);
-
-        var ut_env = try std.process.getEnvMap(allocator);
-        defer ut_env.deinit();
-        try ut_env.put("GIT_INDEX_FILE", ut_path_z);
-
-        defer std.posix.unlink(ut_path_z) catch {};
-
-        // Hash each untracked file and add to temp index
-        for (untracked_matched.items) |m| {
-            const blob_sha = try git.runGitHashObject(allocator, m.hunk.file_path);
-            defer allocator.free(blob_sha);
-
-            const mode = blk: {
-                const stat = std.fs.cwd().statFile(m.hunk.file_path) catch break :blk "100644";
-                break :blk if (stat.mode & std.posix.S.IXUSR != 0) "100755" else "100644";
-            };
-            try git.runGitUpdateIndexCacheinfo(allocator, mode, blob_sha, m.hunk.file_path, &ut_env);
-        }
-
-        const untracked_tree = try git.runGitWriteTreeWithEnv(allocator, &ut_env);
-        defer allocator.free(untracked_tree);
-
-        const ut_msg = try std.fmt.allocPrint(arena, "untracked files on {s}: {s}", .{ branch_name, head_msg });
-        untracked_commit = try git.runGitCommitTree(allocator, untracked_tree, &.{head_sha}, ut_msg);
+        untracked_commit = try buildUntrackedCommit(arena, allocator, head_sha, branch_name, head_msg, untracked_matched.items);
     }
     defer if (untracked_commit) |uc| allocator.free(uc);
 
@@ -1156,62 +1261,9 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
 
     try git.runGitStashStore(allocator, stash_msg, wip_commit);
 
-    // Worktree cleanup
-    if (has_tracked) {
-        git.runGitApply(allocator, index_patch, true, .worktree, false) catch {
-            std.debug.print("warning: stash created but worktree changes could not be removed\n", .{});
-            std.debug.print("hint: use 'git stash pop' to undo or manually resolve\n", .{});
-        };
-    }
-    if (has_untracked) {
-        for (untracked_matched.items) |m| {
-            std.fs.cwd().deleteFile(m.hunk.file_path) catch {
-                std.debug.print("warning: could not delete untracked file '{s}'\n", .{m.hunk.file_path});
-            };
-        }
-    }
+    cleanupWorktree(allocator, has_tracked, has_untracked, index_patch, untracked_matched.items);
 
-    // Output per-hunk results
-    const use_color = format.shouldUseColor(opts.output, opts.no_color);
-
-    var count: usize = 0;
-    for (matched.items) |m| {
-        count += 1;
-        switch (opts.output) {
-            .human => {
-                try stdout.print("stashed ", .{});
-                if (use_color) try stdout.print("{s}", .{format.COLOR_YELLOW});
-                try stdout.print("{s}", .{m.hunk.sha_hex[0..7]});
-                if (m.line_spec) |ls| {
-                    try stdout.print(":", .{});
-                    try writeLineSpec(stdout, ls);
-                }
-                if (use_color) try stdout.print("{s}", .{format.COLOR_RESET});
-                try stdout.print("  {s}\n", .{m.hunk.file_path});
-            },
-            .porcelain => {
-                try stdout.print("stashed\t{s}", .{m.hunk.sha_hex[0..7]});
-                if (m.line_spec) |ls| {
-                    try stdout.print(":", .{});
-                    try writeLineSpec(stdout, ls);
-                }
-                try stdout.print("\t{s}\n", .{m.hunk.file_path});
-            },
-        }
-    }
-
-    // Summary on stderr (human mode only)
-    if (opts.output == .human) {
-        if (count == 1) {
-            std.debug.print("1 hunk stashed\n", .{});
-        } else {
-            std.debug.print("{d} hunks stashed\n", .{count});
-        }
-        // Hint on stderr (only with --verbose)
-        if (opts.verbose and std.fs.File.stdout().isTty()) {
-            std.debug.print("hint: use 'git stash list' to see stashed entries, 'git hunk stash pop' to restore\n", .{});
-        }
-    }
+    try reportStashResults(stdout, opts, matched.items);
 }
 
 // ============================================================================
