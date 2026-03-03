@@ -55,6 +55,7 @@ reviewed. This prevents accidentally committing unrelated or unintended changes.
 | `diff` | Inspect full diff of specific hunks | `--staged`, `--file`, `--porcelain` |
 | `add` | Stage hunks by hash | `--all`, `--file`, `--porcelain`, line specs (`sha:3-5,8`) |
 | `reset` | Unstage hunks by hash | `--all`, `--file`, `--porcelain`, line specs |
+| `commit` | Commit specific hunks directly | `-m <msg>`, `--all`, `--file`, `--amend`, `--dry-run`, line specs |
 | `stash` | Save hunks to git stash, remove from worktree | `--all`, `--include-untracked`/`-u`, `--file`, `-m <msg>`, `pop` subcommand |
 | `restore` | Revert worktree hunks (destructive) | `--all`, `--file`, `--force`, `--dry-run`, line specs |
 | `count` | Bare integer hunk count | `--staged`, `--file` |

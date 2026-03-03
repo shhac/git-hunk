@@ -180,6 +180,77 @@ git-hunk add a3f7c21 --no-color                  # disable color output
 
 ---
 
+## git-hunk commit
+
+Commit specific hunks directly, bypassing manual staging.
+
+```
+git-hunk commit [<sha[:lines]>...] -m <message> [--file <path>] [--all] [--amend] [--dry-run] [--porcelain] [--unified <n>] [--no-color]
+```
+
+### Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `<sha[:lines]>...` | One or more SHA hex prefixes (minimum 4 characters). Prefix matching is supported. Optional `:lines` suffix commits specific hunk-relative lines (e.g., `a3f7:3-5,8`). Optional when `--all` or `--file` is used. |
+
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `-m, --message <msg>` | Commit message (required). |
+| `--amend` | Amend the previous commit instead of creating a new one. |
+| `--dry-run` | Show what would be committed without committing. `-m` not required. |
+| `--all` | Commit all unstaged hunks. No SHA arguments required. |
+| `--file <path>` | Restrict hash matching to hunks in this file. When used without SHAs, commits all hunks in the file. |
+| `--ref <refspec>` | Diff against a git ref instead of the index. |
+| `--tracked-only` | Only include hunks from tracked files. |
+| `--untracked-only` | Only include hunks from untracked files. |
+| `--porcelain` | Tab-separated machine-readable output. |
+| `--unified <n>` / `-U<n>` / `--unified=<n>` | Number of context lines (default: git's `diff.context` or 3). Must match the value used with `list`. |
+| `--no-color` | Disable color output. |
+| `--quiet` / `-q` | Suppress all output except errors. Mutually exclusive with `--verbose`. |
+| `--verbose` / `-v` | Show summary counts after output. Mutually exclusive with `--quiet`. |
+
+`--staged` is NOT supported. To commit already-staged hunks, use `git commit` directly.
+
+### Examples
+
+```bash
+git-hunk commit a3f7 b82e -m "feat: add validation"  # commit specific hunks
+git-hunk commit --all -m "feat: everything"           # commit all unstaged hunks
+git-hunk commit --file src/foo.zig -m "refactor: cleanup"  # commit hunks in a file
+git-hunk commit a3f7:3-5 -m "fix: specific lines"    # commit specific lines
+git-hunk commit a3f7 --amend -m "fix: forgotten"      # amend previous commit
+git-hunk commit --dry-run a3f7 -m "check first"       # preview without committing
+```
+
+### Behavior
+
+- Uses a save/restore index approach: backs up the current index, resets to HEAD, stages only target hunks, runs `git commit` (hooks fire normally), then restores the original index.
+- Existing staged changes are preserved — only the specified hunks are committed.
+- The worktree is not modified — only HEAD and the index change.
+- With `--amend`, resets index to `HEAD~1` and uses `git commit --amend`.
+- With `--dry-run`, validates the patch with `git apply --check` and prints "would commit" lines without committing.
+- Crash recovery: if a stale `.git/index.hunk-backup` is found from a previous interrupted commit, it is automatically restored.
+- If the post-commit index sync fails (step 6), a warning is printed but the exit code is 0 (the commit succeeded).
+- On success, prints one line per committed hunk: `committed {sha7}  {file}`, followed by git's commit output.
+- With `--porcelain`, output is tab-separated: `committed\t{sha7}\t{file}`.
+- With `--dry-run`, verb is `would commit` (human) or `would-commit` (porcelain).
+
+### Errors
+
+| Error | Cause |
+|-------|-------|
+| `error: -m <message> is required` | No `-m` flag provided (and not `--dry-run`) |
+| `error: --staged is not supported by commit` | `--staged` flag used |
+| `error: commit aborted by hook` | Pre-commit or commit-msg hook rejected the commit |
+| `error: patch did not apply cleanly` | Hunks don't apply to a clean HEAD index |
+| `error: no hunks to commit` | Resolved hunks produce an empty patch |
+| `warning: commit succeeded but index sync failed` | Post-commit index sync failed (non-fatal) |
+
+---
+
 ## git-hunk reset
 
 Unstage hunks by content hash.
