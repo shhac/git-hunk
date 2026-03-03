@@ -15,6 +15,7 @@ const CountOptions = types.CountOptions;
 const CheckOptions = types.CheckOptions;
 const RestoreOptions = types.RestoreOptions;
 const StashOptions = types.StashOptions;
+const CommitOptions = types.CommitOptions;
 
 const CommonFlags = struct {
     file_filter: ?[]const u8 = null,
@@ -413,6 +414,61 @@ pub fn parseStashArgs(allocator: Allocator, args: []const [:0]u8) !StashOptions 
 
     if (opts.sha_args.items.len == 0 and !opts.select_all and opts.file_filter == null) {
         std.debug.print("error: at least one <sha> argument required (or use --all or --file <path>)\n", .{});
+        return error.MissingArgument;
+    }
+
+    return opts;
+}
+
+pub fn parseCommitArgs(allocator: Allocator, args: []const [:0]u8) !CommitOptions {
+    var opts: CommitOptions = .{
+        .sha_args = .empty,
+    };
+    errdefer deinitShaArgs(allocator, &opts.sha_args);
+
+    var common: CommonFlags = .{};
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        const arg = args[i];
+        if (std.mem.eql(u8, arg, "--staged")) {
+            std.debug.print("error: --staged is not supported by commit -- use 'git commit' directly\n", .{});
+            return error.UnknownFlag;
+        }
+        if (try parseCommonFlag(arg, &i, args, &common)) continue;
+        if (std.mem.eql(u8, arg, "--all")) {
+            opts.select_all = true;
+        } else if (std.mem.eql(u8, arg, "--message") or std.mem.eql(u8, arg, "-m")) {
+            i += 1;
+            if (i >= args.len) return error.MissingArgument;
+            opts.message = args[i];
+        } else if (std.mem.eql(u8, arg, "--amend")) {
+            opts.amend = true;
+        } else if (std.mem.eql(u8, arg, "--dry-run")) {
+            opts.dry_run = true;
+        } else if (std.mem.startsWith(u8, arg, "-")) {
+            std.debug.print("error: unknown flag '{s}'\n", .{arg});
+            return error.UnknownFlag;
+        } else {
+            const sha_arg = parseShaArg(allocator, arg) catch return error.InvalidArgument;
+            try opts.sha_args.append(allocator, sha_arg);
+        }
+    }
+
+    opts.file_filter = common.file_filter;
+    opts.ref = common.ref;
+    opts.diff_filter = common.diff_filter;
+    opts.no_color = common.no_color;
+    opts.output = common.output;
+    opts.context = common.context;
+    opts.verbosity = common.verbosity;
+
+    if (opts.sha_args.items.len == 0 and !opts.select_all and opts.file_filter == null) {
+        std.debug.print("error: at least one <sha> argument required (or use --all or --file <path>)\n", .{});
+        return error.MissingArgument;
+    }
+
+    if (opts.message == null and !opts.dry_run) {
+        std.debug.print("error: -m <message> is required\n", .{});
         return error.MissingArgument;
     }
 
@@ -1548,4 +1604,130 @@ test "parseRestoreArgs --ref sets ref field" {
     var opts = try parseRestoreArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expectEqualStrings("HEAD~1", opts.ref.?);
+}
+
+// ============================================================================
+// parseCommitArgs tests
+// ============================================================================
+
+test "parseCommitArgs valid sha with message" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("abcd1234"), @constCast("-m"), @constCast("feat: add thing") };
+    var opts = try parseCommitArgs(allocator, &args_arr);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expectEqual(@as(usize, 1), opts.sha_args.items.len);
+    try std.testing.expectEqualStrings("abcd1234", opts.sha_args.items[0].prefix);
+    try std.testing.expectEqualStrings("feat: add thing", opts.message.?);
+    try std.testing.expect(!opts.amend);
+    try std.testing.expect(!opts.dry_run);
+    try std.testing.expect(!opts.select_all);
+}
+
+test "parseCommitArgs --message long flag" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("abcd1234"), @constCast("--message"), @constCast("fix: bug") };
+    var opts = try parseCommitArgs(allocator, &args_arr);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expectEqualStrings("fix: bug", opts.message.?);
+}
+
+test "parseCommitArgs missing message without dry-run" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{@constCast("abcd1234")};
+    try std.testing.expectError(error.MissingArgument, parseCommitArgs(allocator, &args_arr));
+}
+
+test "parseCommitArgs missing message value" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("abcd1234"), @constCast("-m") };
+    try std.testing.expectError(error.MissingArgument, parseCommitArgs(allocator, &args_arr));
+}
+
+test "parseCommitArgs dry-run without message allowed" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("abcd1234"), @constCast("--dry-run") };
+    var opts = try parseCommitArgs(allocator, &args_arr);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expect(opts.dry_run);
+    try std.testing.expectEqual(@as(?[]const u8, null), opts.message);
+}
+
+test "parseCommitArgs --amend flag" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("abcd1234"), @constCast("--amend"), @constCast("-m"), @constCast("fix") };
+    var opts = try parseCommitArgs(allocator, &args_arr);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expect(opts.amend);
+}
+
+test "parseCommitArgs --all flag" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("--all"), @constCast("-m"), @constCast("feat: all") };
+    var opts = try parseCommitArgs(allocator, &args_arr);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expect(opts.select_all);
+}
+
+test "parseCommitArgs missing sha without --all or --file" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("-m"), @constCast("msg") };
+    try std.testing.expectError(error.MissingArgument, parseCommitArgs(allocator, &args_arr));
+}
+
+test "parseCommitArgs --staged rejected" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("abcd1234"), @constCast("--staged"), @constCast("-m"), @constCast("msg") };
+    try std.testing.expectError(error.UnknownFlag, parseCommitArgs(allocator, &args_arr));
+}
+
+test "parseCommitArgs rejects unknown flags" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("abcd1234"), @constCast("--unknown"), @constCast("-m"), @constCast("msg") };
+    try std.testing.expectError(error.UnknownFlag, parseCommitArgs(allocator, &args_arr));
+}
+
+test "parseCommitArgs --ref sets ref field" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("abcd1234"), @constCast("--ref"), @constCast("main"), @constCast("-m"), @constCast("msg") };
+    var opts = try parseCommitArgs(allocator, &args_arr);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expectEqualStrings("main", opts.ref.?);
+}
+
+test "parseCommitArgs all flags combined" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{
+        @constCast("abcd1234"),
+        @constCast("--all"),
+        @constCast("--amend"),
+        @constCast("--dry-run"),
+        @constCast("--file"),
+        @constCast("foo.txt"),
+        @constCast("--porcelain"),
+        @constCast("--no-color"),
+        @constCast("--unified"),
+        @constCast("1"),
+        @constCast("-m"),
+        @constCast("feat: everything"),
+    };
+    var opts = try parseCommitArgs(allocator, &args_arr);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expectEqual(@as(usize, 1), opts.sha_args.items.len);
+    try std.testing.expect(opts.select_all);
+    try std.testing.expect(opts.amend);
+    try std.testing.expect(opts.dry_run);
+    try std.testing.expectEqualStrings("foo.txt", opts.file_filter.?);
+    try std.testing.expectEqual(OutputMode.porcelain, opts.output);
+    try std.testing.expect(opts.no_color);
+    try std.testing.expectEqual(@as(?u32, 1), opts.context);
+    try std.testing.expectEqualStrings("feat: everything", opts.message.?);
+}
+
+test "parseCommitArgs --file without sha allowed" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("--file"), @constCast("src/main.zig"), @constCast("-m"), @constCast("msg") };
+    var opts = try parseCommitArgs(allocator, &args_arr);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expectEqualStrings("src/main.zig", opts.file_filter.?);
+    try std.testing.expectEqual(@as(usize, 0), opts.sha_args.items.len);
 }

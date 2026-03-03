@@ -143,6 +143,21 @@ pub const StashOptions = struct {
     context: ?u32 = null,
 };
 
+pub const CommitOptions = struct {
+    sha_args: std.ArrayList(ShaArg),
+    message: ?[]const u8 = null,
+    amend: bool = false,
+    dry_run: bool = false,
+    select_all: bool = false,
+    diff_filter: DiffFilter = .all,
+    file_filter: ?[]const u8 = null,
+    ref: ?[]const u8 = null,
+    verbosity: Verbosity = .normal,
+    output: OutputMode = .human,
+    no_color: bool = false,
+    context: ?u32 = null,
+};
+
 /// Check whether two line ranges overlap (treating count=0 as spanning 1 line).
 pub fn rangesOverlap(a_start: u32, a_count: u32, b_start: u32, b_count: u32) bool {
     const a_end = a_start + @max(a_count, 1) - 1;

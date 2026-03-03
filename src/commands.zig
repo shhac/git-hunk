@@ -21,6 +21,7 @@ const CountOptions = types.CountOptions;
 const CheckOptions = types.CheckOptions;
 const RestoreOptions = types.RestoreOptions;
 const StashOptions = types.StashOptions;
+const CommitOptions = types.CommitOptions;
 const rangesOverlap = types.rangesOverlap;
 const Verbosity = types.Verbosity;
 
@@ -1329,6 +1330,13 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
     cleanupWorktree(allocator, has_tracked, has_untracked, index_patch, untracked_matched.items);
 
     try reportStashResults(stdout, opts, matched.items);
+}
+
+pub fn cmdCommit(allocator: Allocator, stdout: anytype, opts: CommitOptions) !void {
+    _ = allocator;
+    _ = stdout;
+    _ = opts;
+    @panic("commit command not yet implemented");
 }
 
 // ============================================================================

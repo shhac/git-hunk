@@ -85,6 +85,11 @@ fn run() !void {
             handleParseError(stdout, err, .stash);
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
         try commands.cmdStash(allocator, stdout, opts);
+    } else if (std.mem.eql(u8, subcmd, "commit")) {
+        var opts = args_mod.parseCommitArgs(allocator, process_args[2..]) catch |err|
+            handleParseError(stdout, err, .commit);
+        defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
+        try commands.cmdCommit(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "--version") or std.mem.eql(u8, subcmd, "-V")) {
         try stdout.print("git-hunk {s}\n", .{build_options.version});
     } else if (std.mem.eql(u8, subcmd, "--help") or std.mem.eql(u8, subcmd, "-h") or std.mem.eql(u8, subcmd, "help")) {
@@ -139,6 +144,7 @@ fn printUsage(stdout: *std.Io.Writer) !void {
         \\  count     Count diff hunks (bare integer output)
         \\  check     Validate hunk hashes exist in current diff
         \\  stash     Stash hunks into git stash, remove from worktree
+        \\  commit    Commit specific hunks directly, bypassing manual staging
         \\
         \\common options:
         \\  -U, --unified <n> Lines of diff context (default: git's diff.context or 3)

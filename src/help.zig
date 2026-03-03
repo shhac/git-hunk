@@ -9,6 +9,7 @@ pub const Command = enum {
     count,
     check,
     stash,
+    commit,
 };
 
 pub fn commandFromString(s: []const u8) ?Command {
@@ -21,6 +22,7 @@ pub fn commandFromString(s: []const u8) ?Command {
         .{ "count", .count },
         .{ "check", .check },
         .{ "stash", .stash },
+        .{ "commit", .commit },
     });
     return map.get(s);
 }
@@ -35,6 +37,7 @@ pub fn printCommandHelp(stdout: *std.Io.Writer, cmd: Command) !void {
         .count => count_help,
         .check => check_help,
         .stash => stash_help,
+        .commit => commit_help,
     };
     try stdout.writeAll(text);
 }
@@ -314,5 +317,47 @@ const stash_help: []const u8 =
     \\  git-hunk stash --all -u                Stash all hunks including untracked
     \\  git-hunk stash push -m "wip"           Stash with a message
     \\  git-hunk stash pop                     Restore the most recent stash
+    \\
+;
+
+const commit_help: []const u8 =
+    \\git-hunk commit - Commit specific hunks directly, bypassing manual staging
+    \\
+    \\USAGE
+    \\  git-hunk commit [options] [<sha[:lines]>...]
+    \\
+    \\ARGUMENTS
+    \\  <sha[:lines]>...  Hunk hashes to commit (prefix match, min 4 hex chars).
+    \\                    Append :lines to commit specific lines (e.g. a3f7:3-5,8).
+    \\                    Optional when --all or --file is used.
+    \\
+    \\OPTIONS
+    \\  -m, --message <msg>
+    \\                    Commit message (required unless --dry-run)
+    \\  --amend           Amend the previous commit
+    \\  --dry-run         Show what would be committed without committing
+    \\  --all             Commit all unstaged hunks
+    \\  --file <path>     Commit all hunks in a file
+    \\  --ref <refspec>   Compare against a git ref instead of the default.
+    \\                    Single ref (e.g. HEAD, main) diffs ref vs worktree.
+    \\                    Range (e.g. main..HEAD) diffs between two refs.
+    \\  -U, --unified <n> Lines of diff context (default: git's diff.context or 3)
+    \\  --tracked-only    Only include hunks from tracked files
+    \\  --untracked-only  Only include hunks from untracked files
+    \\  --no-color        Disable colored output
+    \\  --porcelain       Machine-readable output
+    \\  -v, --verbose     Show summary counts
+    \\  -q, --quiet       Suppress output
+    \\  --help, -h        Show this help
+    \\
+    \\  Note: --staged is not supported. Use 'git commit' directly for staged changes.
+    \\
+    \\EXAMPLES
+    \\  git-hunk commit a3f7 b82e -m "feat: add validation"
+    \\  git-hunk commit --all -m "feat: everything"
+    \\  git-hunk commit --file src/foo.zig -m "refactor: cleanup"
+    \\  git-hunk commit a3f7:3-5 -m "fix: specific lines"
+    \\  git-hunk commit a3f7 --amend -m "fix: forgotten change"
+    \\  git-hunk commit --dry-run a3f7 -m "check first"
     \\
 ;
