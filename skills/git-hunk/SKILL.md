@@ -101,3 +101,4 @@ For detailed flag tables, output formats, and scripting patterns:
 - [Command reference](references/commands.md) -- all commands, flags, arguments, behavior, and error tables
 - [Output format](references/output.md) -- human and porcelain output details for every command
 - [Scripting patterns](references/scripting.md) -- porcelain parsing, pipeline recipes, and automation workflows
+- [Ref support](references/ref-support.md) -- `--ref <refspec>` for diffing against branches, commits, and ranges
