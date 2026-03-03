@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.1] - 2026-03-03
+
+### Fixed
+- `list --quiet` now correctly suppresses output (was silently ignored)
+- Added `--verbose`/`-v` and `--quiet`/`-q` to man page GLOBAL OPTIONS section
+- Added `--verbose`/`-v` and `--quiet`/`-q` to all command help text (previously only `commit` documented them)
+
 ## [0.10.0] - 2026-03-03
 
 ### Added
