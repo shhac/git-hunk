@@ -18,6 +18,7 @@ const StashOptions = types.StashOptions;
 
 const CommonFlags = struct {
     file_filter: ?[]const u8 = null,
+    ref: ?[]const u8 = null,
     diff_filter: DiffFilter = .all,
     no_color: bool = false,
     output: OutputMode = .human,
@@ -37,6 +38,11 @@ fn parseCommonFlag(arg: []const u8, i: *usize, args: []const [:0]u8, c: *CommonF
         i.* += 1;
         if (i.* >= args.len) return error.MissingArgument;
         c.file_filter = args[i.*];
+        return true;
+    } else if (std.mem.eql(u8, arg, "--ref")) {
+        i.* += 1;
+        if (i.* >= args.len) return error.MissingArgument;
+        c.ref = args[i.*];
         return true;
     } else if (std.mem.eql(u8, arg, "--tracked-only")) {
         if (c.diff_filter == .untracked_only) return error.ConflictingFilter;
@@ -98,11 +104,20 @@ pub fn parseListArgs(args: []const [:0]u8) !ListOptions {
         }
     }
     opts.file_filter = common.file_filter;
+    opts.ref = common.ref;
     opts.diff_filter = common.diff_filter;
     opts.no_color = common.no_color;
     opts.output = common.output;
     opts.context = common.context;
     opts.verbosity = common.verbosity;
+
+    if (opts.ref) |ref| {
+        if (std.mem.indexOf(u8, ref, "..") != null and opts.mode == .staged) {
+            std.debug.print("error: --staged cannot be used with a range ref (contains '..')\n", .{});
+            return error.InvalidArgument;
+        }
+    }
+
     return opts;
 }
 
@@ -129,6 +144,7 @@ pub fn parseAddResetArgs(allocator: Allocator, args: []const [:0]u8) !AddResetOp
     }
 
     opts.file_filter = common.file_filter;
+    opts.ref = common.ref;
     opts.diff_filter = common.diff_filter;
     opts.no_color = common.no_color;
     opts.output = common.output;
@@ -166,11 +182,19 @@ pub fn parseDiffArgs(allocator: Allocator, args: []const [:0]u8) !DiffOptions {
     }
 
     opts.file_filter = common.file_filter;
+    opts.ref = common.ref;
     opts.diff_filter = common.diff_filter;
     opts.no_color = common.no_color;
     opts.output = common.output;
     opts.context = common.context;
     opts.verbosity = common.verbosity;
+
+    if (opts.ref) |ref| {
+        if (std.mem.indexOf(u8, ref, "..") != null and opts.mode == .staged) {
+            std.debug.print("error: --staged cannot be used with a range ref (contains '..')\n", .{});
+            return error.InvalidArgument;
+        }
+    }
 
     if (opts.sha_args.items.len == 0) {
         std.debug.print("error: at least one <sha> argument required\n", .{});
@@ -200,9 +224,18 @@ pub fn parseCountArgs(args: []const [:0]u8) !CountOptions {
     }
     // Apply only the fields CountOptions has (no_color and output not present)
     opts.file_filter = common.file_filter;
+    opts.ref = common.ref;
     opts.diff_filter = common.diff_filter;
     opts.context = common.context;
     opts.verbosity = common.verbosity;
+
+    if (opts.ref) |ref| {
+        if (std.mem.indexOf(u8, ref, "..") != null and opts.mode == .staged) {
+            std.debug.print("error: --staged cannot be used with a range ref (contains '..')\n", .{});
+            return error.InvalidArgument;
+        }
+    }
+
     return opts;
 }
 
@@ -236,11 +269,19 @@ pub fn parseCheckArgs(allocator: Allocator, args: []const [:0]u8) !CheckOptions 
     }
 
     opts.file_filter = common.file_filter;
+    opts.ref = common.ref;
     opts.diff_filter = common.diff_filter;
     opts.no_color = common.no_color;
     opts.output = common.output;
     opts.context = common.context;
     opts.verbosity = common.verbosity;
+
+    if (opts.ref) |ref| {
+        if (std.mem.indexOf(u8, ref, "..") != null and opts.mode == .staged) {
+            std.debug.print("error: --staged cannot be used with a range ref (contains '..')\n", .{});
+            return error.InvalidArgument;
+        }
+    }
 
     if (opts.sha_args.items.len == 0) {
         std.debug.print("error: at least one <sha> argument required\n", .{});
@@ -277,6 +318,7 @@ pub fn parseRestoreArgs(allocator: Allocator, args: []const [:0]u8) !RestoreOpti
     }
 
     opts.file_filter = common.file_filter;
+    opts.ref = common.ref;
     opts.diff_filter = common.diff_filter;
     opts.no_color = common.no_color;
     opts.output = common.output;
@@ -349,11 +391,17 @@ pub fn parseStashArgs(allocator: Allocator, args: []const [:0]u8) !StashOptions 
     }
 
     opts.file_filter = common.file_filter;
+    opts.ref = common.ref;
     opts.diff_filter = common.diff_filter;
     opts.no_color = common.no_color;
     opts.output = common.output;
     opts.context = common.context;
     opts.verbosity = common.verbosity;
+
+    if (opts.ref != null) {
+        std.debug.print("error: --ref is not supported for stash\n", .{});
+        return error.InvalidArgument;
+    }
 
     // --include-untracked conflicts with --tracked-only
     if (opts.include_untracked and opts.diff_filter == .tracked_only) {
@@ -1349,4 +1397,104 @@ test "parseStashArgs old --pop flag rejected as unknown" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]u8{ @constCast("--all"), @constCast("--pop") };
     try std.testing.expectError(error.UnknownFlag, parseStashArgs(allocator, &args_arr));
+}
+
+// ============================================================================
+// --ref flag tests
+// ============================================================================
+
+test "parseListArgs --ref sets ref field" {
+    const args_arr = [_][:0]u8{ @constCast("--ref"), @constCast("main") };
+    const opts = try parseListArgs(&args_arr);
+    try std.testing.expectEqualStrings("main", opts.ref.?);
+}
+
+test "parseListArgs --ref default null" {
+    const opts = try parseListArgs(&.{});
+    try std.testing.expectEqual(@as(?[]const u8, null), opts.ref);
+}
+
+test "parseListArgs --ref missing value" {
+    const args_arr = [_][:0]u8{@constCast("--ref")};
+    try std.testing.expectError(error.MissingArgument, parseListArgs(&args_arr));
+}
+
+test "parseListArgs --ref with --staged allowed for single ref" {
+    const args_arr = [_][:0]u8{ @constCast("--ref"), @constCast("HEAD"), @constCast("--staged") };
+    const opts = try parseListArgs(&args_arr);
+    try std.testing.expectEqualStrings("HEAD", opts.ref.?);
+    try std.testing.expectEqual(DiffMode.staged, opts.mode);
+}
+
+test "parseListArgs --ref range with --staged rejected" {
+    const args_arr = [_][:0]u8{ @constCast("--ref"), @constCast("main..HEAD"), @constCast("--staged") };
+    try std.testing.expectError(error.InvalidArgument, parseListArgs(&args_arr));
+}
+
+test "parseListArgs --ref range without --staged allowed" {
+    const args_arr = [_][:0]u8{ @constCast("--ref"), @constCast("main..HEAD") };
+    const opts = try parseListArgs(&args_arr);
+    try std.testing.expectEqualStrings("main..HEAD", opts.ref.?);
+    try std.testing.expectEqual(DiffMode.unstaged, opts.mode);
+}
+
+test "parseStashArgs --ref rejected" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("--all"), @constCast("--ref"), @constCast("main") };
+    try std.testing.expectError(error.InvalidArgument, parseStashArgs(allocator, &args_arr));
+}
+
+test "parseDiffArgs --ref sets ref field" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("abcd1234"), @constCast("--ref"), @constCast("main") };
+    var opts = try parseDiffArgs(allocator, &args_arr);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expectEqualStrings("main", opts.ref.?);
+}
+
+test "parseDiffArgs --ref range with --staged rejected" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("abcd1234"), @constCast("--ref"), @constCast("main..HEAD"), @constCast("--staged") };
+    try std.testing.expectError(error.InvalidArgument, parseDiffArgs(allocator, &args_arr));
+}
+
+test "parseCountArgs --ref sets ref field" {
+    const args_arr = [_][:0]u8{ @constCast("--ref"), @constCast("HEAD~1") };
+    const opts = try parseCountArgs(&args_arr);
+    try std.testing.expectEqualStrings("HEAD~1", opts.ref.?);
+}
+
+test "parseCountArgs --ref range with --staged rejected" {
+    const args_arr = [_][:0]u8{ @constCast("--ref"), @constCast("main..HEAD"), @constCast("--staged") };
+    try std.testing.expectError(error.InvalidArgument, parseCountArgs(&args_arr));
+}
+
+test "parseCheckArgs --ref sets ref field" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("abcd1234"), @constCast("--ref"), @constCast("main") };
+    var opts = try parseCheckArgs(allocator, &args_arr);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expectEqualStrings("main", opts.ref.?);
+}
+
+test "parseCheckArgs --ref range with --staged rejected" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("abcd1234"), @constCast("--ref"), @constCast("main..HEAD"), @constCast("--staged") };
+    try std.testing.expectError(error.InvalidArgument, parseCheckArgs(allocator, &args_arr));
+}
+
+test "parseAddResetArgs --ref sets ref field" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("abcd1234"), @constCast("--ref"), @constCast("main") };
+    var opts = try parseAddResetArgs(allocator, &args_arr);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expectEqualStrings("main", opts.ref.?);
+}
+
+test "parseRestoreArgs --ref sets ref field" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("abcd1234"), @constCast("--ref"), @constCast("HEAD~1") };
+    var opts = try parseRestoreArgs(allocator, &args_arr);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expectEqualStrings("HEAD~1", opts.ref.?);
 }

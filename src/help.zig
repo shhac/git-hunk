@@ -47,6 +47,10 @@ const list_help: []const u8 =
     \\
     \\OPTIONS
     \\  --staged          List hunks from the staged (index) diff instead of worktree
+    \\  --ref <refspec>   Compare against a git ref instead of the default.
+    \\                    Single ref (e.g. HEAD, main) diffs ref vs worktree.
+    \\                    Range (e.g. main..HEAD) diffs between two refs.
+    \\                    Combines with --staged for ref vs index comparison.
     \\  --file <path>     Restrict output to hunks in the given file
     \\  --porcelain       Machine-readable output (tab-separated fields)
     \\  --oneline         One hunk per line: hash, file, and line range
@@ -63,6 +67,8 @@ const list_help: []const u8 =
     \\  git-hunk list --file src/main.zig      List hunks for a specific file
     \\  git-hunk list --porcelain --oneline    Machine-readable compact output
     \\  git-hunk list --unified 0              List hunks with no surrounding context
+    \\  git-hunk list --ref main               List all changes vs main
+    \\  git-hunk list --ref HEAD~1..HEAD       List hunks from the last commit
     \\
 ;
 
@@ -78,6 +84,10 @@ const diff_help: []const u8 =
     \\
     \\OPTIONS
     \\  --staged          Show hunks from the staged diff instead of worktree
+    \\  --ref <refspec>   Compare against a git ref instead of the default.
+    \\                    Single ref (e.g. HEAD, main) diffs ref vs worktree.
+    \\                    Range (e.g. main..HEAD) diffs between two refs.
+    \\                    Combines with --staged for ref vs index comparison.
     \\  --file <path>     Restrict to hunks in the given file
     \\  --porcelain       Machine-readable output
     \\  --no-color        Disable colored output
@@ -91,6 +101,7 @@ const diff_help: []const u8 =
     \\  git-hunk diff a3f7 b82e                Show multiple hunks by prefix
     \\  git-hunk diff a3f7c21 --staged         Show a staged hunk
     \\  git-hunk diff a3f7:3-5,8               Show specific lines of a hunk
+    \\  git-hunk diff --ref main a3f7          Show a hunk from diff vs main
     \\
 ;
 
@@ -106,6 +117,10 @@ const add_help: []const u8 =
     \\                    Optional when --all or --file is used.
     \\
     \\OPTIONS
+    \\  --ref <refspec>   Compare against a git ref instead of the default.
+    \\                    Single ref (e.g. HEAD, main) diffs ref vs worktree.
+    \\                    Range (e.g. main..HEAD) diffs between two refs.
+    \\                    Combines with --staged for ref vs index comparison.
     \\  --all             Stage all unstaged hunks
     \\  --file <path>     Stage all hunks in the given file
     \\  --porcelain       Machine-readable output
@@ -136,6 +151,10 @@ const reset_help: []const u8 =
     \\                    Optional when --all or --file is used.
     \\
     \\OPTIONS
+    \\  --ref <refspec>   Compare against a git ref instead of the default.
+    \\                    Single ref (e.g. HEAD, main) diffs ref vs worktree.
+    \\                    Range (e.g. main..HEAD) diffs between two refs.
+    \\                    Combines with --staged for ref vs index comparison.
     \\  --all             Unstage all staged hunks
     \\  --file <path>     Unstage all hunks in the given file
     \\  --porcelain       Machine-readable output
@@ -163,6 +182,10 @@ const restore_help: []const u8 =
     \\                    Append :lines for specific lines. Optional when --all or --file is used.
     \\
     \\OPTIONS
+    \\  --ref <refspec>   Compare against a git ref instead of the default.
+    \\                    Single ref (e.g. HEAD, main) diffs ref vs worktree.
+    \\                    Range (e.g. main..HEAD) diffs between two refs.
+    \\                    Combines with --staged for ref vs index comparison.
     \\  --all             Restore all unstaged hunks (DESTRUCTIVE)
     \\  --file <path>     Restore all hunks in the given file
     \\  --force           Required to restore untracked files (deletes them permanently)
@@ -198,6 +221,10 @@ const count_help: []const u8 =
     \\
     \\OPTIONS
     \\  --staged          Count staged hunks instead of unstaged
+    \\  --ref <refspec>   Compare against a git ref instead of the default.
+    \\                    Single ref (e.g. HEAD, main) diffs ref vs worktree.
+    \\                    Range (e.g. main..HEAD) diffs between two refs.
+    \\                    Combines with --staged for ref vs index comparison.
     \\  --file <path>     Count hunks in the given file only
     \\  --tracked-only    Only count hunks from tracked files
     \\  --untracked-only  Only count hunks from untracked files
@@ -222,6 +249,10 @@ const check_help: []const u8 =
     \\
     \\OPTIONS
     \\  --staged          Check against staged diff instead of worktree
+    \\  --ref <refspec>   Compare against a git ref instead of the default.
+    \\                    Single ref (e.g. HEAD, main) diffs ref vs worktree.
+    \\                    Range (e.g. main..HEAD) diffs between two refs.
+    \\                    Combines with --staged for ref vs index comparison.
     \\  --exclusive       Assert these are the ONLY hunks in the diff (exits 1 otherwise)
     \\  --file <path>     Restrict check to hunks in the given file
     \\  --porcelain       Machine-readable output

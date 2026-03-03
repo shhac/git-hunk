@@ -32,6 +32,7 @@ fn getDiffWithUntracked(
     allocator: Allocator,
     arena: Allocator,
     mode: DiffMode,
+    ref: ?[]const u8,
     context: ?u32,
     file_filter: ?[]const u8,
     diff_filter: DiffFilter,
@@ -41,15 +42,20 @@ fn getDiffWithUntracked(
     const diff_output = if (diff_filter == .untracked_only)
         try allocator.alloc(u8, 0)
     else
-        try git.runGitDiff(allocator, mode, context);
+        try git.runGitDiff(allocator, mode, ref, context);
     errdefer allocator.free(diff_output);
 
     if (diff_output.len > 0) {
         try diff_mod.parseDiff(arena, diff_output, mode, hunks);
     }
 
-    // Untracked files only appear in unstaged mode and when not filtered out
-    if (mode == .unstaged and diff_filter != .tracked_only) {
+    // Untracked files appear only when the worktree is the right-side endpoint:
+    // - No ref, unstaged: worktree is right side → include
+    // - Single ref, unstaged: worktree is right side → include
+    // - Staged (with or without ref): index is right side → exclude
+    // - Range (contains ".."): no worktree involved → exclude
+    const is_range = if (ref) |r| std.mem.indexOf(u8, r, "..") != null else false;
+    if (mode == .unstaged and !is_range and diff_filter != .tracked_only) {
         const untracked_diff = try git.diffUntrackedFiles(allocator, file_filter);
         errdefer allocator.free(untracked_diff);
 
@@ -77,7 +83,7 @@ pub fn cmdList(allocator: Allocator, stdout: *std.Io.Writer, opts: ListOptions) 
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
-    const diffs = try getDiffWithUntracked(allocator, arena, opts.mode, opts.context, opts.file_filter, opts.diff_filter, &hunks);
+    const diffs = try getDiffWithUntracked(allocator, arena, opts.mode, opts.ref, opts.context, opts.file_filter, opts.diff_filter, &hunks);
     defer allocator.free(diffs.tracked);
     defer allocator.free(diffs.untracked);
 
@@ -142,7 +148,7 @@ pub fn cmdCount(allocator: Allocator, stdout: *std.Io.Writer, opts: CountOptions
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
-    const diffs = try getDiffWithUntracked(allocator, arena, opts.mode, opts.context, opts.file_filter, opts.diff_filter, &hunks);
+    const diffs = try getDiffWithUntracked(allocator, arena, opts.mode, opts.ref, opts.context, opts.file_filter, opts.diff_filter, &hunks);
     defer allocator.free(diffs.tracked);
     defer allocator.free(diffs.untracked);
 
@@ -167,7 +173,7 @@ pub fn cmdCheck(allocator: Allocator, stdout: *std.Io.Writer, opts: CheckOptions
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
-    const diffs = try getDiffWithUntracked(allocator, arena, opts.mode, opts.context, opts.file_filter, opts.diff_filter, &hunks);
+    const diffs = try getDiffWithUntracked(allocator, arena, opts.mode, opts.ref, opts.context, opts.file_filter, opts.diff_filter, &hunks);
     defer allocator.free(diffs.tracked);
     defer allocator.free(diffs.untracked);
 
@@ -679,7 +685,7 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
-    const diffs = try getDiffWithUntracked(allocator, arena, diff_mode, opts.context, opts.file_filter, opts.diff_filter, &hunks);
+    const diffs = try getDiffWithUntracked(allocator, arena, diff_mode, opts.ref, opts.context, opts.file_filter, opts.diff_filter, &hunks);
     defer allocator.free(diffs.tracked);
     defer allocator.free(diffs.untracked);
 
@@ -728,20 +734,20 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
     };
     var old_target_hunks: std.ArrayList(Hunk) = .empty;
     defer old_target_hunks.deinit(arena);
-    if (git.runGitDiffFiles(arena, target_mode, opts.context, file_paths)) |target_diff| {
+    if (git.runGitDiffFiles(arena, target_mode, null, opts.context, file_paths)) |target_diff| {
         if (target_diff.len > 0) {
             diff_mod.parseDiff(arena, target_diff, target_mode, &old_target_hunks) catch {};
         }
     } else |_| {}
 
-    try git.runGitApply(allocator, patch, reverse, .index, false);
+    try git.runGitApply(allocator, patch, reverse, .index, false, opts.ref);
 
     // Resolve new hashes: after staging/unstaging, the hunk appears in the
     // opposite diff with a different hash (stable line references change).
     // Re-parse that diff to show the user the hash mapping.
     var new_hunks: std.ArrayList(Hunk) = .empty;
     defer new_hunks.deinit(arena);
-    if (git.runGitDiffFiles(arena, target_mode, opts.context, file_paths)) |new_diff| {
+    if (git.runGitDiffFiles(arena, target_mode, null, opts.context, file_paths)) |new_diff| {
         if (new_diff.len > 0) {
             diff_mod.parseDiff(arena, new_diff, target_mode, &new_hunks) catch {};
         }
@@ -796,7 +802,7 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
-    const diffs = try getDiffWithUntracked(allocator, arena, .unstaged, opts.context, opts.file_filter, opts.diff_filter, &hunks);
+    const diffs = try getDiffWithUntracked(allocator, arena, .unstaged, opts.ref, opts.context, opts.file_filter, opts.diff_filter, &hunks);
     defer allocator.free(diffs.tracked);
     defer allocator.free(diffs.untracked);
 
@@ -845,7 +851,7 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
 
     // Build combined patch and apply (reverse, to worktree, not cached)
     const patch = try patch_mod.buildCombinedPatch(arena, matched.items);
-    try git.runGitApply(allocator, patch, true, .worktree, opts.dry_run);
+    try git.runGitApply(allocator, patch, true, .worktree, opts.dry_run, opts.ref);
 
     // Output
     const use_color = format.shouldUseColor(opts.output, opts.no_color);
@@ -907,7 +913,7 @@ pub fn cmdDiff(allocator: Allocator, stdout: *std.Io.Writer, opts: DiffOptions) 
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
-    const diffs = try getDiffWithUntracked(allocator, arena, opts.mode, opts.context, opts.file_filter, opts.diff_filter, &hunks);
+    const diffs = try getDiffWithUntracked(allocator, arena, opts.mode, opts.ref, opts.context, opts.file_filter, opts.diff_filter, &hunks);
     defer allocator.free(diffs.tracked);
     defer allocator.free(diffs.untracked);
 
@@ -1087,7 +1093,7 @@ fn cleanupWorktree(
     untracked_matched: []const MatchedHunk,
 ) void {
     if (has_tracked) {
-        git.runGitApply(allocator, index_patch, true, .worktree, false) catch {
+        git.runGitApply(allocator, index_patch, true, .worktree, false, null) catch {
             std.debug.print("warning: stash created but worktree changes could not be removed\n", .{});
             std.debug.print("hint: use 'git stash pop' to undo or manually resolve\n", .{});
         };
@@ -1166,7 +1172,7 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
     else
         opts.diff_filter;
 
-    const diffs = try getDiffWithUntracked(allocator, arena, .unstaged, opts.context, opts.file_filter, effective_filter, &hunks);
+    const diffs = try getDiffWithUntracked(allocator, arena, .unstaged, opts.ref, opts.context, opts.file_filter, effective_filter, &hunks);
     defer allocator.free(diffs.tracked);
     defer allocator.free(diffs.untracked);
 

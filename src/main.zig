@@ -19,6 +19,10 @@ const fatal = types.fatal;
 
 pub fn main() void {
     run() catch |err| {
+        if (err == error.PatchFailed) {
+            // Descriptive message already printed by runGitApply
+            std.process.exit(1);
+        }
         fatal("{s}", .{@errorName(err)});
     };
 }

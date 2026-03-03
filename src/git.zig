@@ -6,20 +6,20 @@ const EnvMap = std.process.EnvMap;
 const DiffMode = types.DiffMode;
 const fatal = types.fatal;
 
-pub fn runGitDiff(allocator: Allocator, mode: DiffMode, context: ?u32) ![]u8 {
-    return runGitDiffFiles(allocator, mode, context, &.{});
+pub fn runGitDiff(allocator: Allocator, mode: DiffMode, ref: ?[]const u8, context: ?u32) ![]u8 {
+    return runGitDiffFiles(allocator, mode, ref, context, &.{});
 }
 
 /// Like runGitDiff but scoped to specific file paths via `-- file1 file2 ...`.
 /// Pass an empty slice for no file filter (equivalent to runGitDiff).
-pub fn runGitDiffFiles(allocator: Allocator, mode: DiffMode, context: ?u32, file_paths: []const []const u8) ![]u8 {
-    // Base args: git diff [--cached] [-U<n>] --src-prefix=a/ --dst-prefix=b/ --no-color [-- file1 ...]
-    // Use stack buffer for the common case (no file paths); heap-allocate only when needed.
-    var stack_buf: [8][]const u8 = undefined;
+pub fn runGitDiffFiles(allocator: Allocator, mode: DiffMode, ref: ?[]const u8, context: ?u32, file_paths: []const []const u8) ![]u8 {
+    // Base args: git diff [--cached] [ref..] [-U<n>] --src-prefix=a/ --dst-prefix=b/ --no-color [-- file1 ...]
+    // Use stack buffer for the common case (no file paths, no ref); heap-allocate only when needed.
+    var stack_buf: [10][]const u8 = undefined;
     const argv_buf = if (file_paths.len == 0)
         &stack_buf
     else blk: {
-        const max_args = 8 + 1 + file_paths.len;
+        const max_args = 10 + 1 + file_paths.len;
         break :blk try allocator.alloc([]const u8, max_args);
     };
     defer if (file_paths.len > 0) allocator.free(argv_buf);
@@ -31,6 +31,19 @@ pub fn runGitDiffFiles(allocator: Allocator, mode: DiffMode, context: ?u32, file
     if (mode == .staged) {
         argv_buf[argc] = "--cached";
         argc += 1;
+    }
+    if (ref) |r| {
+        if (std.mem.indexOf(u8, r, "..")) |dot_pos| {
+            // Range: A..B → two separate positional args
+            argv_buf[argc] = r[0..dot_pos];
+            argc += 1;
+            argv_buf[argc] = r[dot_pos + 2 ..];
+            argc += 1;
+        } else {
+            // Single ref
+            argv_buf[argc] = r;
+            argc += 1;
+        }
     }
     if (context) |ctx| {
         var context_buf: [16]u8 = undefined;
@@ -91,7 +104,7 @@ pub fn runGitDiffFiles(allocator: Allocator, mode: DiffMode, context: ?u32, file
 
 pub const ApplyTarget = enum { index, worktree };
 
-pub fn runGitApply(allocator: Allocator, patch: []const u8, reverse: bool, target: ApplyTarget, check_only: bool) !void {
+pub fn runGitApply(allocator: Allocator, patch: []const u8, reverse: bool, target: ApplyTarget, check_only: bool, ref: ?[]const u8) !void {
     var argv_buf: [7][]const u8 = undefined;
     var argc: usize = 0;
     argv_buf[argc] = "git";
@@ -142,7 +155,9 @@ pub fn runGitApply(allocator: Allocator, patch: []const u8, reverse: bool, targe
                 if (child_stderr.items.len > 0) {
                     std.debug.print("{s}", .{child_stderr.items});
                 }
-                if (check_only) {
+                if (ref) |r| {
+                    std.debug.print("error: patch did not apply cleanly — the diff from '{s}' may conflict with the current state\n", .{r});
+                } else if (check_only) {
                     std.debug.print("error: patch would not apply cleanly — hashes may be stale\n", .{});
                 } else {
                     std.debug.print("error: patch did not apply cleanly — re-run 'list' and try again\n", .{});
