@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.1] - 2026-03-03
+
+### Added
+- `--allow-empty` flag on `check` command — allows zero SHA arguments, useful with `--exclusive` to assert no hunks exist (e.g., `check --exclusive --allow-empty --staged` asserts nothing is staged)
+
 ## [0.9.0] - 2026-03-03
 
 ### Added
