@@ -1332,11 +1332,198 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
     try reportStashResults(stdout, opts, matched.items);
 }
 
-pub fn cmdCommit(allocator: Allocator, stdout: anytype, opts: CommitOptions) !void {
-    _ = allocator;
-    _ = stdout;
-    _ = opts;
-    @panic("commit command not yet implemented");
+pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptions) !void {
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // 0. Find git dir and construct paths
+    const git_dir = try git.runGitRevParseGitDir(allocator);
+    defer allocator.free(git_dir);
+    const index_path = try std.fmt.allocPrint(arena, "{s}/index", .{git_dir});
+    const backup_path = try std.fmt.allocPrint(arena, "{s}/index.hunk-backup", .{git_dir});
+    const cwd = std.fs.cwd();
+
+    // 0a. Crash recovery: if stale backup exists, warn and restore
+    check_backup: {
+        _ = cwd.statFile(backup_path) catch break :check_backup;
+        std.debug.print("warning: stale index backup found from interrupted commit -- restoring original index\n", .{});
+        cwd.copyFile(backup_path, cwd, index_path, .{}) catch {
+            std.debug.print("error: failed to restore index backup\n", .{});
+            std.process.exit(1);
+        };
+        cwd.deleteFile(backup_path) catch {};
+    }
+
+    // 0b. Resolve hunks (same pattern as cmdApplyHunks/cmdRestore)
+    var hunks: std.ArrayList(Hunk) = .empty;
+    defer hunks.deinit(arena);
+
+    const diffs = try getDiffWithUntracked(allocator, arena, .unstaged, opts.ref, opts.context, opts.file_filter, opts.diff_filter, &hunks);
+    defer allocator.free(diffs.tracked);
+    defer allocator.free(diffs.untracked);
+
+    if (hunks.items.len == 0) {
+        std.debug.print("no unstaged changes\n", .{});
+        std.process.exit(1);
+    }
+
+    var matched: std.ArrayList(MatchedHunk) = .empty;
+    defer matched.deinit(arena);
+
+    if (opts.sha_args.items.len == 0) {
+        for (hunks.items) |*h| {
+            if (opts.file_filter) |filter| {
+                if (!std.mem.eql(u8, h.file_path, filter)) continue;
+            }
+            try matched.append(arena, .{ .hunk = h, .line_spec = null });
+        }
+    } else {
+        try resolveMatchedHunks(arena, hunks.items, opts.sha_args.items, opts.file_filter, &matched);
+    }
+
+    if (matched.items.len == 0) {
+        if (opts.file_filter) |filter| {
+            std.debug.print("no hunks matching file '{s}'\n", .{filter});
+        } else {
+            std.debug.print("no unstaged changes\n", .{});
+        }
+        std.process.exit(1);
+    }
+
+    std.mem.sort(MatchedHunk, matched.items, {}, patch_mod.matchedHunkPatchOrder);
+
+    const patch = try patch_mod.buildCombinedPatch(arena, matched.items);
+    if (patch.len == 0) {
+        std.debug.print("error: no hunks to commit\n", .{});
+        std.process.exit(1);
+    }
+
+    // Validate message is present
+    const message = opts.message orelse {
+        std.debug.print("error: -m <message> is required\n", .{});
+        std.process.exit(1);
+    };
+
+    // 0c. Dry-run: validate patch and show what would be committed
+    if (opts.dry_run) {
+        try git.runGitApply(allocator, patch, false, .index, true, opts.ref);
+        const use_color = format.shouldUseColor(opts.output, opts.no_color);
+        for (matched.items) |m| {
+            if (opts.verbosity != .quiet) {
+                switch (opts.output) {
+                    .human => {
+                        try stdout.print("would commit ", .{});
+                        if (use_color) try stdout.print("{s}", .{format.COLOR_YELLOW});
+                        try stdout.print("{s}", .{m.hunk.sha_hex[0..7]});
+                        if (m.line_spec) |ls| {
+                            try stdout.print(":", .{});
+                            try writeLineSpec(stdout, ls);
+                        }
+                        if (use_color) try stdout.print("{s}", .{format.COLOR_RESET});
+                        try stdout.print("  {s}\n", .{m.hunk.file_path});
+                    },
+                    .porcelain => {
+                        try stdout.print("would-commit\t{s}", .{m.hunk.sha_hex[0..7]});
+                        if (m.line_spec) |ls| {
+                            try stdout.print(":", .{});
+                            try writeLineSpec(stdout, ls);
+                        }
+                        try stdout.print("\t{s}\n", .{m.hunk.file_path});
+                    },
+                }
+            }
+        }
+        return;
+    }
+
+    // === 7-step commit workflow ===
+
+    // 1. Save index
+    cwd.copyFile(index_path, cwd, backup_path, .{}) catch {
+        std.debug.print("error: failed to backup index file\n", .{});
+        std.process.exit(1);
+    };
+
+    // 2. Reset index to HEAD (or HEAD~1 for amend)
+    const read_tree_ref: []const u8 = if (opts.amend) "HEAD~1" else "HEAD";
+    git.runGitReadTree(allocator, read_tree_ref) catch {
+        cwd.copyFile(backup_path, cwd, index_path, .{}) catch {};
+        cwd.deleteFile(backup_path) catch {};
+        std.process.exit(1);
+    };
+
+    // 3. Stage target hunks
+    git.runGitApply(allocator, patch, false, .index, false, opts.ref) catch {
+        cwd.copyFile(backup_path, cwd, index_path, .{}) catch {};
+        cwd.deleteFile(backup_path) catch {};
+        std.process.exit(1);
+    };
+
+    // 4. Commit
+    const commit_output = git.runGitCommit(allocator, .{ .message = message, .amend = opts.amend }) catch {
+        cwd.copyFile(backup_path, cwd, index_path, .{}) catch {};
+        cwd.deleteFile(backup_path) catch {};
+        std.process.exit(1);
+    };
+    defer allocator.free(commit_output);
+
+    // 5. Restore original index
+    cwd.copyFile(backup_path, cwd, index_path, .{}) catch {
+        std.debug.print("warning: commit succeeded but failed to restore original index -- backup at {s}\n", .{backup_path});
+    };
+
+    // 6. Sync index with new HEAD
+    git.runGitApply(allocator, patch, false, .index, false, opts.ref) catch {
+        std.debug.print("warning: commit succeeded but index sync failed -- run 'git hunk add' to re-sync\n", .{});
+    };
+
+    // 7. Cleanup
+    cwd.deleteFile(backup_path) catch {};
+
+    // Output: print committed hunks (same format as cmdRestore)
+    const use_color = format.shouldUseColor(opts.output, opts.no_color);
+    var count: usize = 0;
+    for (matched.items) |m| {
+        count += 1;
+        if (opts.verbosity != .quiet) {
+            switch (opts.output) {
+                .human => {
+                    try stdout.print("committed ", .{});
+                    if (use_color) try stdout.print("{s}", .{format.COLOR_YELLOW});
+                    try stdout.print("{s}", .{m.hunk.sha_hex[0..7]});
+                    if (m.line_spec) |ls| {
+                        try stdout.print(":", .{});
+                        try writeLineSpec(stdout, ls);
+                    }
+                    if (use_color) try stdout.print("{s}", .{format.COLOR_RESET});
+                    try stdout.print("  {s}\n", .{m.hunk.file_path});
+                },
+                .porcelain => {
+                    try stdout.print("committed\t{s}", .{m.hunk.sha_hex[0..7]});
+                    if (m.line_spec) |ls| {
+                        try stdout.print(":", .{});
+                        try writeLineSpec(stdout, ls);
+                    }
+                    try stdout.print("\t{s}\n", .{m.hunk.file_path});
+                },
+            }
+        }
+    }
+
+    // Print git's commit output
+    if (opts.verbosity != .quiet and commit_output.len > 0) {
+        std.debug.print("{s}\n", .{commit_output});
+    }
+
+    // Summary on stderr (verbose + human mode only)
+    if (opts.verbosity == .verbose and opts.output == .human) {
+        if (count == 1) {
+            std.debug.print("1 hunk committed\n", .{});
+        } else {
+            std.debug.print("{d} hunks committed\n", .{count});
+        }
+    }
 }
 
 // ============================================================================

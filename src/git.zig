@@ -747,3 +747,123 @@ pub fn runGitDiffHead(allocator: Allocator, context: ?u32, file_paths: []const [
 
     return try child_stdout.toOwnedSlice(allocator);
 }
+
+// ─── Commit plumbing helpers ──────────────────────────────────────────
+
+/// Run `git rev-parse --git-dir` and return the trimmed git directory path.
+pub fn runGitRevParseGitDir(allocator: Allocator) ![]u8 {
+    const argv: []const []const u8 = &.{ "git", "rev-parse", "--git-dir" };
+
+    var child = std.process.Child.init(argv, allocator);
+    child.stdout_behavior = .Pipe;
+    child.stderr_behavior = .Pipe;
+    try child.spawn();
+
+    var child_stdout: std.ArrayList(u8) = .empty;
+    defer child_stdout.deinit(allocator);
+    var child_stderr: std.ArrayList(u8) = .empty;
+    defer child_stderr.deinit(allocator);
+
+    const max_bytes = 1 * 1024 * 1024;
+    try child.collectOutput(allocator, &child_stdout, &child_stderr, max_bytes);
+    const term = try child.wait();
+
+    switch (term) {
+        .Exited => |code| {
+            if (code != 0) {
+                if (child_stderr.items.len > 0) std.debug.print("{s}", .{child_stderr.items});
+                fatal("git rev-parse --git-dir exited with code {d}", .{code});
+            }
+        },
+        else => fatal("git rev-parse terminated abnormally", .{}),
+    }
+
+    return try allocator.dupe(u8, std.mem.trimRight(u8, child_stdout.items, "\n"));
+}
+
+/// Run `git read-tree <treeish>` on the real index (no custom env).
+/// Returns an error on failure instead of calling fatal, so callers can clean up.
+pub fn runGitReadTree(allocator: Allocator, treeish: []const u8) !void {
+    const argv: []const []const u8 = &.{ "git", "read-tree", treeish };
+
+    var child = std.process.Child.init(argv, allocator);
+    child.stdout_behavior = .Pipe;
+    child.stderr_behavior = .Pipe;
+    try child.spawn();
+
+    var child_stdout: std.ArrayList(u8) = .empty;
+    defer child_stdout.deinit(allocator);
+    var child_stderr: std.ArrayList(u8) = .empty;
+    defer child_stderr.deinit(allocator);
+
+    const max_bytes = 1 * 1024 * 1024;
+    try child.collectOutput(allocator, &child_stdout, &child_stderr, max_bytes);
+    const term = try child.wait();
+
+    switch (term) {
+        .Exited => |code| {
+            if (code != 0) {
+                if (child_stderr.items.len > 0) std.debug.print("{s}", .{child_stderr.items});
+                return error.ReadTreeFailed;
+            }
+        },
+        else => {
+            std.debug.print("error: git read-tree terminated abnormally\n", .{});
+            return error.ReadTreeFailed;
+        },
+    }
+}
+
+/// Run `git commit -m <message> [--amend]` and return the commit output.
+/// Returns `error.CommitFailed` on non-zero exit instead of calling fatal,
+/// so callers can clean up (e.g., restore index backup).
+pub fn runGitCommit(allocator: Allocator, args: struct { message: []const u8, amend: bool }) ![]u8 {
+    var argv_buf: [5][]const u8 = undefined;
+    var argc: usize = 0;
+    argv_buf[argc] = "git";
+    argc += 1;
+    argv_buf[argc] = "commit";
+    argc += 1;
+    argv_buf[argc] = "-m";
+    argc += 1;
+    argv_buf[argc] = args.message;
+    argc += 1;
+    if (args.amend) {
+        argv_buf[argc] = "--amend";
+        argc += 1;
+    }
+    const argv: []const []const u8 = argv_buf[0..argc];
+
+    var child = std.process.Child.init(argv, allocator);
+    child.stdout_behavior = .Pipe;
+    child.stderr_behavior = .Pipe;
+    try child.spawn();
+
+    var child_stdout: std.ArrayList(u8) = .empty;
+    defer child_stdout.deinit(allocator);
+    var child_stderr: std.ArrayList(u8) = .empty;
+    defer child_stderr.deinit(allocator);
+
+    const max_bytes = 1 * 1024 * 1024;
+    try child.collectOutput(allocator, &child_stdout, &child_stderr, max_bytes);
+    const term = try child.wait();
+
+    switch (term) {
+        .Exited => |code| {
+            if (code != 0) {
+                if (child_stderr.items.len > 0) std.debug.print("{s}", .{child_stderr.items});
+                return error.CommitFailed;
+            }
+        },
+        else => {
+            std.debug.print("error: git commit terminated abnormally\n", .{});
+            return error.CommitFailed;
+        },
+    }
+
+    // git writes the commit summary to stderr; return that if stdout is empty
+    if (child_stderr.items.len > 0) {
+        return try allocator.dupe(u8, std.mem.trimRight(u8, child_stderr.items, "\n"));
+    }
+    return try allocator.dupe(u8, std.mem.trimRight(u8, child_stdout.items, "\n"));
+}
