@@ -61,6 +61,8 @@ const list_help: []const u8 =
     \\  --tracked-only    Only show hunks from tracked files
     \\  --untracked-only  Only show hunks from untracked files
     \\  -U, --unified <n> Lines of diff context (default: git's diff.context or 3)
+    \\  -v, --verbose     Show summary counts
+    \\  -q, --quiet       Suppress output
     \\  --help, -h        Show this help
     \\
     \\EXAMPLES
@@ -97,6 +99,8 @@ const diff_help: []const u8 =
     \\  --tracked-only    Only show hunks from tracked files
     \\  --untracked-only  Only show hunks from untracked files
     \\  -U, --unified <n> Lines of diff context (default: git's diff.context or 3)
+    \\  -v, --verbose     Show summary counts
+    \\  -q, --quiet       Suppress output
     \\  --help, -h        Show this help
     \\
     \\EXAMPLES
@@ -131,6 +135,8 @@ const add_help: []const u8 =
     \\  --tracked-only    Only include hunks from tracked files
     \\  --untracked-only  Only include hunks from untracked files
     \\  -U, --unified <n> Lines of diff context (default: git's diff.context or 3)
+    \\  -v, --verbose     Show summary counts
+    \\  -q, --quiet       Suppress output
     \\  --help, -h        Show this help
     \\
     \\EXAMPLES
@@ -165,6 +171,8 @@ const reset_help: []const u8 =
     \\  --tracked-only    Only include hunks from tracked files
     \\  --untracked-only  Only include hunks from untracked files
     \\  -U, --unified <n> Lines of diff context (default: git's diff.context or 3)
+    \\  -v, --verbose     Show summary counts
+    \\  -q, --quiet       Suppress output
     \\  --help, -h        Show this help
     \\
     \\EXAMPLES
@@ -198,6 +206,8 @@ const restore_help: []const u8 =
     \\  --tracked-only    Only include hunks from tracked files
     \\  --untracked-only  Only include hunks from untracked files
     \\  -U, --unified <n> Lines of diff context (default: git's diff.context or 3)
+    \\  -v, --verbose     Show summary counts
+    \\  -q, --quiet       Suppress output
     \\  --help, -h        Show this help
     \\
     \\  WARNING: This command is DESTRUCTIVE. Restored changes cannot be recovered.
@@ -232,6 +242,7 @@ const count_help: []const u8 =
     \\  --tracked-only    Only count hunks from tracked files
     \\  --untracked-only  Only count hunks from untracked files
     \\  -U, --unified <n> Lines of diff context (default: git's diff.context or 3)
+    \\  -q, --quiet       Suppress output
     \\  --help, -h        Show this help
     \\
     \\EXAMPLES
@@ -264,6 +275,8 @@ const check_help: []const u8 =
     \\  --tracked-only    Only check hunks from tracked files
     \\  --untracked-only  Only check hunks from untracked files
     \\  -U, --unified <n> Lines of diff context (default: git's diff.context or 3)
+    \\  -v, --verbose     Show summary counts
+    \\  -q, --quiet       Suppress output
     \\  --help, -h        Show this help
     \\
     \\EXIT STATUS
@@ -306,6 +319,8 @@ const stash_help: []const u8 =
     \\  --tracked-only    Only include hunks from tracked files
     \\  --untracked-only  Only include hunks from untracked files
     \\  -U, --unified <n> Lines of diff context (default: git's diff.context or 3)
+    \\  -v, --verbose     Show summary counts
+    \\  -q, --quiet       Suppress output
     \\  --help, -h        Show this help
     \\
     \\  Note: --all without -u stashes only tracked changes (like git stash push).

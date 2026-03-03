@@ -122,14 +122,16 @@ pub fn cmdList(allocator: Allocator, stdout: *std.Io.Writer, opts: ListOptions) 
             last_file = h.file_path;
         }
         hunk_count += 1;
-        switch (opts.output) {
-            .human => try format.printHunkHuman(stdout, h, opts.mode, col_width, term_width, use_color),
-            .porcelain => try format.printHunkPorcelain(stdout, h, opts.mode),
-        }
-        if (!opts.oneline) {
+        if (opts.verbosity != .quiet) {
             switch (opts.output) {
-                .human => try format.printDiffHuman(stdout, h, use_color),
-                .porcelain => try format.printDiffPorcelain(stdout, h),
+                .human => try format.printHunkHuman(stdout, h, opts.mode, col_width, term_width, use_color),
+                .porcelain => try format.printHunkPorcelain(stdout, h, opts.mode),
+            }
+            if (!opts.oneline) {
+                switch (opts.output) {
+                    .human => try format.printDiffHuman(stdout, h, use_color),
+                    .porcelain => try format.printDiffPorcelain(stdout, h),
+                }
             }
         }
     }
