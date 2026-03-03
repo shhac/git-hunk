@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.9.0] - 2026-03-03
+
+### Added
+- `--ref <refspec>` flag for diffing against arbitrary git refs
+  - Single ref (e.g. `--ref HEAD`, `--ref main`) diffs ref vs worktree
+  - Range (e.g. `--ref main..HEAD`) diffs between two refs
+  - Composes with `--staged` for ref vs index comparison
+  - Supported on all commands except `stash`
+  - Contextual error messages when ref-based patches don't apply cleanly
+
+### Fixed
+- Redundant "PatchFailed" error line no longer printed after descriptive error message
+
 ## [0.8.3] - 2026-03-01
 
 ### Fixed
