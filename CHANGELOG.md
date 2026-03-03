@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.10.0] - 2026-03-03
+
+### Added
+- `commit` command — commit specific hunks directly without manual staging (`git hunk commit <sha>... -m "message"`)
+  - Uses save/restore index approach so pre-commit, commit-msg, and post-commit hooks run normally
+  - Existing staged changes are preserved — only specified hunks are committed
+  - `--all` to commit all unstaged hunks, `--file` to commit hunks in a specific file
+  - `--amend` to amend the previous commit with additional hunks
+  - `--dry-run` to preview what would be committed
+  - `--ref <refspec>` to commit hunks from a ref-based diff
+  - Line specs supported (e.g., `sha:3-5,8`) for partial-hunk commits
+  - Crash recovery: detects and restores stale index backups from interrupted commits
+  - 16 integration tests covering basic usage, hooks, crash recovery, and edge cases
+
 ## [0.9.1] - 2026-03-03
 
 ### Added
