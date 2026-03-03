@@ -46,6 +46,11 @@ Exits 0 if all hashes are valid, non\-zero otherwise.
 Stash hunks into git stash, removing them from the worktree.
 Use \fBstash push\fR (implicit default) to save hunks and \fBstash pop\fR to restore.
 Use \fB\-\-include\-untracked\fR / \fB\-u\fR to include untracked files with \fB\-\-all\fR.
+.TP
+.B commit
+Commit specific hunks directly, bypassing manual staging.
+Use \fB\-m\fR to set the commit message and \fB\-\-amend\fR to amend the previous commit.
+Use \fB\-\-dry\-run\fR to preview what would be committed.
 .SH GLOBAL OPTIONS
 .TP
 .BR \-h ", " \-\-help
