@@ -58,7 +58,7 @@ reviewed. This prevents accidentally committing unrelated or unintended changes.
 | `stash` | Save hunks to git stash, remove from worktree | `--all`, `--include-untracked`/`-u`, `--file`, `-m <msg>`, `pop` subcommand |
 | `restore` | Revert worktree hunks (destructive) | `--all`, `--file`, `--force`, `--dry-run`, line specs |
 | `count` | Bare integer hunk count | `--staged`, `--file` |
-| `check` | Verify hashes still valid | `--staged`, `--exclusive`, `--file`, `--porcelain` |
+| `check` | Verify hashes still valid | `--staged`, `--exclusive`, `--allow-empty`, `--file`, `--porcelain` |
 
 All commands accept `--help`, `--no-color`, `--tracked-only`, `--untracked-only`,
 `--quiet`/`-q`, `--verbose`/`-v`, and `-U<n>`/`--unified=<n>`. SHA prefixes need at least 4 hex characters. Use `--file`

@@ -254,6 +254,8 @@ pub fn parseCheckArgs(allocator: Allocator, args: []const [:0]u8) !CheckOptions 
             opts.mode = .staged;
         } else if (std.mem.eql(u8, arg, "--exclusive")) {
             opts.exclusive = true;
+        } else if (std.mem.eql(u8, arg, "--allow-empty")) {
+            opts.allow_empty = true;
         } else if (std.mem.startsWith(u8, arg, "-")) {
             std.debug.print("error: unknown flag '{s}'\n", .{arg});
             return error.UnknownFlag;
@@ -283,7 +285,7 @@ pub fn parseCheckArgs(allocator: Allocator, args: []const [:0]u8) !CheckOptions 
         }
     }
 
-    if (opts.sha_args.items.len == 0) {
+    if (opts.sha_args.items.len == 0 and !opts.allow_empty) {
         std.debug.print("error: at least one <sha> argument required\n", .{});
         return error.MissingArgument;
     }
@@ -1481,6 +1483,55 @@ test "parseCheckArgs --ref range with --staged rejected" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]u8{ @constCast("abcd1234"), @constCast("--ref"), @constCast("main..HEAD"), @constCast("--staged") };
     try std.testing.expectError(error.InvalidArgument, parseCheckArgs(allocator, &args_arr));
+}
+
+test "parseCheckArgs --allow-empty flag" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("abcd1234"), @constCast("--allow-empty") };
+    var opts = try parseCheckArgs(allocator, &args_arr);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expect(opts.allow_empty);
+}
+
+test "parseCheckArgs --allow-empty without exclusive no sha succeeds" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{@constCast("--allow-empty")};
+    var opts = try parseCheckArgs(allocator, &args_arr);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expect(opts.allow_empty);
+    try std.testing.expectEqual(@as(usize, 0), opts.sha_args.items.len);
+}
+
+test "parseCheckArgs --allow-empty with exclusive no sha succeeds" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("--exclusive"), @constCast("--allow-empty") };
+    var opts = try parseCheckArgs(allocator, &args_arr);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expect(opts.allow_empty);
+    try std.testing.expect(opts.exclusive);
+    try std.testing.expectEqual(@as(usize, 0), opts.sha_args.items.len);
+}
+
+test "parseCheckArgs no sha without allow-empty errors" {
+    const allocator = std.testing.allocator;
+    try std.testing.expectError(error.MissingArgument, parseCheckArgs(allocator, &.{}));
+}
+
+test "parseCheckArgs --allow-empty with sha" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{ @constCast("abcd1234"), @constCast("--allow-empty") };
+    var opts = try parseCheckArgs(allocator, &args_arr);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expect(opts.allow_empty);
+    try std.testing.expectEqual(@as(usize, 1), opts.sha_args.items.len);
+}
+
+test "parseCheckArgs --allow-empty default false" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{@constCast("abcd1234")};
+    var opts = try parseCheckArgs(allocator, &args_arr);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expect(!opts.allow_empty);
 }
 
 test "parseAddResetArgs --ref sets ref field" {

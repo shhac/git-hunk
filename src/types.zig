@@ -107,6 +107,7 @@ pub const CheckOptions = struct {
     ref: ?[]const u8 = null,
     mode: DiffMode = .unstaged,
     exclusive: bool = false,
+    allow_empty: bool = false,
     output: OutputMode = .human,
     no_color: bool = false,
     context: ?u32 = null,

@@ -254,6 +254,7 @@ const check_help: []const u8 =
     \\                    Range (e.g. main..HEAD) diffs between two refs.
     \\                    Combines with --staged for ref vs index comparison.
     \\  --exclusive       Assert these are the ONLY hunks in the diff (exits 1 otherwise)
+    \\  --allow-empty     Allow zero SHA arguments (useful with --exclusive to assert no hunks)
     \\  --file <path>     Restrict check to hunks in the given file
     \\  --porcelain       Machine-readable output
     \\  --no-color        Disable colored output
@@ -270,6 +271,8 @@ const check_help: []const u8 =
     \\  git-hunk check a3f7c21                 Verify a hash exists
     \\  git-hunk check a3f7 b82e               Verify multiple hashes
     \\  git-hunk check --exclusive a3f7 b82e   Assert these are the only hunks
+    \\  git-hunk check --exclusive --allow-empty --staged
+    \\                                         Assert no staged hunks exist
     \\
 ;
 

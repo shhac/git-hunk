@@ -364,7 +364,7 @@ fi
 Validate that hunk hashes exist in the current diff.
 
 ```
-git-hunk check [--staged] [--exclusive] [--file <path>] [--porcelain] [--no-color] [--unified <n>] <sha>...
+git-hunk check [--staged] [--exclusive] [--allow-empty] [--file <path>] [--porcelain] [--no-color] [--unified <n>] [<sha>...]
 ```
 
 ### Arguments
@@ -379,6 +379,7 @@ git-hunk check [--staged] [--exclusive] [--file <path>] [--porcelain] [--no-colo
 |------|-------------|
 | `--staged` | Check against staged hunks (HEAD vs index) instead of unstaged (index vs worktree) |
 | `--exclusive` | Assert the provided hashes are the ONLY hunks (scoped by `--file` if given) |
+| `--allow-empty` | Allow zero SHA arguments (useful with `--exclusive` to assert no hunks exist) |
 | `--file <path>` | Scope all lookups to hunks in this file |
 | `--porcelain` | Machine-parseable tab-separated output (reports all entries) |
 | `--tracked-only` | Only check hunks from tracked files. |
@@ -396,6 +397,7 @@ git-hunk check a3f7 b82e                         # verify multiple
 git-hunk check a3f7c21 --staged                  # check staged hunks
 git-hunk check --exclusive a3f7 b82e             # assert these are the only hunks
 git-hunk check --exclusive --file f.zig a3f7     # exclusive within one file
+git-hunk check --exclusive --allow-empty --staged # assert nothing is staged
 git-hunk check --porcelain a3f7 b82e             # machine-readable results
 git-hunk check a3f7c21 --no-color                # disable color output
 ```

@@ -177,6 +177,52 @@ pub fn cmdCheck(allocator: Allocator, stdout: *std.Io.Writer, opts: CheckOptions
     defer allocator.free(diffs.tracked);
     defer allocator.free(diffs.untracked);
 
+    // Handle --allow-empty with no SHAs: early exit path
+    if (opts.allow_empty and opts.sha_args.items.len == 0) {
+        if (opts.exclusive) {
+            // Count hunks matching the file filter
+            var hunk_count: usize = 0;
+            for (hunks.items) |*h| {
+                if (opts.file_filter) |filter| {
+                    if (!std.mem.eql(u8, h.file_path, filter)) continue;
+                }
+                hunk_count += 1;
+            }
+            if (hunk_count > 0) {
+                if (opts.verbosity != .quiet) {
+                    const color = format.shouldUseColor(opts.output, opts.no_color);
+                    if (opts.output == .porcelain) {
+                        for (hunks.items) |*h| {
+                            if (opts.file_filter) |filter| {
+                                if (!std.mem.eql(u8, h.file_path, filter)) continue;
+                            }
+                            try stdout.print("unexpected\t{s}\t{s}\n", .{ h.sha_hex[0..7], h.file_path });
+                        }
+                    } else {
+                        for (hunks.items) |*h| {
+                            if (opts.file_filter) |filter| {
+                                if (!std.mem.eql(u8, h.file_path, filter)) continue;
+                            }
+                            if (color) {
+                                try stdout.print("unexpected {s}{s}{s}  {s}\n", .{ format.COLOR_YELLOW, h.sha_hex[0..7], format.COLOR_RESET, h.file_path });
+                            } else {
+                                try stdout.print("unexpected {s}  {s}\n", .{ h.sha_hex[0..7], h.file_path });
+                            }
+                        }
+                        std.debug.print("exclusive check failed: {d} unexpected hunk{s}\n", .{
+                            hunk_count,
+                            @as([]const u8, if (hunk_count == 1) "" else "s"),
+                        });
+                    }
+                }
+                try stdout.flush();
+                std.process.exit(1);
+            }
+        }
+        // No SHAs, allow_empty: success (exclusive with 0 hunks, or non-exclusive no-op)
+        return;
+    }
+
     const use_color = format.shouldUseColor(opts.output, opts.no_color);
 
     // Deduplicate input SHA prefixes
