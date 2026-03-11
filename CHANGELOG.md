@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.2] - 2026-03-11
+
+### Fixed
+- Running `git hunk` from a subdirectory within a repo now works correctly — previously `git apply` would create wrong index entries (e.g., staging `bar/foo.txt` instead of `foo.txt`)
+- `--file` argument now resolves relative to the user's current directory, matching `git` conventions (e.g., `--file ../foo.txt` from a subdirectory correctly refers to `foo.txt` at the repo root)
+
 ## [0.10.1] - 2026-03-03
 
 ### Fixed
