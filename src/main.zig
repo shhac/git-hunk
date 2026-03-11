@@ -4,6 +4,7 @@ const types = @import("types.zig");
 const args_mod = @import("args.zig");
 const commands = @import("commands.zig");
 const help = @import("help.zig");
+const path_mod = @import("path.zig");
 
 // Import modules to ensure their tests are discovered by `zig build test`
 comptime {
@@ -12,6 +13,7 @@ comptime {
     _ = @import("git.zig");
     _ = @import("help.zig");
     _ = @import("patch.zig");
+    _ = @import("path.zig");
     _ = @import("stash.zig");
 }
 
@@ -47,48 +49,65 @@ fn run() !void {
 
     const subcmd = process_args[1];
 
+    // chdir to repo root so all git operations use repo-relative paths.
+    // Must happen before any command runs. Non-fatal: if we're not in a repo,
+    // let downstream git commands report the error.
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const prefix = path_mod.chdirToRepoRoot(arena) catch "";
+
     if (std.mem.eql(u8, subcmd, "list")) {
-        const opts = args_mod.parseListArgs(process_args[2..]) catch |err|
+        var opts = args_mod.parseListArgs(process_args[2..]) catch |err|
             handleParseError(stdout, err, .list);
+        try resolveFileFilter(arena, prefix, &opts.file_filter);
         try commands.cmdList(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "add")) {
         var opts = args_mod.parseAddResetArgs(allocator, process_args[2..]) catch |err|
             handleParseError(stdout, err, .add);
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
+        try resolveFileFilter(arena, prefix, &opts.file_filter);
         try commands.cmdAdd(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "reset")) {
         var opts = args_mod.parseAddResetArgs(allocator, process_args[2..]) catch |err|
             handleParseError(stdout, err, .reset);
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
+        try resolveFileFilter(arena, prefix, &opts.file_filter);
         try commands.cmdReset(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "count")) {
-        const opts = args_mod.parseCountArgs(process_args[2..]) catch |err|
+        var opts = args_mod.parseCountArgs(process_args[2..]) catch |err|
             handleParseError(stdout, err, .count);
+        try resolveFileFilter(arena, prefix, &opts.file_filter);
         try commands.cmdCount(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "check")) {
         var opts = args_mod.parseCheckArgs(allocator, process_args[2..]) catch |err|
             handleParseError(stdout, err, .check);
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
+        try resolveFileFilter(arena, prefix, &opts.file_filter);
         try commands.cmdCheck(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "restore")) {
         var opts = args_mod.parseRestoreArgs(allocator, process_args[2..]) catch |err|
             handleParseError(stdout, err, .restore);
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
+        try resolveFileFilter(arena, prefix, &opts.file_filter);
         try commands.cmdRestore(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "diff")) {
         var opts = args_mod.parseDiffArgs(allocator, process_args[2..]) catch |err|
             handleParseError(stdout, err, .diff);
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
+        try resolveFileFilter(arena, prefix, &opts.file_filter);
         try commands.cmdDiff(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "stash")) {
         var opts = args_mod.parseStashArgs(allocator, process_args[2..]) catch |err|
             handleParseError(stdout, err, .stash);
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
+        try resolveFileFilter(arena, prefix, &opts.file_filter);
         try commands.cmdStash(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "commit")) {
         var opts = args_mod.parseCommitArgs(allocator, process_args[2..]) catch |err|
             handleParseError(stdout, err, .commit);
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
+        try resolveFileFilter(arena, prefix, &opts.file_filter);
         try commands.cmdCommit(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "--version") or std.mem.eql(u8, subcmd, "-V")) {
         try stdout.print("git-hunk {s}\n", .{build_options.version});
@@ -112,6 +131,14 @@ fn run() !void {
         std.process.exit(1);
     }
     try stdout.flush();
+}
+
+/// Resolve --file filter from cwd-relative to repo-relative using the prefix.
+fn resolveFileFilter(arena: std.mem.Allocator, prefix: []const u8, filter: *?[]const u8) !void {
+    if (prefix.len == 0) return;
+    if (filter.*) |ff| {
+        filter.* = try path_mod.resolveToRepoRelative(arena, prefix, ff);
+    }
 }
 
 fn handleParseError(stdout: *std.Io.Writer, err: anyerror, cmd: help.Command) noreturn {

@@ -748,6 +748,37 @@ pub fn runGitDiffHead(allocator: Allocator, context: ?u32, file_paths: []const [
     return try child_stdout.toOwnedSlice(allocator);
 }
 
+/// Run `git rev-parse --show-toplevel` and return the trimmed repo root path.
+pub fn runGitToplevel(allocator: Allocator) ![]u8 {
+    const argv: []const []const u8 = &.{ "git", "rev-parse", "--show-toplevel" };
+
+    var child = std.process.Child.init(argv, allocator);
+    child.stdout_behavior = .Pipe;
+    child.stderr_behavior = .Pipe;
+    try child.spawn();
+
+    var child_stdout: std.ArrayList(u8) = .empty;
+    defer child_stdout.deinit(allocator);
+    var child_stderr: std.ArrayList(u8) = .empty;
+    defer child_stderr.deinit(allocator);
+
+    const max_bytes = 1 * 1024 * 1024;
+    try child.collectOutput(allocator, &child_stdout, &child_stderr, max_bytes);
+    const term = try child.wait();
+
+    switch (term) {
+        .Exited => |code| {
+            if (code != 0) {
+                if (child_stderr.items.len > 0) std.debug.print("{s}", .{child_stderr.items});
+                return error.NotAGitRepo;
+            }
+        },
+        else => return error.NotAGitRepo,
+    }
+
+    return try allocator.dupe(u8, std.mem.trimRight(u8, child_stdout.items, "\n"));
+}
+
 // ─── Commit plumbing helpers ──────────────────────────────────────────
 
 /// Run `git rev-parse --git-dir` and return the trimmed git directory path.
