@@ -150,7 +150,9 @@ REPO_DIR="$CURRENT_REPO"
 sed -i.bak '1s/.*/Modified first line./' alpha.txt
 
 # Run from /tmp (outside the repo) using git -C
-OUT="$(cd /tmp && git -C "$REPO_DIR" hunk list --porcelain --oneline 2>&1)"
+# Add binary dir to PATH so `git hunk` can find `git-hunk`
+GIT_HUNK_DIR="$(dirname "$GIT_HUNK")"
+OUT="$(cd /tmp && PATH="$GIT_HUNK_DIR:$PATH" git -C "$REPO_DIR" hunk list --porcelain --oneline 2>&1)"
 [[ -n "$OUT" ]] || fail "test 1109: no output from git -C"
 echo "$OUT" | grep -q "alpha.txt" \
     || fail "test 1109: expected alpha.txt in output, got: '$OUT'"
