@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.11.0] - 2026-03-26
+
+### Added
+- Symlinks now display with a trailing `@` suffix in all output (list, add, reset, restore, stash, commit, check) — matching the `ls -F` convention — in both human and porcelain modes
+
+### Fixed
+- Stashing untracked symlinks now preserves symlink mode — previously `stash pop` would restore them as regular files containing the diff output instead of as symlinks
+
 ## [0.10.2] - 2026-03-11
 
 ### Fixed
