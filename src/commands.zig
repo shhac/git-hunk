@@ -101,7 +101,7 @@ pub fn cmdList(allocator: Allocator, stdout: *std.Io.Writer, opts: ListOptions) 
             if (opts.file_filter) |filter| {
                 if (!std.mem.eql(u8, h.file_path, filter)) continue;
             }
-            max_path_len = @max(max_path_len, h.file_path.len);
+            max_path_len = @max(max_path_len, h.file_path.len + @as(usize, if (h.is_symlink) 1 else 0));
         }
     }
     // Clamp col_width so prefix (col_width + 21) doesn't exceed terminal width
@@ -199,7 +199,9 @@ pub fn cmdCheck(allocator: Allocator, stdout: *std.Io.Writer, opts: CheckOptions
                             if (opts.file_filter) |filter| {
                                 if (!std.mem.eql(u8, h.file_path, filter)) continue;
                             }
-                            try stdout.print("unexpected\t{s}\t{s}\n", .{ h.sha_hex[0..7], h.file_path });
+                            try stdout.print("unexpected\t{s}\t", .{h.sha_hex[0..7]});
+                            try format.writeFilePath(stdout, h.*);
+                            try stdout.writeByte('\n');
                         }
                     } else {
                         for (hunks.items) |*h| {
@@ -207,10 +209,12 @@ pub fn cmdCheck(allocator: Allocator, stdout: *std.Io.Writer, opts: CheckOptions
                                 if (!std.mem.eql(u8, h.file_path, filter)) continue;
                             }
                             if (color) {
-                                try stdout.print("unexpected {s}{s}{s}  {s}\n", .{ format.COLOR_YELLOW, h.sha_hex[0..7], format.COLOR_RESET, h.file_path });
+                                try stdout.print("unexpected {s}{s}{s}  ", .{ format.COLOR_YELLOW, h.sha_hex[0..7], format.COLOR_RESET });
                             } else {
-                                try stdout.print("unexpected {s}  {s}\n", .{ h.sha_hex[0..7], h.file_path });
+                                try stdout.print("unexpected {s}  ", .{h.sha_hex[0..7]});
                             }
+                            try format.writeFilePath(stdout, h.*);
+                            try stdout.writeByte('\n');
                         }
                         std.debug.print("exclusive check failed: {d} unexpected hunk{s}\n", .{
                             hunk_count,
@@ -311,7 +315,9 @@ pub fn cmdCheck(allocator: Allocator, stdout: *std.Io.Writer, opts: CheckOptions
                 }
             }
             for (unexpected_hunks.items) |h| {
-                try stdout.print("unexpected\t{s}\t{s}\n", .{ h.sha_hex[0..7], h.file_path });
+                try stdout.print("unexpected\t{s}\t", .{h.sha_hex[0..7]});
+                try format.writeFilePath(stdout, h.*);
+                try stdout.writeByte('\n');
             }
         } else if (has_failure) {
             // Human mode: output only on failure. Stale/ambiguous first, then unexpected.
@@ -336,10 +342,12 @@ pub fn cmdCheck(allocator: Allocator, stdout: *std.Io.Writer, opts: CheckOptions
             }
             for (unexpected_hunks.items) |h| {
                 if (use_color) {
-                    try stdout.print("unexpected {s}{s}{s}  {s}\n", .{ format.COLOR_YELLOW, h.sha_hex[0..7], format.COLOR_RESET, h.file_path });
+                    try stdout.print("unexpected {s}{s}{s}  ", .{ format.COLOR_YELLOW, h.sha_hex[0..7], format.COLOR_RESET });
                 } else {
-                    try stdout.print("unexpected {s}  {s}\n", .{ h.sha_hex[0..7], h.file_path });
+                    try stdout.print("unexpected {s}  ", .{h.sha_hex[0..7]});
                 }
+                try format.writeFilePath(stdout, h.*);
+                try stdout.writeByte('\n');
             }
 
             // stderr summary (human mode only)
@@ -400,6 +408,8 @@ const ResultGroup = struct {
     consumed: []const []const u8,
     /// File path.
     file_path: []const u8,
+    /// Whether this file is a symlink (mode 120000).
+    is_symlink: bool,
 };
 
 /// Build result groups by comparing old vs new target-side hunks and matching
@@ -499,6 +509,7 @@ fn buildResultGroups(
             .applied = try app_buf.toOwnedSlice(arena),
             .consumed = try con_buf.toOwnedSlice(arena),
             .file_path = created.file_path,
+            .is_symlink = created.is_symlink,
         });
     }
 
@@ -512,6 +523,7 @@ fn buildResultGroups(
             .applied = app,
             .consumed = &.{},
             .file_path = m.hunk.file_path,
+            .is_symlink = m.hunk.is_symlink,
         });
     }
 
@@ -616,7 +628,10 @@ fn printResultGroupHuman(stdout: *std.Io.Writer, verb: []const u8, rg: ResultGro
     }
 
     // File path (two spaces before file)
-    try stdout.print("  {s}\n", .{rg.file_path});
+    try stdout.writeAll("  ");
+    try stdout.writeAll(rg.file_path);
+    if (rg.is_symlink) try stdout.writeByte('@');
+    try stdout.writeByte('\n');
 }
 
 /// Print one result group in porcelain (tab-separated) format:
@@ -643,7 +658,9 @@ fn printResultGroupPorcelain(stdout: *std.Io.Writer, verb: []const u8, rg: Resul
     }
 
     // file
-    try stdout.print("\t{s}", .{rg.file_path});
+    try stdout.writeByte('\t');
+    try stdout.writeAll(rg.file_path);
+    if (rg.is_symlink) try stdout.writeByte('@');
 
     // consumed: comma-separated (optional field, only if non-empty)
     if (rg.consumed.len > 0) {
@@ -922,7 +939,9 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
                         try writeLineSpec(stdout, ls);
                     }
                     if (use_color) try stdout.print("{s}", .{format.COLOR_RESET});
-                    try stdout.print("  {s}\n", .{m.hunk.file_path});
+                    try stdout.writeAll("  ");
+                    try format.writeFilePath(stdout, m.hunk);
+                    try stdout.writeByte('\n');
                 },
                 .porcelain => {
                     try stdout.print("{s}\t{s}", .{ porcelain_verb, m.hunk.sha_hex[0..7] });
@@ -930,7 +949,9 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
                         try stdout.print(":", .{});
                         try writeLineSpec(stdout, ls);
                     }
-                    try stdout.print("\t{s}\n", .{m.hunk.file_path});
+                    try stdout.writeByte('\t');
+                    try format.writeFilePath(stdout, m.hunk);
+                    try stdout.writeByte('\n');
                 },
             }
         }
@@ -1182,7 +1203,9 @@ fn reportStashResults(stdout: *std.Io.Writer, opts: StashOptions, matched: []con
                         try writeLineSpec(stdout, ls);
                     }
                     if (use_color) try stdout.print("{s}", .{format.COLOR_RESET});
-                    try stdout.print("  {s}\n", .{m.hunk.file_path});
+                    try stdout.writeAll("  ");
+                    try format.writeFilePath(stdout, m.hunk);
+                    try stdout.writeByte('\n');
                 },
                 .porcelain => {
                     try stdout.print("stashed\t{s}", .{m.hunk.sha_hex[0..7]});
@@ -1190,7 +1213,9 @@ fn reportStashResults(stdout: *std.Io.Writer, opts: StashOptions, matched: []con
                         try stdout.print(":", .{});
                         try writeLineSpec(stdout, ls);
                     }
-                    try stdout.print("\t{s}\n", .{m.hunk.file_path});
+                    try stdout.writeByte('\t');
+                    try format.writeFilePath(stdout, m.hunk);
+                    try stdout.writeByte('\n');
                 },
             }
         }
@@ -1431,7 +1456,9 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
                             try writeLineSpec(stdout, ls);
                         }
                         if (use_color) try stdout.print("{s}", .{format.COLOR_RESET});
-                        try stdout.print("  {s}\n", .{m.hunk.file_path});
+                        try stdout.writeAll("  ");
+                        try format.writeFilePath(stdout, m.hunk);
+                        try stdout.writeByte('\n');
                     },
                     .porcelain => {
                         try stdout.print("would-commit\t{s}", .{m.hunk.sha_hex[0..7]});
@@ -1439,7 +1466,9 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
                             try stdout.print(":", .{});
                             try writeLineSpec(stdout, ls);
                         }
-                        try stdout.print("\t{s}\n", .{m.hunk.file_path});
+                        try stdout.writeByte('\t');
+                        try format.writeFilePath(stdout, m.hunk);
+                        try stdout.writeByte('\n');
                     },
                 }
             }
@@ -1507,7 +1536,9 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
                         try writeLineSpec(stdout, ls);
                     }
                     if (use_color) try stdout.print("{s}", .{format.COLOR_RESET});
-                    try stdout.print("  {s}\n", .{m.hunk.file_path});
+                    try stdout.writeAll("  ");
+                    try format.writeFilePath(stdout, m.hunk);
+                    try stdout.writeByte('\n');
                 },
                 .porcelain => {
                     try stdout.print("committed\t{s}", .{m.hunk.sha_hex[0..7]});
@@ -1515,7 +1546,9 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
                         try stdout.print(":", .{});
                         try writeLineSpec(stdout, ls);
                     }
-                    try stdout.print("\t{s}\n", .{m.hunk.file_path});
+                    try stdout.writeByte('\t');
+                    try format.writeFilePath(stdout, m.hunk);
+                    try stdout.writeByte('\n');
                 },
             }
         }

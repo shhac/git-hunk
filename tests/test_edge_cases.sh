@@ -172,7 +172,10 @@ LINE850="$("$GIT_HUNK" list --porcelain --oneline 2>/dev/null | grep "mylink.txt
 SHA850="$(echo "$LINE850" | cut -f1)"
 [[ ${#SHA850} -eq 7 ]] \
     || fail "test 850: symlink SHA not 7 chars: '$SHA850'"
-pass "test 850: untracked symlink appears in list"
+FILE850="$(echo "$LINE850" | cut -f2)"
+[[ "$FILE850" == "mylink.txt@" ]] \
+    || fail "test 850: expected 'mylink.txt@' (with @ suffix), got '$FILE850'"
+pass "test 850: untracked symlink appears in list with @ suffix"
 
 # ============================================================================
 # Test 851: tracked symlink target change appears in list and can be staged
@@ -188,11 +191,16 @@ LINE851="$("$GIT_HUNK" list --porcelain --oneline 2>/dev/null | grep "mylink851.
 SHA851="$(echo "$LINE851" | cut -f1)"
 [[ ${#SHA851} -eq 7 ]] \
     || fail "test 851: symlink SHA not 7 chars: '$SHA851'"
-"$GIT_HUNK" add "$SHA851" > /dev/null
+FILE851="$(echo "$LINE851" | cut -f2)"
+[[ "$FILE851" == "mylink851.txt@" ]] \
+    || fail "test 851: expected 'mylink851.txt@' (with @ suffix), got '$FILE851'"
+ADD_OUT851="$("$GIT_HUNK" add --porcelain "$SHA851")"
+echo "$ADD_OUT851" | grep -q "mylink851.txt@" \
+    || fail "test 851: add output should include @ suffix, got '$ADD_OUT851'"
 STAGED851="$(git diff --cached --name-only)"
 echo "$STAGED851" | grep -q "mylink851.txt" \
     || fail "test 851: symlink change not staged after add, got '$STAGED851'"
-pass "test 851: tracked symlink target change appears in list and can be staged"
+pass "test 851: tracked symlink shows @ suffix in list and add output"
 
 # ============================================================================
 # Test 852: untracked symlink can be staged with add
@@ -246,7 +254,9 @@ ln -sf beta.txt mylink854.txt
 
 SHA854="$("$GIT_HUNK" list --porcelain --oneline 2>/dev/null | grep "mylink854.txt" | cut -f1)"
 [[ -n "$SHA854" ]] || fail "test 854: no hunk for symlink change"
-"$GIT_HUNK" stash "$SHA854" > /dev/null
+STASH_OUT854="$("$GIT_HUNK" stash --porcelain "$SHA854")"
+echo "$STASH_OUT854" | grep -q "mylink854.txt@" \
+    || fail "test 854: stash output should include @ suffix, got '$STASH_OUT854'"
 TARGET854="$(readlink mylink854.txt)"
 [[ "$TARGET854" == "alpha.txt" ]] \
     || fail "test 854: expected symlink target 'alpha.txt' after stash, got '$TARGET854'"
@@ -288,7 +298,9 @@ ln -sf beta.txt mylink856.txt
 
 SHA856="$("$GIT_HUNK" list --porcelain --oneline 2>/dev/null | grep "mylink856.txt" | cut -f1)"
 [[ -n "$SHA856" ]] || fail "test 856: no hunk for symlink"
-"$GIT_HUNK" restore "$SHA856" > /dev/null
+RESTORE_OUT856="$("$GIT_HUNK" restore --porcelain "$SHA856")"
+echo "$RESTORE_OUT856" | grep -q "mylink856.txt@" \
+    || fail "test 856: restore output should include @ suffix, got '$RESTORE_OUT856'"
 TARGET856="$(readlink mylink856.txt)"
 [[ "$TARGET856" == "alpha.txt" ]] \
     || fail "test 856: expected symlink target 'alpha.txt' after restore, got '$TARGET856'"
@@ -348,5 +360,30 @@ TARGET859="$(readlink newlink859.txt)"
 [[ "$TARGET859" == "gamma.txt" ]] \
     || fail "test 859: expected target 'gamma.txt' after pop, got '$TARGET859'"
 pass "test 859: untracked symlink stash --all -u roundtrip preserves symlink"
+
+# ============================================================================
+# Test 860: regular files do NOT get @ suffix in list output
+# ============================================================================
+new_repo
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
+
+FILE860="$("$GIT_HUNK" list --porcelain --oneline 2>/dev/null | head -1 | cut -f2)"
+[[ "$FILE860" == "alpha.txt" ]] \
+    || fail "test 860: regular file should not have @ suffix, got '$FILE860'"
+pass "test 860: regular files do not get @ suffix"
+
+# ============================================================================
+# Test 861: human-mode list shows @ suffix for symlinks
+# ============================================================================
+new_repo
+ln -s alpha.txt mylink861.txt
+git add mylink861.txt && git commit -q -m "add symlink"
+ln -sf beta.txt mylink861.txt
+
+HUMAN861="$("$GIT_HUNK" list --no-color --oneline 2>/dev/null | grep "mylink861" || true)"
+[[ -n "$HUMAN861" ]] || fail "test 861: symlink not in human list"
+echo "$HUMAN861" | grep -q "mylink861.txt@" \
+    || fail "test 861: human list should show @ suffix, got '$HUMAN861'"
+pass "test 861: human-mode list shows @ suffix for symlinks"
 
 report_results

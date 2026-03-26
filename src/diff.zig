@@ -55,6 +55,7 @@ pub fn parseDiff(arena: Allocator, diff: []const u8, mode: DiffMode, hunks: *std
         var is_binary = false;
         var is_submodule = false;
         var file_mode: []const u8 = "100644";
+        var is_symlink = false;
         var rename_from: ?[]const u8 = null;
         var rename_to: ?[]const u8 = null;
 
@@ -62,9 +63,11 @@ pub fn parseDiff(arena: Allocator, diff: []const u8, mode: DiffMode, hunks: *std
             if (std.mem.startsWith(u8, line, "new file mode ")) {
                 is_new_file = true;
                 file_mode = line["new file mode ".len..];
+                if (std.mem.eql(u8, file_mode, "120000")) is_symlink = true;
             } else if (std.mem.startsWith(u8, line, "deleted file mode ")) {
                 is_deleted_file = true;
                 file_mode = line["deleted file mode ".len..];
+                if (std.mem.eql(u8, file_mode, "120000")) is_symlink = true;
             } else if (std.mem.startsWith(u8, line, "Binary files ")) {
                 is_binary = true;
             } else if (std.mem.startsWith(u8, line, "rename from ")) {
@@ -72,9 +75,11 @@ pub fn parseDiff(arena: Allocator, diff: []const u8, mode: DiffMode, hunks: *std
             } else if (std.mem.startsWith(u8, line, "rename to ")) {
                 rename_to = line["rename to ".len..];
             } else if (std.mem.startsWith(u8, line, "index ")) {
-                // Detect submodule mode (160000)
+                // Detect submodule mode (160000) and symlink mode (120000)
                 if (std.mem.endsWith(u8, line, " 160000")) {
                     is_submodule = true;
+                } else if (std.mem.endsWith(u8, line, " 120000")) {
+                    is_symlink = true;
                 }
             } else if (std.mem.startsWith(u8, line, "old mode ") or
                 std.mem.startsWith(u8, line, "new mode ") or
@@ -135,6 +140,7 @@ pub fn parseDiff(arena: Allocator, diff: []const u8, mode: DiffMode, hunks: *std
                 .is_new_file = is_new_file,
                 .is_deleted_file = is_deleted_file,
                 .is_untracked = false,
+                .is_symlink = is_symlink,
                 .patch_header = ph.items,
             });
             continue;
@@ -217,6 +223,7 @@ pub fn parseDiff(arena: Allocator, diff: []const u8, mode: DiffMode, hunks: *std
                 .is_new_file = is_new_file,
                 .is_deleted_file = is_deleted_file,
                 .is_untracked = false,
+                .is_symlink = is_symlink,
                 .patch_header = patch_header,
             });
             continue;
@@ -304,6 +311,7 @@ pub fn parseDiff(arena: Allocator, diff: []const u8, mode: DiffMode, hunks: *std
                 .is_new_file = is_new_file,
                 .is_deleted_file = is_deleted_file,
                 .is_untracked = false,
+                .is_symlink = is_symlink,
                 .patch_header = patch_header,
             });
         }

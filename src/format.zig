@@ -6,6 +6,12 @@ const Hunk = types.Hunk;
 const DiffMode = types.DiffMode;
 const LineSpec = types.LineSpec;
 
+/// Write the file path with a trailing '@' suffix for symlinks (like ls -F).
+pub fn writeFilePath(stdout: *std.Io.Writer, h: anytype) !void {
+    try stdout.writeAll(h.file_path);
+    if (h.is_symlink) try stdout.writeByte('@');
+}
+
 /// Returns true if colored output should be used: human mode, no --no-color flag,
 /// stdout is a TTY (or git pager is active), and NO_COLOR env var is unset.
 pub fn shouldUseColor(output: types.OutputMode, no_color: bool) bool {
@@ -44,8 +50,9 @@ pub fn printHunkHuman(stdout: *std.Io.Writer, h: Hunk, mode: DiffMode, col_width
     try stdout.writeAll("  ");
 
     // File path column (dynamic width) + gap
-    try stdout.writeAll(h.file_path);
-    const path_pad = col_width + 2 -| h.file_path.len;
+    try writeFilePath(stdout, h);
+    const path_len = h.file_path.len + @as(usize, if (h.is_symlink) 1 else 0);
+    const path_pad = col_width + 2 -| path_len;
     var pad_i: usize = 0;
     while (pad_i < path_pad) : (pad_i += 1) try stdout.writeByte(' ');
 
@@ -83,9 +90,9 @@ pub fn printHunkPorcelain(stdout: *std.Io.Writer, h: Hunk, mode: DiffMode) !void
     const start_line = stableStartLine(h, mode);
     const end_line = stableEndLine(h, mode);
 
-    try stdout.print("{s}\t{s}\t{d}\t{d}\t{s}\n", .{
-        short_sha,
-        h.file_path,
+    try stdout.print("{s}\t", .{short_sha});
+    try writeFilePath(stdout, h);
+    try stdout.print("\t{d}\t{d}\t{s}\n", .{
         start_line,
         end_line,
         summary,
