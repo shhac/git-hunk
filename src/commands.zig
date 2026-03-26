@@ -1115,10 +1115,18 @@ fn buildUntrackedCommit(
 
     // Hash each untracked file and add to temp index
     for (untracked_matched) |m| {
-        const blob_sha = try git.runGitHashObject(allocator, m.hunk.file_path);
+        var link_buf: [std.fs.max_path_bytes]u8 = undefined;
+        const symlink_target = std.fs.cwd().readLink(m.hunk.file_path, &link_buf) catch null;
+
+        const blob_sha = if (symlink_target) |target|
+            try git.runGitHashObjectStdin(allocator, target)
+        else
+            try git.runGitHashObject(allocator, m.hunk.file_path);
         defer allocator.free(blob_sha);
 
-        const mode = blk: {
+        const mode: []const u8 = if (symlink_target != null)
+            "120000"
+        else blk: {
             const stat = std.fs.cwd().statFile(m.hunk.file_path) catch break :blk "100644";
             break :blk if (stat.mode & std.posix.S.IXUSR != 0) "100755" else "100644";
         };

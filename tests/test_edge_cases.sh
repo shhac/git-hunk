@@ -332,4 +332,21 @@ fi
     || fail "test 858: untracked symlink should be deleted after --force restore"
 pass "test 858: restore untracked symlink requires --force"
 
+# ============================================================================
+# Test 859: untracked symlink stash --all -u roundtrip preserves symlink
+# ============================================================================
+new_repo
+ln -s gamma.txt newlink859.txt
+
+"$GIT_HUNK" stash --all -u > /dev/null
+[[ ! -e newlink859.txt ]] \
+    || fail "test 859: symlink should be gone after stash --all -u"
+"$GIT_HUNK" stash pop > /dev/null 2>/dev/null
+[[ -L newlink859.txt ]] \
+    || fail "test 859: symlink should be restored as symlink after pop"
+TARGET859="$(readlink newlink859.txt)"
+[[ "$TARGET859" == "gamma.txt" ]] \
+    || fail "test 859: expected target 'gamma.txt' after pop, got '$TARGET859'"
+pass "test 859: untracked symlink stash --all -u roundtrip preserves symlink"
+
 report_results

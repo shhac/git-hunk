@@ -640,6 +640,43 @@ pub fn runGitHashObject(allocator: Allocator, file_path: []const u8) ![]u8 {
     return try allocator.dupe(u8, std.mem.trimRight(u8, child_stdout.items, "\n"));
 }
 
+/// Run `git hash-object -w --stdin` with the given content piped in. Returns the trimmed blob SHA.
+/// Used for symlinks where we need to hash the target path string, not the file content.
+pub fn runGitHashObjectStdin(allocator: Allocator, content: []const u8) ![]u8 {
+    const argv: []const []const u8 = &.{ "git", "hash-object", "-w", "--stdin" };
+
+    var child = std.process.Child.init(argv, allocator);
+    child.stdout_behavior = .Pipe;
+    child.stderr_behavior = .Pipe;
+    child.stdin_behavior = .Pipe;
+    try child.spawn();
+
+    child.stdin.?.writeAll(content) catch {};
+    child.stdin.?.close();
+    child.stdin = null;
+
+    var child_stdout: std.ArrayList(u8) = .empty;
+    defer child_stdout.deinit(allocator);
+    var child_stderr: std.ArrayList(u8) = .empty;
+    defer child_stderr.deinit(allocator);
+
+    const max_bytes = 1 * 1024 * 1024;
+    try child.collectOutput(allocator, &child_stdout, &child_stderr, max_bytes);
+    const term = try child.wait();
+
+    switch (term) {
+        .Exited => |code| {
+            if (code != 0) {
+                if (child_stderr.items.len > 0) std.debug.print("{s}", .{child_stderr.items});
+                fatal("git hash-object --stdin exited with code {d}", .{code});
+            }
+        },
+        else => fatal("git hash-object --stdin terminated abnormally", .{}),
+    }
+
+    return try allocator.dupe(u8, std.mem.trimRight(u8, child_stdout.items, "\n"));
+}
+
 /// Run `git update-index --add --cacheinfo <mode>,<blob_hash>,<file_path>` with custom GIT_INDEX_FILE env.
 pub fn runGitUpdateIndexCacheinfo(allocator: Allocator, mode: []const u8, blob_hash: []const u8, file_path: []const u8, env_map: *const EnvMap) !void {
     const cacheinfo_arg = try std.fmt.allocPrint(allocator, "{s},{s},{s}", .{ mode, blob_hash, file_path });
