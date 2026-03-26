@@ -194,4 +194,142 @@ echo "$STAGED851" | grep -q "mylink851.txt" \
     || fail "test 851: symlink change not staged after add, got '$STAGED851'"
 pass "test 851: tracked symlink target change appears in list and can be staged"
 
+# ============================================================================
+# Test 852: untracked symlink can be staged with add
+# ============================================================================
+new_repo
+ln -s alpha.txt mylink852.txt
+
+SHA852="$("$GIT_HUNK" list --porcelain --oneline 2>/dev/null | grep "mylink852.txt" | cut -f1)"
+[[ -n "$SHA852" ]] || fail "test 852: no hunk for untracked symlink"
+"$GIT_HUNK" add "$SHA852" > /dev/null
+STAGED852="$(git diff --cached --name-only)"
+echo "$STAGED852" | grep -q "mylink852.txt" \
+    || fail "test 852: untracked symlink not staged after add, got '$STAGED852'"
+# verify it's still a symlink in the index
+MODE852="$(git ls-files -s mylink852.txt | awk '{print $1}')"
+[[ "$MODE852" == "120000" ]] \
+    || fail "test 852: expected mode 120000 in index, got '$MODE852'"
+pass "test 852: untracked symlink can be staged with add"
+
+# ============================================================================
+# Test 853: staged symlink can be unstaged with reset
+# ============================================================================
+new_repo
+ln -s alpha.txt mylink853.txt
+git add mylink853.txt && git commit -q -m "add symlink"
+ln -sf beta.txt mylink853.txt
+
+SHA853="$("$GIT_HUNK" list --porcelain --oneline 2>/dev/null | grep "mylink853.txt" | cut -f1)"
+[[ -n "$SHA853" ]] || fail "test 853: no hunk for symlink change"
+"$GIT_HUNK" add "$SHA853" > /dev/null
+STAGED853="$(git diff --cached --name-only)"
+echo "$STAGED853" | grep -q "mylink853.txt" \
+    || fail "test 853: symlink not staged before reset"
+
+STAGED_SHA853="$("$GIT_HUNK" list --staged --porcelain --oneline 2>/dev/null | grep "mylink853.txt" | cut -f1)"
+[[ -n "$STAGED_SHA853" ]] || fail "test 853: no staged hunk found for symlink"
+"$GIT_HUNK" reset "$STAGED_SHA853" > /dev/null
+REMAINING853="$(git diff --cached --name-only)"
+if echo "$REMAINING853" | grep -q "mylink853.txt"; then
+    fail "test 853: symlink should be unstaged after reset, got '$REMAINING853'"
+fi
+pass "test 853: staged symlink can be unstaged with reset"
+
+# ============================================================================
+# Test 854: symlink can be stashed and popped
+# ============================================================================
+new_repo
+ln -s alpha.txt mylink854.txt
+git add mylink854.txt && git commit -q -m "add symlink"
+ln -sf beta.txt mylink854.txt
+
+SHA854="$("$GIT_HUNK" list --porcelain --oneline 2>/dev/null | grep "mylink854.txt" | cut -f1)"
+[[ -n "$SHA854" ]] || fail "test 854: no hunk for symlink change"
+"$GIT_HUNK" stash "$SHA854" > /dev/null
+TARGET854="$(readlink mylink854.txt)"
+[[ "$TARGET854" == "alpha.txt" ]] \
+    || fail "test 854: expected symlink target 'alpha.txt' after stash, got '$TARGET854'"
+
+"$GIT_HUNK" stash pop > /dev/null 2>/dev/null
+TARGET854_POP="$(readlink mylink854.txt)"
+[[ "$TARGET854_POP" == "beta.txt" ]] \
+    || fail "test 854: expected symlink target 'beta.txt' after pop, got '$TARGET854_POP'"
+pass "test 854: symlink can be stashed and popped"
+
+# ============================================================================
+# Test 855: stash preserves other changes when stashing symlink
+# ============================================================================
+new_repo
+ln -s alpha.txt mylink855.txt
+git add mylink855.txt && git commit -q -m "add symlink"
+ln -sf beta.txt mylink855.txt
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
+
+SHA855="$("$GIT_HUNK" list --porcelain --oneline 2>/dev/null | grep "mylink855.txt" | cut -f1)"
+[[ -n "$SHA855" ]] || fail "test 855: no hunk for symlink"
+"$GIT_HUNK" stash "$SHA855" > /dev/null
+# symlink should be reverted
+TARGET855="$(readlink mylink855.txt)"
+[[ "$TARGET855" == "alpha.txt" ]] \
+    || fail "test 855: symlink should revert after stash, got '$TARGET855'"
+# alpha.txt change should be preserved
+[[ "$(head -1 alpha.txt)" == "Changed alpha." ]] \
+    || fail "test 855: alpha.txt change should be preserved"
+pass "test 855: stash preserves other changes when stashing symlink"
+
+# ============================================================================
+# Test 856: restore reverts symlink target change
+# ============================================================================
+new_repo
+ln -s alpha.txt mylink856.txt
+git add mylink856.txt && git commit -q -m "add symlink"
+ln -sf beta.txt mylink856.txt
+
+SHA856="$("$GIT_HUNK" list --porcelain --oneline 2>/dev/null | grep "mylink856.txt" | cut -f1)"
+[[ -n "$SHA856" ]] || fail "test 856: no hunk for symlink"
+"$GIT_HUNK" restore "$SHA856" > /dev/null
+TARGET856="$(readlink mylink856.txt)"
+[[ "$TARGET856" == "alpha.txt" ]] \
+    || fail "test 856: expected symlink target 'alpha.txt' after restore, got '$TARGET856'"
+COUNT856="$("$GIT_HUNK" count --file mylink856.txt)"
+[[ "$COUNT856" == "0" ]] \
+    || fail "test 856: expected 0 hunks after restore, got '$COUNT856'"
+pass "test 856: restore reverts symlink target change"
+
+# ============================================================================
+# Test 857: deleted symlink appears in list and can be staged
+# ============================================================================
+new_repo
+ln -s alpha.txt mylink857.txt
+git add mylink857.txt && git commit -q -m "add symlink"
+rm mylink857.txt
+
+LINE857="$("$GIT_HUNK" list --porcelain --oneline 2>/dev/null | grep "mylink857.txt" || true)"
+[[ -n "$LINE857" ]] \
+    || fail "test 857: deleted symlink not found in list"
+SHA857="$(echo "$LINE857" | cut -f1)"
+"$GIT_HUNK" add "$SHA857" > /dev/null
+STAGED857="$(git diff --cached --name-only)"
+echo "$STAGED857" | grep -q "mylink857.txt" \
+    || fail "test 857: deleted symlink not staged after add, got '$STAGED857'"
+pass "test 857: deleted symlink appears in list and can be staged"
+
+# ============================================================================
+# Test 858: restore untracked symlink requires --force
+# ============================================================================
+new_repo
+ln -s alpha.txt mylink858.txt
+
+SHA858="$("$GIT_HUNK" list --porcelain --oneline 2>/dev/null | grep "mylink858.txt" | cut -f1)"
+[[ -n "$SHA858" ]] || fail "test 858: no hunk for untracked symlink"
+if "$GIT_HUNK" restore "$SHA858" > /dev/null 2>/dev/null; then
+    fail "test 858: expected exit 1 without --force for untracked symlink"
+fi
+[[ -L mylink858.txt ]] || fail "test 858: symlink should still exist without --force"
+"$GIT_HUNK" restore --force "$SHA858" > /dev/null
+[[ ! -e mylink858.txt ]] \
+    || fail "test 858: untracked symlink should be deleted after --force restore"
+pass "test 858: restore untracked symlink requires --force"
+
 report_results
