@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.11.1] - 2026-04-09
+
+### Fixed
+- Typechange diffs (file replaced by symlink or vice versa) can now be staged, unstaged, committed, stashed, and restored — previously `git hunk add` failed with `error: wrong type` when both hunks were applied together
+
 ## [0.11.0] - 2026-03-26
 
 ### Added
