@@ -386,4 +386,93 @@ echo "$HUMAN861" | grep -q "mylink861.txt@" \
     || fail "test 861: human list should show @ suffix, got '$HUMAN861'"
 pass "test 861: human-mode list shows @ suffix for symlinks"
 
+# ============================================================================
+# T20 — Typechange support (file replaced by symlink)
+# ============================================================================
+
+# ============================================================================
+# Test 870: typechange (file → symlink) both hunks can be staged together
+# ============================================================================
+new_repo
+echo "content" > target870.txt
+git add target870.txt && git commit -q -m "add target"
+rm target870.txt && ln -s alpha.txt target870.txt
+
+COUNT870="$("$GIT_HUNK" count --file target870.txt)"
+[[ "$COUNT870" == "2" ]] \
+    || fail "test 870: expected 2 hunks for typechange, got '$COUNT870'"
+"$GIT_HUNK" add --all --file target870.txt > /dev/null
+STATUS870="$(git status --porcelain target870.txt)"
+[[ "$STATUS870" == "T  target870.txt" ]] \
+    || fail "test 870: expected typechange staged, got '$STATUS870'"
+pass "test 870: typechange (file → symlink) both hunks staged together"
+
+# ============================================================================
+# Test 871: typechange can be staged and then unstaged (reset roundtrip)
+# ============================================================================
+new_repo
+echo "content" > target871.txt
+git add target871.txt && git commit -q -m "add target"
+rm target871.txt && ln -s alpha.txt target871.txt
+
+"$GIT_HUNK" add --all --file target871.txt > /dev/null
+"$GIT_HUNK" reset --all --file target871.txt > /dev/null
+STATUS871="$(git diff --cached --name-only)"
+if echo "$STATUS871" | grep -q "target871.txt"; then
+    fail "test 871: typechange should be unstaged after reset, got '$STATUS871'"
+fi
+pass "test 871: typechange add + reset roundtrip"
+
+# ============================================================================
+# Test 872: typechange can be committed
+# ============================================================================
+new_repo
+echo "content" > target872.txt
+git add target872.txt && git commit -q -m "add target"
+rm target872.txt && ln -s alpha.txt target872.txt
+
+"$GIT_HUNK" commit --all --file target872.txt -m "typechange commit" > /dev/null
+STATUS872="$(git status --porcelain)"
+[[ -z "$STATUS872" ]] \
+    || fail "test 872: expected clean status after typechange commit, got '$STATUS872'"
+MODE872="$(git ls-files -s target872.txt | awk '{print $1}')"
+[[ "$MODE872" == "120000" ]] \
+    || fail "test 872: expected mode 120000 after commit, got '$MODE872'"
+pass "test 872: typechange can be committed"
+
+# ============================================================================
+# Test 873: typechange by explicit SHAs (both hunks specified)
+# ============================================================================
+new_repo
+echo "content" > target873.txt
+git add target873.txt && git commit -q -m "add target"
+rm target873.txt && ln -s alpha.txt target873.txt
+
+SHAS873="$("$GIT_HUNK" list --porcelain --oneline --file target873.txt 2>/dev/null)"
+SHA873_1="$(echo "$SHAS873" | head -1 | cut -f1)"
+SHA873_2="$(echo "$SHAS873" | tail -1 | cut -f1)"
+[[ -n "$SHA873_1" && -n "$SHA873_2" ]] || fail "test 873: couldn't get both typechange SHAs"
+"$GIT_HUNK" add "$SHA873_1" "$SHA873_2" > /dev/null
+STATUS873="$(git status --porcelain target873.txt)"
+[[ "$STATUS873" == "T  target873.txt" ]] \
+    || fail "test 873: expected typechange staged via explicit SHAs, got '$STATUS873'"
+pass "test 873: typechange by explicit SHAs"
+
+# ============================================================================
+# Test 874: typechange alongside normal changes
+# ============================================================================
+new_repo
+echo "content" > target874.txt
+git add target874.txt && git commit -q -m "add target"
+rm target874.txt && ln -s alpha.txt target874.txt
+sed -i.bak '1s/.*/Changed beta./' beta.txt
+
+"$GIT_HUNK" add --all > /dev/null
+STAGED874="$(git diff --cached --name-only | sort)"
+echo "$STAGED874" | grep -q "beta.txt" \
+    || fail "test 874: beta.txt should be staged"
+echo "$STAGED874" | grep -q "target874.txt" \
+    || fail "test 874: target874.txt should be staged"
+pass "test 874: typechange alongside normal changes"
+
 report_results

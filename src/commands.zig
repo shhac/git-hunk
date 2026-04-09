@@ -784,8 +784,8 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
     // Sort hunks by file path and line order for a valid combined patch
     std.mem.sort(MatchedHunk, matched.items, {}, patch_mod.matchedHunkPatchOrder);
 
-    // Build combined patch and apply
-    const patch = try patch_mod.buildCombinedPatch(arena, matched.items);
+    // Build combined patches and apply (typechanges require multiple patches)
+    const patches = try patch_mod.buildCombinedPatches(arena, matched.items);
     const reverse = action == .unstage;
 
     // Collect unique file paths from matched hunks for scoped diff queries
@@ -806,7 +806,18 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
         }
     } else |_| {}
 
-    try git.runGitApply(allocator, patch, reverse, .index, false, opts.ref);
+    // Typechange patches must be applied in reverse order when reversing
+    if (reverse) {
+        var i: usize = patches.len;
+        while (i > 0) {
+            i -= 1;
+            try git.runGitApply(allocator, patches[i], reverse, .index, false, opts.ref);
+        }
+    } else {
+        for (patches) |patch| {
+            try git.runGitApply(allocator, patch, reverse, .index, false, opts.ref);
+        }
+    }
 
     // Resolve new hashes: after staging/unstaging, the hunk appears in the
     // opposite diff with a different hash (stable line references change).
@@ -915,9 +926,16 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
     // Sort hunks for valid combined patch
     std.mem.sort(MatchedHunk, matched.items, {}, patch_mod.matchedHunkPatchOrder);
 
-    // Build combined patch and apply (reverse, to worktree, not cached)
-    const patch = try patch_mod.buildCombinedPatch(arena, matched.items);
-    try git.runGitApply(allocator, patch, true, .worktree, opts.dry_run, opts.ref);
+    // Build combined patches and apply (reverse, to worktree, not cached)
+    // Reverse order for typechange patches (undo create before undo delete)
+    const patches = try patch_mod.buildCombinedPatches(arena, matched.items);
+    {
+        var i: usize = patches.len;
+        while (i > 0) {
+            i -= 1;
+            try git.runGitApply(allocator, patches[i], true, .worktree, opts.dry_run, opts.ref);
+        }
+    }
 
     // Output
     const use_color = format.shouldUseColor(opts.output, opts.no_color);
@@ -1038,8 +1056,9 @@ fn stashPop(allocator: Allocator, verbosity: Verbosity) !void {
 }
 
 const TrackedStashResult = struct {
-    /// Arena-owned patch (for reverse-apply to worktree during cleanup).
-    index_patch: []const u8,
+    /// Arena-owned patches (for reverse-apply to worktree during cleanup).
+    /// Multiple patches when typechanges are present.
+    index_patches: []const []const u8,
     /// Allocator-owned stash tree SHA — caller must free.
     stash_tree: []const u8,
 };
@@ -1054,9 +1073,9 @@ fn buildTrackedStashTree(
     head_tree: []const u8,
     context: ?u32,
 ) !TrackedStashResult {
-    // Sort and build INDEX_PATCH (index-relative, for worktree reverse-apply)
+    // Sort and build INDEX_PATCHES (index-relative, for worktree reverse-apply)
     std.mem.sort(MatchedHunk, tracked_matched, {}, patch_mod.matchedHunkPatchOrder);
-    const index_patch = try patch_mod.buildCombinedPatch(arena, tracked_matched);
+    const index_patches = try patch_mod.buildCombinedPatches(arena, tracked_matched);
 
     // Collect unique file paths from tracked hunks for HEAD diff
     const tracked_file_paths = try collectUniqueFilePaths(arena, tracked_matched);
@@ -1088,7 +1107,7 @@ fn buildTrackedStashTree(
     const head_matched_sorted = try arena.alloc(MatchedHunk, head_matched.len);
     @memcpy(head_matched_sorted, head_matched);
     std.mem.sort(MatchedHunk, head_matched_sorted, {}, patch_mod.matchedHunkPatchOrder);
-    const head_patch = try patch_mod.buildCombinedPatch(arena, head_matched_sorted);
+    const head_patches = try patch_mod.buildCombinedPatches(arena, head_matched_sorted);
 
     // Temp index pipeline
     var random_bytes: [8]u8 = undefined;
@@ -1105,10 +1124,12 @@ fn buildTrackedStashTree(
     defer std.posix.unlink(tmp_idx_z) catch {};
 
     try git.runGitReadTreeWithEnv(allocator, head_tree, &env_map);
-    try git.runGitApplyWithEnv(allocator, head_patch, &env_map);
+    for (head_patches) |hp| {
+        try git.runGitApplyWithEnv(allocator, hp, &env_map);
+    }
 
     const stash_tree = try git.runGitWriteTreeWithEnv(allocator, &env_map);
-    return .{ .index_patch = index_patch, .stash_tree = stash_tree };
+    return .{ .index_patches = index_patches, .stash_tree = stash_tree };
 }
 
 /// Build a git commit containing only the untracked files.
@@ -1167,14 +1188,20 @@ fn cleanupWorktree(
     allocator: Allocator,
     has_tracked: bool,
     has_untracked: bool,
-    index_patch: []const u8,
+    index_patches: []const []const u8,
     untracked_matched: []const MatchedHunk,
 ) void {
     if (has_tracked) {
-        git.runGitApply(allocator, index_patch, true, .worktree, false, null) catch {
-            std.debug.print("warning: stash created but worktree changes could not be removed\n", .{});
-            std.debug.print("hint: use 'git stash pop' to undo or manually resolve\n", .{});
-        };
+        // Reverse order for typechange patches (undo create before undo delete)
+        var i: usize = index_patches.len;
+        while (i > 0) {
+            i -= 1;
+            git.runGitApply(allocator, index_patches[i], true, .worktree, false, null) catch {
+                std.debug.print("warning: stash created but worktree changes could not be removed\n", .{});
+                std.debug.print("hint: use 'git stash pop' to undo or manually resolve\n", .{});
+                break;
+            };
+        }
     }
     if (has_untracked) {
         for (untracked_matched) |m| {
@@ -1315,13 +1342,13 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
     defer allocator.free(head_msg);
 
     // --- Tracked hunks pipeline ---
-    var index_patch: []const u8 = "";
+    var index_patches: []const []const u8 = &.{};
     var stash_tree: []const u8 = head_tree;
     var owns_stash_tree = false;
 
     if (has_tracked) {
         const result = try buildTrackedStashTree(arena, allocator, tracked_matched.items, head_tree, opts.context);
-        index_patch = result.index_patch;
+        index_patches = result.index_patches;
         stash_tree = result.stash_tree;
         owns_stash_tree = true;
     }
@@ -1362,7 +1389,7 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
 
     try git.runGitStashStore(allocator, stash_msg, wip_commit);
 
-    cleanupWorktree(allocator, has_tracked, has_untracked, index_patch, untracked_matched.items);
+    cleanupWorktree(allocator, has_tracked, has_untracked, index_patches, untracked_matched.items);
 
     try reportStashResults(stdout, opts, matched.items);
 }
@@ -1428,8 +1455,8 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
 
     std.mem.sort(MatchedHunk, matched.items, {}, patch_mod.matchedHunkPatchOrder);
 
-    const patch = try patch_mod.buildCombinedPatch(arena, matched.items);
-    if (patch.len == 0) {
+    const patches = try patch_mod.buildCombinedPatches(arena, matched.items);
+    if (patches.len == 0) {
         std.debug.print("error: no hunks to commit\n", .{});
         std.process.exit(1);
     }
@@ -1442,7 +1469,9 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
 
     // 0c. Dry-run: validate patch and show what would be committed
     if (opts.dry_run) {
-        try git.runGitApply(allocator, patch, false, .index, true, opts.ref);
+        for (patches) |p| {
+            try git.runGitApply(allocator, p, false, .index, true, opts.ref);
+        }
         const use_color = format.shouldUseColor(opts.output, opts.no_color);
         for (matched.items) |m| {
             if (opts.verbosity != .quiet) {
@@ -1493,11 +1522,13 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
     };
 
     // 3. Stage target hunks
-    git.runGitApply(allocator, patch, false, .index, false, opts.ref) catch {
-        cwd.copyFile(backup_path, cwd, index_path, .{}) catch {};
-        cwd.deleteFile(backup_path) catch {};
-        std.process.exit(1);
-    };
+    for (patches) |p| {
+        git.runGitApply(allocator, p, false, .index, false, opts.ref) catch {
+            cwd.copyFile(backup_path, cwd, index_path, .{}) catch {};
+            cwd.deleteFile(backup_path) catch {};
+            std.process.exit(1);
+        };
+    }
 
     // 4. Commit
     const commit_output = git.runGitCommit(allocator, .{ .message = message, .amend = opts.amend }) catch {
@@ -1513,9 +1544,12 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
     };
 
     // 6. Sync index with new HEAD
-    git.runGitApply(allocator, patch, false, .index, false, opts.ref) catch {
-        std.debug.print("warning: commit succeeded but index sync failed -- run 'git hunk add' to re-sync\n", .{});
-    };
+    for (patches) |p| {
+        git.runGitApply(allocator, p, false, .index, false, opts.ref) catch {
+            std.debug.print("warning: commit succeeded but index sync failed -- run 'git hunk add' to re-sync\n", .{});
+            break;
+        };
+    }
 
     // 7. Cleanup
     cwd.deleteFile(backup_path) catch {};

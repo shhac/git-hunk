@@ -25,6 +25,8 @@ pub fn findHunkByShaPrefix(hunks: []const Hunk, prefix: []const u8, file_filter:
 pub fn matchedHunkPatchOrder(_: void, a: MatchedHunk, b: MatchedHunk) bool {
     const path_order = std.mem.order(u8, a.hunk.file_path, b.hunk.file_path);
     if (path_order != .eq) return path_order == .lt;
+    // Typechange: deleted file before new file (delete must apply first)
+    if (a.hunk.is_deleted_file != b.hunk.is_deleted_file) return a.hunk.is_deleted_file;
     return a.hunk.old_start < b.hunk.old_start;
 }
 
@@ -32,20 +34,40 @@ pub fn matchedHunkPatchOrder(_: void, a: MatchedHunk, b: MatchedHunk) bool {
 pub fn hunkPatchOrder(_: void, a: *const Hunk, b: *const Hunk) bool {
     const path_order = std.mem.order(u8, a.file_path, b.file_path);
     if (path_order != .eq) return path_order == .lt;
+    // Typechange: deleted file before new file (delete must apply first)
+    if (a.is_deleted_file != b.is_deleted_file) return a.is_deleted_file;
     return a.old_start < b.old_start;
 }
 
-pub fn buildCombinedPatch(arena: Allocator, matches: []const MatchedHunk) ![]const u8 {
+/// Build one or more patches from matched hunks. Returns multiple patches when
+/// typechanges are present (same file with delete + create requires separate
+/// git-apply calls because git cannot apply both in a single patch).
+pub fn buildCombinedPatches(arena: Allocator, matches: []const MatchedHunk) ![]const []const u8 {
+    var patches: std.ArrayList([]const u8) = .empty;
     var patch: std.ArrayList(u8) = .empty;
 
-    // Group hunks by patch_header to combine hunks from the same file
-    // under a single header. We iterate in order and track the last header.
+    // Track file paths in the current patch to detect typechange conflicts
+    // (same file appearing twice with different patch_header).
+    var seen: std.StringArrayHashMapUnmanaged(void) = .empty;
+
     var last_header: []const u8 = "";
     for (matches) |m| {
+        // If this file already has a header in the current patch, start a new patch
+        if (seen.contains(m.hunk.file_path) and !std.mem.eql(u8, m.hunk.patch_header, last_header)) {
+            if (patch.items.len > 0) {
+                try patches.append(arena, patch.items);
+                patch = .empty;
+                seen.clearRetainingCapacity();
+                last_header = "";
+            }
+        }
+
         if (!std.mem.eql(u8, m.hunk.patch_header, last_header)) {
             try patch.appendSlice(arena, m.hunk.patch_header);
             last_header = m.hunk.patch_header;
         }
+        try seen.put(arena, m.hunk.file_path, {});
+
         if (m.line_spec) |ls| {
             const filtered = try buildFilteredHunkPatch(arena, m.hunk, ls);
             try patch.appendSlice(arena, filtered);
@@ -58,7 +80,21 @@ pub fn buildCombinedPatch(arena: Allocator, matches: []const MatchedHunk) ![]con
         }
     }
 
-    return patch.items;
+    if (patch.items.len > 0) {
+        try patches.append(arena, patch.items);
+    }
+
+    return patches.items;
+}
+
+/// Backwards-compatible wrapper returning a single patch. Only safe when
+/// typechanges are impossible (e.g. single-hunk callers). Asserts in debug
+/// mode if multiple patches would be needed.
+pub fn buildCombinedPatch(arena: Allocator, matches: []const MatchedHunk) ![]const u8 {
+    const patches = try buildCombinedPatches(arena, matches);
+    if (patches.len == 0) return "";
+    std.debug.assert(patches.len == 1);
+    return patches[0];
 }
 
 /// Build a filtered hunk patch containing only selected lines.
@@ -387,4 +423,92 @@ test "buildFilteredHunkPatch multiple changes partial select" {
         "@@ -1,4 +1,4 @@\n ctx1\n-rem1\n+add1\n ctx2\n rem2\n",
         result,
     );
+}
+
+test "buildCombinedPatches typechange splits into two patches" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const del_header = "diff --git a/b.txt b/b.txt\ndeleted file mode 100644\n--- a/b.txt\n+++ /dev/null\n";
+    const new_header = "diff --git a/b.txt b/b.txt\nnew file mode 120000\n--- /dev/null\n+++ b/b.txt\n";
+    var h1 = testMakeHunk("b.txt", 1, 1, 0, 0);
+    h1.patch_header = del_header;
+    h1.raw_lines = "@@ -1 +0,0 @@\n-world\n";
+    h1.is_deleted_file = true;
+    var h2 = testMakeHunk("b.txt", 0, 0, 1, 1);
+    h2.patch_header = new_header;
+    h2.raw_lines = "@@ -0,0 +1 @@\n+a.txt\n";
+    h2.is_new_file = true;
+    h2.is_symlink = true;
+    // Sorted: deleted before new (matching matchedHunkPatchOrder)
+    const matches = [_]MatchedHunk{
+        .{ .hunk = &h1, .line_spec = null },
+        .{ .hunk = &h2, .line_spec = null },
+    };
+    const patches = try buildCombinedPatches(arena.allocator(), &matches);
+    try std.testing.expectEqual(@as(usize, 2), patches.len);
+    // First patch: deletion
+    try std.testing.expect(std.mem.startsWith(u8, patches[0], "diff --git a/b.txt b/b.txt\ndeleted file mode"));
+    // Second patch: creation
+    try std.testing.expect(std.mem.startsWith(u8, patches[1], "diff --git a/b.txt b/b.txt\nnew file mode 120000"));
+}
+
+test "buildCombinedPatches normal case returns single patch" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var h1 = testMakeHunk("a.txt", 1, 1, 1, 1);
+    h1.patch_header = "--- a/a.txt\n+++ b/a.txt\n";
+    h1.raw_lines = "@@ -1 +1 @@\n-a\n+A\n";
+    var h2 = testMakeHunk("b.txt", 1, 1, 1, 1);
+    h2.patch_header = "--- a/b.txt\n+++ b/b.txt\n";
+    h2.raw_lines = "@@ -1 +1 @@\n-b\n+B\n";
+    const matches = [_]MatchedHunk{
+        .{ .hunk = &h1, .line_spec = null },
+        .{ .hunk = &h2, .line_spec = null },
+    };
+    const patches = try buildCombinedPatches(arena.allocator(), &matches);
+    try std.testing.expectEqual(@as(usize, 1), patches.len);
+}
+
+test "buildCombinedPatches typechange with other files" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    // a.txt: normal change
+    var h_a = testMakeHunk("a.txt", 1, 1, 1, 1);
+    h_a.patch_header = "--- a/a.txt\n+++ b/a.txt\n";
+    h_a.raw_lines = "@@ -1 +1 @@\n-a\n+A\n";
+    // b.txt: typechange (delete + create)
+    var h_del = testMakeHunk("b.txt", 1, 1, 0, 0);
+    h_del.patch_header = "diff --git a/b.txt b/b.txt\ndeleted file mode 100644\n--- a/b.txt\n+++ /dev/null\n";
+    h_del.raw_lines = "@@ -1 +0,0 @@\n-world\n";
+    h_del.is_deleted_file = true;
+    var h_new = testMakeHunk("b.txt", 0, 0, 1, 1);
+    h_new.patch_header = "diff --git a/b.txt b/b.txt\nnew file mode 120000\n--- /dev/null\n+++ b/b.txt\n";
+    h_new.raw_lines = "@@ -0,0 +1 @@\n+a.txt\n";
+    h_new.is_new_file = true;
+    h_new.is_symlink = true;
+    // Order: a.txt, b.txt(del), b.txt(new) — matching sort order
+    const matches = [_]MatchedHunk{
+        .{ .hunk = &h_a, .line_spec = null },
+        .{ .hunk = &h_del, .line_spec = null },
+        .{ .hunk = &h_new, .line_spec = null },
+    };
+    const patches = try buildCombinedPatches(arena.allocator(), &matches);
+    try std.testing.expectEqual(@as(usize, 2), patches.len);
+    // First patch: a.txt + b.txt deletion
+    try std.testing.expect(std.mem.indexOf(u8, patches[0], "a/a.txt") != null);
+    try std.testing.expect(std.mem.indexOf(u8, patches[0], "deleted file") != null);
+    // Second patch: b.txt creation
+    try std.testing.expect(std.mem.indexOf(u8, patches[1], "new file mode 120000") != null);
+}
+
+test "matchedHunkPatchOrder typechange sorts deleted before new" {
+    var h_del = testMakeHunk("b.txt", 1, 1, 0, 0);
+    h_del.is_deleted_file = true;
+    var h_new = testMakeHunk("b.txt", 0, 0, 1, 1);
+    h_new.is_new_file = true;
+    const m_del = MatchedHunk{ .hunk = &h_del, .line_spec = null };
+    const m_new = MatchedHunk{ .hunk = &h_new, .line_spec = null };
+    // Deleted should sort before new for same file
+    try std.testing.expect(matchedHunkPatchOrder({}, m_del, m_new));
+    try std.testing.expect(!matchedHunkPatchOrder({}, m_new, m_del));
 }
