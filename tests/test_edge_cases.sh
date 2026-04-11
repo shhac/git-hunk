@@ -135,6 +135,31 @@ echo "$LIST808" | grep -q "binary" \
 pass "test 808: untracked binary file listed"
 
 # ============================================================================
+# Test 809: binary tracked file can be stashed and popped
+# ============================================================================
+new_repo
+printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00' > image.png
+git add image.png && git commit -q -m "add binary"
+printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\xff' > image.png
+BEFORE809="$(md5sum image.png 2>/dev/null || md5 -q image.png)"
+SHA809="$("$GIT_HUNK" list --porcelain --oneline --file image.png 2>/dev/null | head -1 | cut -f1)"
+"$GIT_HUNK" stash "$SHA809" > /dev/null 2>/dev/null
+AFTER809="$(md5sum image.png 2>/dev/null || md5 -q image.png)"
+[[ "$BEFORE809" != "$AFTER809" ]] \
+    || fail "test 809: binary file was not reverted after stash"
+COUNT809="$("$GIT_HUNK" count --file image.png 2>/dev/null)"
+[[ "$COUNT809" == "0" ]] \
+    || fail "test 809: expected 0 hunks after stash, got '$COUNT809'"
+STASH_FILES809="$(git stash show --stat 2>/dev/null)"
+echo "$STASH_FILES809" | grep -q "image.png" \
+    || fail "test 809: stash does not contain image.png"
+"$GIT_HUNK" stash pop > /dev/null 2>/dev/null
+POPPED809="$(md5sum image.png 2>/dev/null || md5 -q image.png)"
+[[ "$BEFORE809" == "$POPPED809" ]] \
+    || fail "test 809: binary file not restored after stash pop"
+pass "test 809: binary tracked file stash + pop roundtrip"
+
+# ============================================================================
 # T15 — Unicode filenames
 # ============================================================================
 

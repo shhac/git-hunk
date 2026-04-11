@@ -256,6 +256,51 @@ pub fn printDiffPorcelain(stdout: *std.Io.Writer, h: Hunk) !void {
     try stdout.writeAll("\n");
 }
 
+const MatchedHunk = types.MatchedHunk;
+const OutputMode = types.OutputMode;
+
+/// Write a line spec as `start-end` or `start` (comma-separated for multiple ranges).
+pub fn writeLineSpec(stdout: *std.Io.Writer, ls: LineSpec) !void {
+    for (ls.ranges, 0..) |r, i| {
+        if (i > 0) try stdout.print(",", .{});
+        if (r.start == r.end) {
+            try stdout.print("{d}", .{r.start});
+        } else {
+            try stdout.print("{d}-{d}", .{ r.start, r.end });
+        }
+    }
+}
+
+/// Print a single matched hunk line in human or porcelain format.
+/// Used by restore, stash, commit (dry-run + post-commit), and binary add/reset output.
+pub fn printMatchedHunkLine(stdout: *std.Io.Writer, verb: []const u8, porcelain_verb: []const u8, m: MatchedHunk, use_color: bool, output: OutputMode) !void {
+    switch (output) {
+        .human => {
+            try stdout.print("{s} ", .{verb});
+            if (use_color) try stdout.writeAll(COLOR_YELLOW);
+            try stdout.writeAll(m.hunk.sha_hex[0..7]);
+            if (m.line_spec) |ls| {
+                try stdout.print(":", .{});
+                try writeLineSpec(stdout, ls);
+            }
+            if (use_color) try stdout.writeAll(COLOR_RESET);
+            try stdout.writeAll("  ");
+            try writeFilePath(stdout, m.hunk);
+            try stdout.writeByte('\n');
+        },
+        .porcelain => {
+            try stdout.print("{s}\t{s}", .{ porcelain_verb, m.hunk.sha_hex[0..7] });
+            if (m.line_spec) |ls| {
+                try stdout.print(":", .{});
+                try writeLineSpec(stdout, ls);
+            }
+            try stdout.writeByte('\t');
+            try writeFilePath(stdout, m.hunk);
+            try stdout.writeByte('\n');
+        },
+    }
+}
+
 fn stableStartLine(h: Hunk, mode: DiffMode) u32 {
     return switch (mode) {
         .unstaged => h.new_start,

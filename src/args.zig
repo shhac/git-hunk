@@ -27,6 +27,17 @@ const CommonFlags = struct {
     verbosity: types.Verbosity = .normal,
 };
 
+/// Copy common flags into an options struct, using comptime field detection
+/// to handle structs that don't have all fields (e.g. CountOptions lacks no_color/output).
+fn applyCommonFlags(common: CommonFlags, opts: anytype) void {
+    const fields = .{ "file_filter", "ref", "diff_filter", "no_color", "output", "context", "verbosity" };
+    inline for (fields) |name| {
+        if (comptime @hasField(@TypeOf(opts.*), name)) {
+            @field(opts, name) = @field(common, name);
+        }
+    }
+}
+
 /// Try to parse arg as a common flag shared across all parsers.
 /// Returns true if the arg was consumed (for value-taking flags like --file,
 /// also increments i.* so the loop's `: (i += 1)` advances past the value).
@@ -104,13 +115,7 @@ pub fn parseListArgs(args: []const [:0]u8) !ListOptions {
             return error.UnknownFlag;
         }
     }
-    opts.file_filter = common.file_filter;
-    opts.ref = common.ref;
-    opts.diff_filter = common.diff_filter;
-    opts.no_color = common.no_color;
-    opts.output = common.output;
-    opts.context = common.context;
-    opts.verbosity = common.verbosity;
+    applyCommonFlags(common, &opts);
 
     if (opts.ref) |ref| {
         if (std.mem.indexOf(u8, ref, "..") != null and opts.mode == .staged) {
@@ -144,13 +149,7 @@ pub fn parseAddResetArgs(allocator: Allocator, args: []const [:0]u8) !AddResetOp
         }
     }
 
-    opts.file_filter = common.file_filter;
-    opts.ref = common.ref;
-    opts.diff_filter = common.diff_filter;
-    opts.no_color = common.no_color;
-    opts.output = common.output;
-    opts.context = common.context;
-    opts.verbosity = common.verbosity;
+    applyCommonFlags(common, &opts);
 
     if (opts.sha_args.items.len == 0 and !opts.select_all and opts.file_filter == null) {
         std.debug.print("error: at least one <sha> argument required (or use --all or --file <path>)\n", .{});
@@ -182,13 +181,7 @@ pub fn parseDiffArgs(allocator: Allocator, args: []const [:0]u8) !DiffOptions {
         }
     }
 
-    opts.file_filter = common.file_filter;
-    opts.ref = common.ref;
-    opts.diff_filter = common.diff_filter;
-    opts.no_color = common.no_color;
-    opts.output = common.output;
-    opts.context = common.context;
-    opts.verbosity = common.verbosity;
+    applyCommonFlags(common, &opts);
 
     if (opts.ref) |ref| {
         if (std.mem.indexOf(u8, ref, "..") != null and opts.mode == .staged) {
@@ -224,11 +217,7 @@ pub fn parseCountArgs(args: []const [:0]u8) !CountOptions {
         }
     }
     // Apply only the fields CountOptions has (no_color and output not present)
-    opts.file_filter = common.file_filter;
-    opts.ref = common.ref;
-    opts.diff_filter = common.diff_filter;
-    opts.context = common.context;
-    opts.verbosity = common.verbosity;
+    applyCommonFlags(common, &opts);
 
     if (opts.ref) |ref| {
         if (std.mem.indexOf(u8, ref, "..") != null and opts.mode == .staged) {
@@ -271,13 +260,7 @@ pub fn parseCheckArgs(allocator: Allocator, args: []const [:0]u8) !CheckOptions 
         }
     }
 
-    opts.file_filter = common.file_filter;
-    opts.ref = common.ref;
-    opts.diff_filter = common.diff_filter;
-    opts.no_color = common.no_color;
-    opts.output = common.output;
-    opts.context = common.context;
-    opts.verbosity = common.verbosity;
+    applyCommonFlags(common, &opts);
 
     if (opts.ref) |ref| {
         if (std.mem.indexOf(u8, ref, "..") != null and opts.mode == .staged) {
@@ -320,13 +303,7 @@ pub fn parseRestoreArgs(allocator: Allocator, args: []const [:0]u8) !RestoreOpti
         }
     }
 
-    opts.file_filter = common.file_filter;
-    opts.ref = common.ref;
-    opts.diff_filter = common.diff_filter;
-    opts.no_color = common.no_color;
-    opts.output = common.output;
-    opts.context = common.context;
-    opts.verbosity = common.verbosity;
+    applyCommonFlags(common, &opts);
 
     if (opts.sha_args.items.len == 0 and !opts.select_all and opts.file_filter == null) {
         std.debug.print("error: at least one <sha> argument required (or use --all or --file <path>)\n", .{});
@@ -393,13 +370,7 @@ pub fn parseStashArgs(allocator: Allocator, args: []const [:0]u8) !StashOptions 
         }
     }
 
-    opts.file_filter = common.file_filter;
-    opts.ref = common.ref;
-    opts.diff_filter = common.diff_filter;
-    opts.no_color = common.no_color;
-    opts.output = common.output;
-    opts.context = common.context;
-    opts.verbosity = common.verbosity;
+    applyCommonFlags(common, &opts);
 
     if (opts.ref != null) {
         std.debug.print("error: --ref is not supported for stash\n", .{});
@@ -454,13 +425,7 @@ pub fn parseCommitArgs(allocator: Allocator, args: []const [:0]u8) !CommitOption
         }
     }
 
-    opts.file_filter = common.file_filter;
-    opts.ref = common.ref;
-    opts.diff_filter = common.diff_filter;
-    opts.no_color = common.no_color;
-    opts.output = common.output;
-    opts.context = common.context;
-    opts.verbosity = common.verbosity;
+    applyCommonFlags(common, &opts);
 
     if (opts.sha_args.items.len == 0 and !opts.select_all and opts.file_filter == null) {
         std.debug.print("error: at least one <sha> argument required (or use --all or --file <path>)\n", .{});

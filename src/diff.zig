@@ -996,6 +996,32 @@ test "parseDiff binary and text files together" {
     try std.testing.expect(!hunks.items[1].is_binary);
 }
 
+test "parseDiff symlink detected via index line mode" {
+    const diff =
+        \\diff --git a/link.txt b/link.txt
+        \\index 1234567..abcdefg 120000
+        \\--- a/link.txt
+        \\+++ b/link.txt
+        \\@@ -1 +1 @@
+        \\-old-target
+        \\+new-target
+    ;
+
+    const allocator = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var hunks: std.ArrayList(Hunk) = .empty;
+    defer hunks.deinit(arena);
+
+    try parseDiff(arena, diff, .unstaged, &hunks);
+    try std.testing.expectEqual(@as(usize, 1), hunks.items.len);
+    try std.testing.expectEqualStrings("link.txt", hunks.items[0].file_path);
+    try std.testing.expect(hunks.items[0].is_symlink);
+    try std.testing.expect(!hunks.items[0].is_binary);
+}
+
 test "parseDiff submodule skipped" {
     const diff =
         \\diff --git a/libs/sub b/libs/sub

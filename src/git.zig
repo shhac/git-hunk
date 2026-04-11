@@ -6,6 +6,87 @@ const EnvMap = std.process.EnvMap;
 const DiffMode = types.DiffMode;
 const fatal = types.fatal;
 
+const RunOpts = struct {
+    stdin_data: ?[]const u8 = null,
+    env_map: ?*const EnvMap = null,
+    max_bytes: usize = 1 * 1024 * 1024,
+};
+
+const RunResult = struct {
+    stdout: []u8,
+    exit_code: u8,
+    stderr: []u8,
+};
+
+/// Core subprocess runner. Spawns a git command, optionally writes stdin,
+/// collects stdout/stderr, and returns the result. Caller owns stdout/stderr.
+fn runCommand(allocator: Allocator, argv: []const []const u8, opts: RunOpts) !RunResult {
+    var child = std.process.Child.init(argv, allocator);
+    child.stdout_behavior = .Pipe;
+    child.stderr_behavior = .Pipe;
+    if (opts.stdin_data != null) child.stdin_behavior = .Pipe;
+    if (opts.env_map) |env| child.env_map = env;
+
+    try child.spawn();
+
+    if (opts.stdin_data) |data| {
+        const stdin_file = child.stdin.?;
+        stdin_file.writeAll(data) catch {};
+        stdin_file.close();
+        child.stdin = null;
+    }
+
+    var child_stdout: std.ArrayList(u8) = .empty;
+    errdefer child_stdout.deinit(allocator);
+    var child_stderr: std.ArrayList(u8) = .empty;
+    errdefer child_stderr.deinit(allocator);
+
+    child.collectOutput(allocator, &child_stdout, &child_stderr, opts.max_bytes) catch |err| {
+        if (err == error.StreamTooLong) {
+            child_stdout.deinit(allocator);
+            child_stderr.deinit(allocator);
+            std.debug.print("error: output exceeds {d} MB -- use --file to narrow scope\n", .{opts.max_bytes / (1024 * 1024)});
+            std.process.exit(1);
+        }
+        return err;
+    };
+    const term = try child.wait();
+
+    const exit_code: u8 = switch (term) {
+        .Exited => |code| code,
+        else => {
+            allocator.free(try child_stdout.toOwnedSlice(allocator));
+            allocator.free(try child_stderr.toOwnedSlice(allocator));
+            return error.AbnormalTermination;
+        },
+    };
+
+    return .{
+        .stdout = try child_stdout.toOwnedSlice(allocator),
+        .exit_code = exit_code,
+        .stderr = try child_stderr.toOwnedSlice(allocator),
+    };
+}
+
+/// Run a git command that returns trimmed stdout. Fatal on non-zero exit.
+fn runGitCapture(allocator: Allocator, argv: []const []const u8, opts: RunOpts, label: []const u8) ![]u8 {
+    const result = try runCommand(allocator, argv, opts);
+    defer allocator.free(result.stderr);
+
+    if (result.exit_code != 0) {
+        allocator.free(result.stdout);
+        if (result.stderr.len > 0) std.debug.print("{s}", .{result.stderr});
+        fatal("{s} exited with code {d}", .{ label, result.exit_code });
+    }
+
+    // Trim trailing newline and dupe to right-size the allocation
+    const trimmed = std.mem.trimRight(u8, result.stdout, "\n");
+    if (trimmed.len == result.stdout.len) return result.stdout;
+    const duped = try allocator.dupe(u8, trimmed);
+    allocator.free(result.stdout);
+    return duped;
+}
+
 pub fn runGitDiff(allocator: Allocator, mode: DiffMode, ref: ?[]const u8, context: ?u32) ![]u8 {
     return runGitDiffFiles(allocator, mode, ref, context, &.{});
 }
@@ -174,141 +255,36 @@ pub fn runGitApply(allocator: Allocator, patch: []const u8, reverse: bool, targe
 
 /// Stage files by path: `git add -- path1 path2 ...`
 pub fn runGitAddFiles(allocator: Allocator, file_paths: []const []const u8) !void {
-    const argv_buf = try allocator.alloc([]const u8, 3 + file_paths.len);
-    defer allocator.free(argv_buf);
-    argv_buf[0] = "git";
-    argv_buf[1] = "add";
-    argv_buf[2] = "--";
-    for (file_paths, 0..) |fp, i| {
-        argv_buf[3 + i] = fp;
-    }
-
-    var child = std.process.Child.init(argv_buf, allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    try child.spawn();
-
-    var child_stderr: std.ArrayList(u8) = .empty;
-    defer child_stderr.deinit(allocator);
-    var child_stdout: std.ArrayList(u8) = .empty;
-    defer child_stdout.deinit(allocator);
-    try child.collectOutput(allocator, &child_stdout, &child_stderr, 1 * 1024 * 1024);
-    const term = try child.wait();
-
-    switch (term) {
-        .Exited => |code| {
-            if (code != 0) {
-                if (child_stderr.items.len > 0) std.debug.print("{s}", .{child_stderr.items});
-                fatal("git add exited with code {d}", .{code});
-            }
-        },
-        else => fatal("git add terminated abnormally", .{}),
-    }
+    const out = try runGitFileCmd(allocator, &.{ "git", "add" }, file_paths, .{}, "git add");
+    allocator.free(out);
 }
 
 /// Unstage files: `git reset HEAD -- path1 path2 ...`
 pub fn runGitResetFiles(allocator: Allocator, file_paths: []const []const u8) !void {
-    const argv_buf = try allocator.alloc([]const u8, 4 + file_paths.len);
-    defer allocator.free(argv_buf);
-    argv_buf[0] = "git";
-    argv_buf[1] = "reset";
-    argv_buf[2] = "HEAD";
-    argv_buf[3] = "--";
-    for (file_paths, 0..) |fp, i| {
-        argv_buf[4 + i] = fp;
-    }
-
-    var child = std.process.Child.init(argv_buf, allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    try child.spawn();
-
-    var child_stderr: std.ArrayList(u8) = .empty;
-    defer child_stderr.deinit(allocator);
-    var child_stdout: std.ArrayList(u8) = .empty;
-    defer child_stdout.deinit(allocator);
-    try child.collectOutput(allocator, &child_stdout, &child_stderr, 1 * 1024 * 1024);
-    const term = try child.wait();
-
-    switch (term) {
-        .Exited => |code| {
-            if (code != 0) {
-                if (child_stderr.items.len > 0) std.debug.print("{s}", .{child_stderr.items});
-                fatal("git reset exited with code {d}", .{code});
-            }
-        },
-        else => fatal("git reset terminated abnormally", .{}),
-    }
+    const out = try runGitFileCmd(allocator, &.{ "git", "reset", "HEAD" }, file_paths, .{}, "git reset");
+    allocator.free(out);
 }
 
 /// Restore files from index: `git checkout -- path1 path2 ...`
 pub fn runGitCheckoutFiles(allocator: Allocator, file_paths: []const []const u8) !void {
-    const argv_buf = try allocator.alloc([]const u8, 3 + file_paths.len);
-    defer allocator.free(argv_buf);
-    argv_buf[0] = "git";
-    argv_buf[1] = "checkout";
-    argv_buf[2] = "--";
-    for (file_paths, 0..) |fp, i| {
-        argv_buf[3 + i] = fp;
-    }
-
-    var child = std.process.Child.init(argv_buf, allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    try child.spawn();
-
-    var child_stderr: std.ArrayList(u8) = .empty;
-    defer child_stderr.deinit(allocator);
-    var child_stdout: std.ArrayList(u8) = .empty;
-    defer child_stdout.deinit(allocator);
-    try child.collectOutput(allocator, &child_stdout, &child_stderr, 1 * 1024 * 1024);
-    const term = try child.wait();
-
-    switch (term) {
-        .Exited => |code| {
-            if (code != 0) {
-                if (child_stderr.items.len > 0) std.debug.print("{s}", .{child_stderr.items});
-                fatal("git checkout exited with code {d}", .{code});
-            }
-        },
-        else => fatal("git checkout terminated abnormally", .{}),
-    }
+    const out = try runGitFileCmd(allocator, &.{ "git", "checkout" }, file_paths, .{}, "git checkout");
+    allocator.free(out);
 }
 
-/// Stage files by path with a custom environment (for temp index):
-/// `GIT_INDEX_FILE=... git add -- path1 path2 ...`
+/// Stage files by path with a custom environment (for temp index).
 pub fn runGitAddFilesWithEnv(allocator: Allocator, file_paths: []const []const u8, env_map: *const EnvMap) !void {
-    const argv_buf = try allocator.alloc([]const u8, 3 + file_paths.len);
+    const out = try runGitFileCmd(allocator, &.{ "git", "add" }, file_paths, .{ .env_map = env_map }, "git add");
+    allocator.free(out);
+}
+
+/// Build argv as `prefix... -- file_paths...` and run via runGitCapture.
+fn runGitFileCmd(allocator: Allocator, prefix: []const []const u8, file_paths: []const []const u8, opts: RunOpts, label: []const u8) ![]u8 {
+    const argv_buf = try allocator.alloc([]const u8, prefix.len + 1 + file_paths.len);
     defer allocator.free(argv_buf);
-    argv_buf[0] = "git";
-    argv_buf[1] = "add";
-    argv_buf[2] = "--";
-    for (file_paths, 0..) |fp, i| {
-        argv_buf[3 + i] = fp;
-    }
-
-    var child = std.process.Child.init(argv_buf, allocator);
-    child.env_map = env_map;
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    try child.spawn();
-
-    var child_stderr: std.ArrayList(u8) = .empty;
-    defer child_stderr.deinit(allocator);
-    var child_stdout: std.ArrayList(u8) = .empty;
-    defer child_stdout.deinit(allocator);
-    try child.collectOutput(allocator, &child_stdout, &child_stderr, 1 * 1024 * 1024);
-    const term = try child.wait();
-
-    switch (term) {
-        .Exited => |code| {
-            if (code != 0) {
-                if (child_stderr.items.len > 0) std.debug.print("{s}", .{child_stderr.items});
-                fatal("git add (with env) exited with code {d}", .{code});
-            }
-        },
-        else => fatal("git add (with env) terminated abnormally", .{}),
-    }
+    @memcpy(argv_buf[0..prefix.len], prefix);
+    argv_buf[prefix.len] = "--";
+    @memcpy(argv_buf[prefix.len + 1 ..], file_paths);
+    return runGitCapture(allocator, argv_buf, opts, label);
 }
 
 /// Generate diff output for untracked files using `git diff --no-index`.
@@ -415,222 +391,50 @@ fn diffSingleUntrackedFile(allocator: Allocator, file_path: []const u8) ![]u8 {
 
 /// Run `git rev-parse HEAD^{tree}` and return the trimmed tree SHA.
 pub fn runGitRevParseTree(allocator: Allocator) ![]u8 {
-    const argv: []const []const u8 = &.{ "git", "rev-parse", "HEAD^{tree}" };
-
-    var child = std.process.Child.init(argv, allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    try child.spawn();
-
-    var child_stdout: std.ArrayList(u8) = .empty;
-    defer child_stdout.deinit(allocator);
-    var child_stderr: std.ArrayList(u8) = .empty;
-    defer child_stderr.deinit(allocator);
-
-    const max_bytes = 1 * 1024 * 1024;
-    try child.collectOutput(allocator, &child_stdout, &child_stderr, max_bytes);
-    const term = try child.wait();
-
-    switch (term) {
-        .Exited => |code| {
-            if (code != 0) {
-                if (child_stderr.items.len > 0) std.debug.print("{s}", .{child_stderr.items});
-                fatal("git rev-parse exited with code {d}", .{code});
-            }
-        },
-        else => fatal("git rev-parse terminated abnormally", .{}),
-    }
-
-    return try allocator.dupe(u8, std.mem.trimRight(u8, child_stdout.items, "\n"));
+    return runGitCapture(allocator, &.{ "git", "rev-parse", "HEAD^{tree}" }, .{}, "git rev-parse");
 }
 
 /// Run `git rev-parse <ref>` and return the trimmed SHA.
 pub fn runGitRevParse(allocator: Allocator, ref: []const u8) ![]u8 {
-    const argv: []const []const u8 = &.{ "git", "rev-parse", ref };
-
-    var child = std.process.Child.init(argv, allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    try child.spawn();
-
-    var child_stdout: std.ArrayList(u8) = .empty;
-    defer child_stdout.deinit(allocator);
-    var child_stderr: std.ArrayList(u8) = .empty;
-    defer child_stderr.deinit(allocator);
-
-    const max_bytes = 1 * 1024 * 1024;
-    try child.collectOutput(allocator, &child_stdout, &child_stderr, max_bytes);
-    const term = try child.wait();
-
-    switch (term) {
-        .Exited => |code| {
-            if (code != 0) {
-                if (child_stderr.items.len > 0) std.debug.print("{s}", .{child_stderr.items});
-                fatal("git rev-parse exited with code {d}", .{code});
-            }
-        },
-        else => fatal("git rev-parse terminated abnormally", .{}),
-    }
-
-    return try allocator.dupe(u8, std.mem.trimRight(u8, child_stdout.items, "\n"));
+    return runGitCapture(allocator, &.{ "git", "rev-parse", ref }, .{}, "git rev-parse");
 }
 
 /// Run `git symbolic-ref --short HEAD` and return the branch name,
 /// or null if HEAD is detached (non-zero exit).
 pub fn runGitSymbolicRef(allocator: Allocator) !?[]u8 {
-    const argv: []const []const u8 = &.{ "git", "symbolic-ref", "--short", "HEAD" };
-
-    var child = std.process.Child.init(argv, allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    try child.spawn();
-
-    var child_stdout: std.ArrayList(u8) = .empty;
-    defer child_stdout.deinit(allocator);
-    var child_stderr: std.ArrayList(u8) = .empty;
-    defer child_stderr.deinit(allocator);
-
-    const max_bytes = 1 * 1024 * 1024;
-    try child.collectOutput(allocator, &child_stdout, &child_stderr, max_bytes);
-    const term = try child.wait();
-
-    switch (term) {
-        .Exited => |code| {
-            if (code != 0) return null;
-        },
-        else => return null,
+    const result = try runCommand(allocator, &.{ "git", "symbolic-ref", "--short", "HEAD" }, .{});
+    allocator.free(result.stderr);
+    if (result.exit_code != 0) {
+        allocator.free(result.stdout);
+        return null;
     }
-
-    return try allocator.dupe(u8, std.mem.trimRight(u8, child_stdout.items, "\n"));
+    const trimmed = std.mem.trimRight(u8, result.stdout, "\n");
+    if (trimmed.len == result.stdout.len) return result.stdout;
+    const duped = try allocator.dupe(u8, trimmed);
+    allocator.free(result.stdout);
+    return duped;
 }
 
 /// Run `git log --oneline -1 HEAD` and return the trimmed output.
 pub fn runGitLogOneline(allocator: Allocator) ![]u8 {
-    const argv: []const []const u8 = &.{ "git", "log", "--oneline", "-1", "HEAD" };
-
-    var child = std.process.Child.init(argv, allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    try child.spawn();
-
-    var child_stdout: std.ArrayList(u8) = .empty;
-    defer child_stdout.deinit(allocator);
-    var child_stderr: std.ArrayList(u8) = .empty;
-    defer child_stderr.deinit(allocator);
-
-    const max_bytes = 1 * 1024 * 1024;
-    try child.collectOutput(allocator, &child_stdout, &child_stderr, max_bytes);
-    const term = try child.wait();
-
-    switch (term) {
-        .Exited => |code| {
-            if (code != 0) {
-                if (child_stderr.items.len > 0) std.debug.print("{s}", .{child_stderr.items});
-                fatal("git log exited with code {d}", .{code});
-            }
-        },
-        else => fatal("git log terminated abnormally", .{}),
-    }
-
-    return try allocator.dupe(u8, std.mem.trimRight(u8, child_stdout.items, "\n"));
+    return runGitCapture(allocator, &.{ "git", "log", "--oneline", "-1", "HEAD" }, .{}, "git log");
 }
 
 /// Run `git read-tree <sha>` with a custom environment map.
 pub fn runGitReadTreeWithEnv(allocator: Allocator, sha: []const u8, env_map: *const EnvMap) !void {
-    const argv: []const []const u8 = &.{ "git", "read-tree", sha };
-
-    var child = std.process.Child.init(argv, allocator);
-    child.env_map = env_map;
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    try child.spawn();
-
-    var child_stdout: std.ArrayList(u8) = .empty;
-    defer child_stdout.deinit(allocator);
-    var child_stderr: std.ArrayList(u8) = .empty;
-    defer child_stderr.deinit(allocator);
-
-    const max_bytes = 1 * 1024 * 1024;
-    try child.collectOutput(allocator, &child_stdout, &child_stderr, max_bytes);
-    const term = try child.wait();
-
-    switch (term) {
-        .Exited => |code| {
-            if (code != 0) {
-                if (child_stderr.items.len > 0) std.debug.print("{s}", .{child_stderr.items});
-                fatal("git read-tree exited with code {d}", .{code});
-            }
-        },
-        else => fatal("git read-tree terminated abnormally", .{}),
-    }
+    const out = try runGitCapture(allocator, &.{ "git", "read-tree", sha }, .{ .env_map = env_map }, "git read-tree");
+    allocator.free(out);
 }
 
 /// Run `git apply --cached --unidiff-zero` with patch on stdin and custom env.
 pub fn runGitApplyWithEnv(allocator: Allocator, patch: []const u8, env_map: *const EnvMap) !void {
-    const argv: []const []const u8 = &.{ "git", "apply", "--cached", "--unidiff-zero" };
-
-    var child = std.process.Child.init(argv, allocator);
-    child.env_map = env_map;
-    child.stdin_behavior = .Pipe;
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    try child.spawn();
-
-    const stdin_file = child.stdin.?;
-    stdin_file.writeAll(patch) catch {};
-    stdin_file.close();
-    child.stdin = null;
-
-    var child_stdout: std.ArrayList(u8) = .empty;
-    defer child_stdout.deinit(allocator);
-    var child_stderr: std.ArrayList(u8) = .empty;
-    defer child_stderr.deinit(allocator);
-
-    const max_bytes = 1 * 1024 * 1024;
-    try child.collectOutput(allocator, &child_stdout, &child_stderr, max_bytes);
-    const term = try child.wait();
-
-    switch (term) {
-        .Exited => |code| {
-            if (code != 0) {
-                if (child_stderr.items.len > 0) std.debug.print("{s}", .{child_stderr.items});
-                fatal("git apply exited with code {d}", .{code});
-            }
-        },
-        else => fatal("git apply terminated abnormally", .{}),
-    }
+    const out = try runGitCapture(allocator, &.{ "git", "apply", "--cached", "--unidiff-zero" }, .{ .stdin_data = patch, .env_map = env_map }, "git apply");
+    allocator.free(out);
 }
 
 /// Run `git write-tree` with a custom environment map, return the trimmed tree SHA.
 pub fn runGitWriteTreeWithEnv(allocator: Allocator, env_map: *const EnvMap) ![]u8 {
-    const argv: []const []const u8 = &.{ "git", "write-tree" };
-
-    var child = std.process.Child.init(argv, allocator);
-    child.env_map = env_map;
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    try child.spawn();
-
-    var child_stdout: std.ArrayList(u8) = .empty;
-    defer child_stdout.deinit(allocator);
-    var child_stderr: std.ArrayList(u8) = .empty;
-    defer child_stderr.deinit(allocator);
-
-    const max_bytes = 1 * 1024 * 1024;
-    try child.collectOutput(allocator, &child_stdout, &child_stderr, max_bytes);
-    const term = try child.wait();
-
-    switch (term) {
-        .Exited => |code| {
-            if (code != 0) {
-                if (child_stderr.items.len > 0) std.debug.print("{s}", .{child_stderr.items});
-                fatal("git write-tree exited with code {d}", .{code});
-            }
-        },
-        else => fatal("git write-tree terminated abnormally", .{}),
-    }
-
-    return try allocator.dupe(u8, std.mem.trimRight(u8, child_stdout.items, "\n"));
+    return runGitCapture(allocator, &.{ "git", "write-tree" }, .{ .env_map = env_map }, "git write-tree");
 }
 
 /// Run `git commit-tree -p <p1> [-p <p2>] -m <msg> <tree>` and return the trimmed commit SHA.
@@ -661,192 +465,42 @@ pub fn runGitCommitTree(allocator: Allocator, tree_sha: []const u8, parents: []c
     argc += 1;
     argv_buf[argc] = tree_sha;
     argc += 1;
-    const argv: []const []const u8 = argv_buf[0..argc];
-
-    var child = std.process.Child.init(argv, allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    try child.spawn();
-
-    var child_stdout: std.ArrayList(u8) = .empty;
-    defer child_stdout.deinit(allocator);
-    var child_stderr: std.ArrayList(u8) = .empty;
-    defer child_stderr.deinit(allocator);
-
-    const max_bytes = 1 * 1024 * 1024;
-    try child.collectOutput(allocator, &child_stdout, &child_stderr, max_bytes);
-    const term = try child.wait();
-
-    switch (term) {
-        .Exited => |code| {
-            if (code != 0) {
-                if (child_stderr.items.len > 0) std.debug.print("{s}", .{child_stderr.items});
-                fatal("git commit-tree exited with code {d}", .{code});
-            }
-        },
-        else => fatal("git commit-tree terminated abnormally", .{}),
-    }
-
-    return try allocator.dupe(u8, std.mem.trimRight(u8, child_stdout.items, "\n"));
+    return runGitCapture(allocator, argv_buf[0..argc], .{}, "git commit-tree");
 }
 
 /// Run `git stash store -m <msg> <sha>`.
 pub fn runGitStashStore(allocator: Allocator, message: []const u8, commit_sha: []const u8) !void {
-    const argv: []const []const u8 = &.{ "git", "stash", "store", "-m", message, commit_sha };
-
-    var child = std.process.Child.init(argv, allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    try child.spawn();
-
-    var child_stdout: std.ArrayList(u8) = .empty;
-    defer child_stdout.deinit(allocator);
-    var child_stderr: std.ArrayList(u8) = .empty;
-    defer child_stderr.deinit(allocator);
-
-    const max_bytes = 1 * 1024 * 1024;
-    try child.collectOutput(allocator, &child_stdout, &child_stderr, max_bytes);
-    const term = try child.wait();
-
-    switch (term) {
-        .Exited => |code| {
-            if (code != 0) {
-                if (child_stderr.items.len > 0) std.debug.print("{s}", .{child_stderr.items});
-                fatal("git stash store exited with code {d}", .{code});
-            }
-        },
-        else => fatal("git stash store terminated abnormally", .{}),
-    }
+    const out = try runGitCapture(allocator, &.{ "git", "stash", "store", "-m", message, commit_sha }, .{}, "git stash store");
+    allocator.free(out);
 }
 
 /// Run `git stash pop`. On conflict (non-zero exit), print stderr and exit 1.
 pub fn runGitStashPop(allocator: Allocator) !void {
-    const argv: []const []const u8 = &.{ "git", "stash", "pop" };
-
-    var child = std.process.Child.init(argv, allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    try child.spawn();
-
-    var child_stdout: std.ArrayList(u8) = .empty;
-    defer child_stdout.deinit(allocator);
-    var child_stderr: std.ArrayList(u8) = .empty;
-    defer child_stderr.deinit(allocator);
-
-    const max_bytes = 1 * 1024 * 1024;
-    try child.collectOutput(allocator, &child_stdout, &child_stderr, max_bytes);
-    const term = try child.wait();
-
-    switch (term) {
-        .Exited => |code| {
-            if (code != 0) {
-                if (child_stderr.items.len > 0) std.debug.print("{s}", .{child_stderr.items});
-                std.process.exit(1);
-            }
-        },
-        else => fatal("git stash pop terminated abnormally", .{}),
+    const result = try runCommand(allocator, &.{ "git", "stash", "pop" }, .{});
+    defer allocator.free(result.stdout);
+    defer allocator.free(result.stderr);
+    if (result.exit_code != 0) {
+        if (result.stderr.len > 0) std.debug.print("{s}", .{result.stderr});
+        std.process.exit(1);
     }
 }
 
 /// Run `git hash-object -w <file_path>` and return the trimmed blob SHA.
 pub fn runGitHashObject(allocator: Allocator, file_path: []const u8) ![]u8 {
-    const argv: []const []const u8 = &.{ "git", "hash-object", "-w", file_path };
-
-    var child = std.process.Child.init(argv, allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    try child.spawn();
-
-    var child_stdout: std.ArrayList(u8) = .empty;
-    defer child_stdout.deinit(allocator);
-    var child_stderr: std.ArrayList(u8) = .empty;
-    defer child_stderr.deinit(allocator);
-
-    const max_bytes = 1 * 1024 * 1024;
-    try child.collectOutput(allocator, &child_stdout, &child_stderr, max_bytes);
-    const term = try child.wait();
-
-    switch (term) {
-        .Exited => |code| {
-            if (code != 0) {
-                if (child_stderr.items.len > 0) std.debug.print("{s}", .{child_stderr.items});
-                fatal("git hash-object exited with code {d}", .{code});
-            }
-        },
-        else => fatal("git hash-object terminated abnormally", .{}),
-    }
-
-    return try allocator.dupe(u8, std.mem.trimRight(u8, child_stdout.items, "\n"));
+    return runGitCapture(allocator, &.{ "git", "hash-object", "-w", file_path }, .{}, "git hash-object");
 }
 
 /// Run `git hash-object -w --stdin` with the given content piped in. Returns the trimmed blob SHA.
-/// Used for symlinks where we need to hash the target path string, not the file content.
 pub fn runGitHashObjectStdin(allocator: Allocator, content: []const u8) ![]u8 {
-    const argv: []const []const u8 = &.{ "git", "hash-object", "-w", "--stdin" };
-
-    var child = std.process.Child.init(argv, allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    child.stdin_behavior = .Pipe;
-    try child.spawn();
-
-    child.stdin.?.writeAll(content) catch {};
-    child.stdin.?.close();
-    child.stdin = null;
-
-    var child_stdout: std.ArrayList(u8) = .empty;
-    defer child_stdout.deinit(allocator);
-    var child_stderr: std.ArrayList(u8) = .empty;
-    defer child_stderr.deinit(allocator);
-
-    const max_bytes = 1 * 1024 * 1024;
-    try child.collectOutput(allocator, &child_stdout, &child_stderr, max_bytes);
-    const term = try child.wait();
-
-    switch (term) {
-        .Exited => |code| {
-            if (code != 0) {
-                if (child_stderr.items.len > 0) std.debug.print("{s}", .{child_stderr.items});
-                fatal("git hash-object --stdin exited with code {d}", .{code});
-            }
-        },
-        else => fatal("git hash-object --stdin terminated abnormally", .{}),
-    }
-
-    return try allocator.dupe(u8, std.mem.trimRight(u8, child_stdout.items, "\n"));
+    return runGitCapture(allocator, &.{ "git", "hash-object", "-w", "--stdin" }, .{ .stdin_data = content }, "git hash-object --stdin");
 }
 
 /// Run `git update-index --add --cacheinfo <mode>,<blob_hash>,<file_path>` with custom GIT_INDEX_FILE env.
 pub fn runGitUpdateIndexCacheinfo(allocator: Allocator, mode: []const u8, blob_hash: []const u8, file_path: []const u8, env_map: *const EnvMap) !void {
     const cacheinfo_arg = try std.fmt.allocPrint(allocator, "{s},{s},{s}", .{ mode, blob_hash, file_path });
     defer allocator.free(cacheinfo_arg);
-
-    const argv: []const []const u8 = &.{ "git", "update-index", "--add", "--cacheinfo", cacheinfo_arg };
-
-    var child = std.process.Child.init(argv, allocator);
-    child.env_map = env_map;
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    try child.spawn();
-
-    var child_stdout: std.ArrayList(u8) = .empty;
-    defer child_stdout.deinit(allocator);
-    var child_stderr: std.ArrayList(u8) = .empty;
-    defer child_stderr.deinit(allocator);
-
-    const max_bytes = 1 * 1024 * 1024;
-    try child.collectOutput(allocator, &child_stdout, &child_stderr, max_bytes);
-    const term = try child.wait();
-
-    switch (term) {
-        .Exited => |code| {
-            if (code != 0) {
-                if (child_stderr.items.len > 0) std.debug.print("{s}", .{child_stderr.items});
-                fatal("git update-index exited with code {d}", .{code});
-            }
-        },
-        else => fatal("git update-index terminated abnormally", .{}),
-    }
+    const out = try runGitCapture(allocator, &.{ "git", "update-index", "--add", "--cacheinfo", cacheinfo_arg }, .{ .env_map = env_map }, "git update-index");
+    allocator.free(out);
 }
 
 /// Run `git diff HEAD [-U<n>] --src-prefix=a/ --dst-prefix=b/ --no-color [-- files...]`
@@ -926,151 +580,67 @@ pub fn runGitDiffHead(allocator: Allocator, context: ?u32, file_paths: []const [
 
 /// Run `git rev-parse --show-toplevel` and return the trimmed repo root path.
 pub fn runGitToplevel(allocator: Allocator) ![]u8 {
-    const argv: []const []const u8 = &.{ "git", "rev-parse", "--show-toplevel" };
-
-    var child = std.process.Child.init(argv, allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    try child.spawn();
-
-    var child_stdout: std.ArrayList(u8) = .empty;
-    defer child_stdout.deinit(allocator);
-    var child_stderr: std.ArrayList(u8) = .empty;
-    defer child_stderr.deinit(allocator);
-
-    const max_bytes = 1 * 1024 * 1024;
-    try child.collectOutput(allocator, &child_stdout, &child_stderr, max_bytes);
-    const term = try child.wait();
-
-    switch (term) {
-        .Exited => |code| {
-            if (code != 0) {
-                if (child_stderr.items.len > 0) std.debug.print("{s}", .{child_stderr.items});
-                return error.NotAGitRepo;
-            }
-        },
-        else => return error.NotAGitRepo,
+    const result = try runCommand(allocator, &.{ "git", "rev-parse", "--show-toplevel" }, .{});
+    defer allocator.free(result.stderr);
+    if (result.exit_code != 0) {
+        allocator.free(result.stdout);
+        return error.NotAGitRepo;
     }
-
-    return try allocator.dupe(u8, std.mem.trimRight(u8, child_stdout.items, "\n"));
+    const trimmed = std.mem.trimRight(u8, result.stdout, "\n");
+    if (trimmed.len == result.stdout.len) return result.stdout;
+    const duped = try allocator.dupe(u8, trimmed);
+    allocator.free(result.stdout);
+    return duped;
 }
 
 // ─── Commit plumbing helpers ──────────────────────────────────────────
 
 /// Run `git rev-parse --git-dir` and return the trimmed git directory path.
 pub fn runGitRevParseGitDir(allocator: Allocator) ![]u8 {
-    const argv: []const []const u8 = &.{ "git", "rev-parse", "--git-dir" };
-
-    var child = std.process.Child.init(argv, allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    try child.spawn();
-
-    var child_stdout: std.ArrayList(u8) = .empty;
-    defer child_stdout.deinit(allocator);
-    var child_stderr: std.ArrayList(u8) = .empty;
-    defer child_stderr.deinit(allocator);
-
-    const max_bytes = 1 * 1024 * 1024;
-    try child.collectOutput(allocator, &child_stdout, &child_stderr, max_bytes);
-    const term = try child.wait();
-
-    switch (term) {
-        .Exited => |code| {
-            if (code != 0) {
-                if (child_stderr.items.len > 0) std.debug.print("{s}", .{child_stderr.items});
-                fatal("git rev-parse --git-dir exited with code {d}", .{code});
-            }
-        },
-        else => fatal("git rev-parse terminated abnormally", .{}),
-    }
-
-    return try allocator.dupe(u8, std.mem.trimRight(u8, child_stdout.items, "\n"));
+    return runGitCapture(allocator, &.{ "git", "rev-parse", "--git-dir" }, .{}, "git rev-parse --git-dir");
 }
 
 /// Run `git read-tree <treeish>` on the real index (no custom env).
 /// Returns an error on failure instead of calling fatal, so callers can clean up.
 pub fn runGitReadTree(allocator: Allocator, treeish: []const u8) !void {
-    const argv: []const []const u8 = &.{ "git", "read-tree", treeish };
-
-    var child = std.process.Child.init(argv, allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    try child.spawn();
-
-    var child_stdout: std.ArrayList(u8) = .empty;
-    defer child_stdout.deinit(allocator);
-    var child_stderr: std.ArrayList(u8) = .empty;
-    defer child_stderr.deinit(allocator);
-
-    const max_bytes = 1 * 1024 * 1024;
-    try child.collectOutput(allocator, &child_stdout, &child_stderr, max_bytes);
-    const term = try child.wait();
-
-    switch (term) {
-        .Exited => |code| {
-            if (code != 0) {
-                if (child_stderr.items.len > 0) std.debug.print("{s}", .{child_stderr.items});
-                return error.ReadTreeFailed;
-            }
-        },
-        else => {
-            std.debug.print("error: git read-tree terminated abnormally\n", .{});
-            return error.ReadTreeFailed;
-        },
+    const result = try runCommand(allocator, &.{ "git", "read-tree", treeish }, .{});
+    defer allocator.free(result.stdout);
+    defer allocator.free(result.stderr);
+    if (result.exit_code != 0) {
+        if (result.stderr.len > 0) std.debug.print("{s}", .{result.stderr});
+        return error.ReadTreeFailed;
     }
 }
 
 /// Run `git commit -m <message> [--amend]` and return the commit output.
-/// Returns `error.CommitFailed` on non-zero exit instead of calling fatal,
-/// so callers can clean up (e.g., restore index backup).
+/// Returns `error.CommitFailed` on non-zero exit instead of calling fatal.
 pub fn runGitCommit(allocator: Allocator, args: struct { message: []const u8, amend: bool }) ![]u8 {
-    var argv_buf: [5][]const u8 = undefined;
-    var argc: usize = 0;
-    argv_buf[argc] = "git";
-    argc += 1;
-    argv_buf[argc] = "commit";
-    argc += 1;
-    argv_buf[argc] = "-m";
-    argc += 1;
-    argv_buf[argc] = args.message;
-    argc += 1;
-    if (args.amend) {
-        argv_buf[argc] = "--amend";
-        argc += 1;
-    }
-    const argv: []const []const u8 = argv_buf[0..argc];
+    const argv: []const []const u8 = if (args.amend)
+        &.{ "git", "commit", "-m", args.message, "--amend" }
+    else
+        &.{ "git", "commit", "-m", args.message };
 
-    var child = std.process.Child.init(argv, allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    try child.spawn();
-
-    var child_stdout: std.ArrayList(u8) = .empty;
-    defer child_stdout.deinit(allocator);
-    var child_stderr: std.ArrayList(u8) = .empty;
-    defer child_stderr.deinit(allocator);
-
-    const max_bytes = 1 * 1024 * 1024;
-    try child.collectOutput(allocator, &child_stdout, &child_stderr, max_bytes);
-    const term = try child.wait();
-
-    switch (term) {
-        .Exited => |code| {
-            if (code != 0) {
-                if (child_stderr.items.len > 0) std.debug.print("{s}", .{child_stderr.items});
-                return error.CommitFailed;
-            }
-        },
-        else => {
-            std.debug.print("error: git commit terminated abnormally\n", .{});
-            return error.CommitFailed;
-        },
+    const result = try runCommand(allocator, argv, .{});
+    if (result.exit_code != 0) {
+        allocator.free(result.stdout);
+        if (result.stderr.len > 0) std.debug.print("{s}", .{result.stderr});
+        allocator.free(result.stderr);
+        return error.CommitFailed;
     }
 
     // git writes the commit summary to stderr; return that if stdout is empty
-    if (child_stderr.items.len > 0) {
-        return try allocator.dupe(u8, std.mem.trimRight(u8, child_stderr.items, "\n"));
+    if (result.stderr.len > 0) {
+        allocator.free(result.stdout);
+        const trimmed = std.mem.trimRight(u8, result.stderr, "\n");
+        if (trimmed.len == result.stderr.len) return result.stderr;
+        const duped = try allocator.dupe(u8, trimmed);
+        allocator.free(result.stderr);
+        return duped;
     }
-    return try allocator.dupe(u8, std.mem.trimRight(u8, child_stdout.items, "\n"));
+    allocator.free(result.stderr);
+    const trimmed = std.mem.trimRight(u8, result.stdout, "\n");
+    if (trimmed.len == result.stdout.len) return result.stdout;
+    const duped = try allocator.dupe(u8, trimmed);
+    allocator.free(result.stdout);
+    return duped;
 }

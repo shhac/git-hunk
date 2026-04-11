@@ -573,18 +573,6 @@ fn buildResultGroups(
     return try final_groups.toOwnedSlice(arena);
 }
 
-/// Format a line spec as `start-end` or `start` (comma-separated for multiple ranges).
-fn writeLineSpec(stdout: *std.Io.Writer, ls: types.LineSpec) !void {
-    for (ls.ranges, 0..) |r, i| {
-        if (i > 0) try stdout.print(",", .{});
-        if (r.start == r.end) {
-            try stdout.print("{d}", .{r.start});
-        } else {
-            try stdout.print("{d}-{d}", .{ r.start, r.end });
-        }
-    }
-}
-
 /// Print one result group in human-readable format:
 ///   {verb} {applied...} [+{consumed}...] → {result[,result...]}  {file}
 fn printResultGroupHuman(stdout: *std.Io.Writer, verb: []const u8, rg: ResultGroup, use_color: bool) !void {
@@ -598,7 +586,7 @@ fn printResultGroupHuman(stdout: *std.Io.Writer, verb: []const u8, rg: ResultGro
         try stdout.print("{s}", .{ai.sha7});
         if (ai.line_spec) |ls| {
             try stdout.print(":", .{});
-            try writeLineSpec(stdout, ls);
+            try format.writeLineSpec(stdout, ls);
         }
         if (use_color) try stdout.print("{s}", .{format.COLOR_RESET});
     }
@@ -646,7 +634,7 @@ fn printResultGroupPorcelain(stdout: *std.Io.Writer, verb: []const u8, rg: Resul
         try stdout.print("{s}", .{ai.sha7});
         if (ai.line_spec) |ls| {
             try stdout.print(":", .{});
-            try writeLineSpec(stdout, ls);
+            try format.writeLineSpec(stdout, ls);
         }
     }
 
@@ -672,21 +660,6 @@ fn printResultGroupPorcelain(stdout: *std.Io.Writer, verb: []const u8, rg: Resul
     }
 
     try stdout.print("\n", .{});
-}
-
-fn collectUniqueFilePaths(arena: Allocator, matches: []const MatchedHunk) ![]const []const u8 {
-    var list: std.ArrayList([]const u8) = .empty;
-    for (matches) |m| {
-        var already_present = false;
-        for (list.items) |fp| {
-            if (std.mem.eql(u8, fp, m.hunk.file_path)) {
-                already_present = true;
-                break;
-            }
-        }
-        if (!already_present) try list.append(arena, m.hunk.file_path);
-    }
-    return list.items;
 }
 
 /// Resolve SHA prefix args to matched hunks, deduplicating by full SHA and merging
@@ -741,6 +714,37 @@ fn resolveMatchedHunks(
     }
 }
 
+/// Resolve hunks: bulk mode (match all, optionally filtered by file) or SHA prefix matching.
+fn resolveHunksFromOpts(
+    arena: Allocator,
+    hunks: []const Hunk,
+    sha_args: []const types.ShaArg,
+    file_filter: ?[]const u8,
+    matched: *std.ArrayList(MatchedHunk),
+) !void {
+    if (sha_args.len == 0) {
+        for (hunks) |*h| {
+            if (file_filter) |filter| {
+                if (!std.mem.eql(u8, h.file_path, filter)) continue;
+            }
+            try matched.append(arena, .{ .hunk = h, .line_spec = null });
+        }
+    } else {
+        try resolveMatchedHunks(arena, hunks, sha_args, file_filter, matched);
+    }
+}
+
+/// Exit with an error message if no hunks were matched.
+fn exitIfNoMatches(matched_len: usize, file_filter: ?[]const u8) void {
+    if (matched_len > 0) return;
+    if (file_filter) |filter| {
+        std.debug.print("no hunks matching file '{s}'\n", .{filter});
+    } else {
+        std.debug.print("no unstaged changes\n", .{});
+    }
+    std.process.exit(1);
+}
+
 fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOptions, action: ApplyAction) !void {
     // For staging: diff unstaged hunks (index vs worktree)
     // For unstaging: diff staged hunks (HEAD vs index)
@@ -769,22 +773,9 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
         std.process.exit(1);
     }
 
-    // Resolve hunks to apply: bulk mode (--all or bare --file) or SHA prefix matching
     var matched: std.ArrayList(MatchedHunk) = .empty;
     defer matched.deinit(arena);
-
-    if (opts.sha_args.items.len == 0) {
-        // Bulk mode: match all hunks, optionally filtered by file
-        for (hunks.items) |*h| {
-            if (opts.file_filter) |filter| {
-                if (!std.mem.eql(u8, h.file_path, filter)) continue;
-            }
-            try matched.append(arena, .{ .hunk = h, .line_spec = null });
-        }
-    } else {
-        // SHA prefix matching mode
-        try resolveMatchedHunks(arena, hunks.items, opts.sha_args.items, opts.file_filter, &matched);
-    }
+    try resolveHunksFromOpts(arena, hunks.items, opts.sha_args.items, opts.file_filter, &matched);
 
     // Partition into text hunks and binary hunks
     var text_matched: std.ArrayList(MatchedHunk) = .empty;
@@ -808,7 +799,7 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
     }
 
     // Collect unique file paths from all matched hunks for scoped diff queries
-    const file_paths = try collectUniqueFilePaths(arena, matched.items);
+    const file_paths = try patch_mod.collectUniqueFilePaths(arena, matched.items);
     const target_mode: DiffMode = switch (action) {
         .stage => .staged,
         .unstage => .unstaged,
@@ -891,22 +882,7 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
     for (binary_matched.items) |m| {
         count += 1;
         if (opts.verbosity != .quiet) {
-            switch (opts.output) {
-                .human => {
-                    try stdout.print("{s} ", .{verb});
-                    if (use_color) try stdout.writeAll(format.COLOR_YELLOW);
-                    try stdout.writeAll(m.hunk.sha_hex[0..7]);
-                    if (use_color) try stdout.writeAll(format.COLOR_RESET);
-                    try stdout.writeAll("  ");
-                    try format.writeFilePath(stdout, m.hunk);
-                    try stdout.writeByte('\n');
-                },
-                .porcelain => {
-                    try stdout.print("{s}\t{s}\t\t", .{ verb, m.hunk.sha_hex[0..7] });
-                    try format.writeFilePath(stdout, m.hunk);
-                    try stdout.writeByte('\n');
-                },
-            }
+            try format.printMatchedHunkLine(stdout, verb, verb, m, use_color, opts.output);
         }
     }
 
@@ -947,29 +923,10 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
         std.process.exit(1);
     }
 
-    // Resolve hunks: bulk mode (--all or bare --file) or SHA prefix matching
     var matched: std.ArrayList(MatchedHunk) = .empty;
     defer matched.deinit(arena);
-
-    if (opts.sha_args.items.len == 0) {
-        for (hunks.items) |*h| {
-            if (opts.file_filter) |filter| {
-                if (!std.mem.eql(u8, h.file_path, filter)) continue;
-            }
-            try matched.append(arena, .{ .hunk = h, .line_spec = null });
-        }
-    } else {
-        try resolveMatchedHunks(arena, hunks.items, opts.sha_args.items, opts.file_filter, &matched);
-    }
-
-    if (matched.items.len == 0) {
-        if (opts.file_filter) |filter| {
-            std.debug.print("no hunks matching file '{s}'\n", .{filter});
-        } else {
-            std.debug.print("no unstaged changes\n", .{});
-        }
-        std.process.exit(1);
-    }
+    try resolveHunksFromOpts(arena, hunks.items, opts.sha_args.items, opts.file_filter, &matched);
+    exitIfNoMatches(matched.items.len, opts.file_filter);
 
     // Gate: untracked files require --force (restoring deletes them permanently)
     // Dry-run bypasses the gate — safe to preview without --force
@@ -1033,31 +990,7 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
     for (matched.items) |m| {
         count += 1;
         if (opts.verbosity != .quiet) {
-            switch (opts.output) {
-                .human => {
-                    try stdout.print("{s} ", .{verb});
-                    if (use_color) try stdout.print("{s}", .{format.COLOR_YELLOW});
-                    try stdout.print("{s}", .{m.hunk.sha_hex[0..7]});
-                    if (m.line_spec) |ls| {
-                        try stdout.print(":", .{});
-                        try writeLineSpec(stdout, ls);
-                    }
-                    if (use_color) try stdout.print("{s}", .{format.COLOR_RESET});
-                    try stdout.writeAll("  ");
-                    try format.writeFilePath(stdout, m.hunk);
-                    try stdout.writeByte('\n');
-                },
-                .porcelain => {
-                    try stdout.print("{s}\t{s}", .{ porcelain_verb, m.hunk.sha_hex[0..7] });
-                    if (m.line_spec) |ls| {
-                        try stdout.print(":", .{});
-                        try writeLineSpec(stdout, ls);
-                    }
-                    try stdout.writeByte('\t');
-                    try format.writeFilePath(stdout, m.hunk);
-                    try stdout.writeByte('\n');
-                },
-            }
+            try format.printMatchedHunkLine(stdout, verb, porcelain_verb, m, use_color, opts.output);
         }
     }
 
@@ -1136,221 +1069,9 @@ pub fn cmdDiff(allocator: Allocator, stdout: *std.Io.Writer, opts: DiffOptions) 
     }
 }
 
-fn stashPop(allocator: Allocator, verbosity: Verbosity) !void {
-    try git.runGitStashPop(allocator);
-    if (verbosity != .quiet) {
-        std.debug.print("popped stash@{{0}}\n", .{});
-    }
-}
-
-const TrackedStashResult = struct {
-    /// Arena-owned patches (for reverse-apply to worktree during cleanup).
-    /// Multiple patches when typechanges are present.
-    index_patches: []const []const u8,
-    /// Allocator-owned stash tree SHA — caller must free.
-    stash_tree: []const u8,
-};
-
-/// Build the stash tree for tracked hunks using a temporary git index.
-/// Sorts `tracked_matched` in place. Returns index_patch (arena-owned) and
-/// stash_tree (allocator-owned — caller must free).
-fn buildTrackedStashTree(
-    arena: Allocator,
-    allocator: Allocator,
-    tracked_matched: []MatchedHunk,
-    head_tree: []const u8,
-    context: ?u32,
-) !TrackedStashResult {
-    // Sort and build INDEX_PATCHES (index-relative, for worktree reverse-apply)
-    std.mem.sort(MatchedHunk, tracked_matched, {}, patch_mod.matchedHunkPatchOrder);
-    const index_patches = try patch_mod.buildCombinedPatches(arena, tracked_matched);
-
-    // Collect unique file paths from tracked hunks for HEAD diff
-    const tracked_file_paths = try collectUniqueFilePaths(arena, tracked_matched);
-
-    // Run HEAD-relative diff + parse
-    const head_diff_output = try git.runGitDiffHead(allocator, context, tracked_file_paths);
-    defer allocator.free(head_diff_output);
-
-    var head_hunks: std.ArrayList(Hunk) = .empty;
-    if (head_diff_output.len > 0) {
-        try diff_mod.parseDiff(arena, head_diff_output, .unstaged, &head_hunks);
-    }
-
-    // Build pointers to selected index hunks for the matcher
-    const selected_ptrs = try arena.alloc(*const Hunk, tracked_matched.len);
-    for (tracked_matched, 0..) |m, i| {
-        selected_ptrs[i] = m.hunk;
-    }
-
-    // Match index hunks to HEAD hunks
-    const head_matched = try stash_mod.matchIndexToHead(arena, selected_ptrs, head_hunks.items);
-
-    if (head_matched.len == 0) {
-        std.debug.print("error: could not match selected hunks to HEAD-relative diff\n", .{});
-        std.process.exit(1);
-    }
-
-    // Sort and build HEAD_PATCH (for temp index apply)
-    const head_matched_sorted = try arena.alloc(MatchedHunk, head_matched.len);
-    @memcpy(head_matched_sorted, head_matched);
-    std.mem.sort(MatchedHunk, head_matched_sorted, {}, patch_mod.matchedHunkPatchOrder);
-    const head_patches = try patch_mod.buildCombinedPatches(arena, head_matched_sorted);
-
-    // Temp index pipeline
-    var random_bytes: [8]u8 = undefined;
-    std.crypto.random.bytes(&random_bytes);
-    const random_val = std.mem.readInt(u64, &random_bytes, .little);
-    var tmp_path_buf: [64]u8 = undefined;
-    const tmp_idx_path = std.fmt.bufPrint(&tmp_path_buf, "/tmp/git-hunk-idx.{x:0>16}", .{random_val}) catch unreachable;
-    const tmp_idx_z = try arena.dupeZ(u8, tmp_idx_path);
-
-    var env_map = try std.process.getEnvMap(allocator);
-    defer env_map.deinit();
-    try env_map.put("GIT_INDEX_FILE", tmp_idx_z);
-
-    defer std.posix.unlink(tmp_idx_z) catch {};
-
-    try git.runGitReadTreeWithEnv(allocator, head_tree, &env_map);
-    for (head_patches) |hp| {
-        try git.runGitApplyWithEnv(allocator, hp, &env_map);
-    }
-
-    const stash_tree = try git.runGitWriteTreeWithEnv(allocator, &env_map);
-    return .{ .index_patches = index_patches, .stash_tree = stash_tree };
-}
-
-/// Build a git commit containing only the untracked files.
-/// Returns an allocator-owned commit SHA — caller must free.
-fn buildUntrackedCommit(
-    arena: Allocator,
-    allocator: Allocator,
-    head_sha: []const u8,
-    branch_name: []const u8,
-    head_msg: []const u8,
-    untracked_matched: []const MatchedHunk,
-) ![]const u8 {
-    var ut_random: [8]u8 = undefined;
-    std.crypto.random.bytes(&ut_random);
-    const ut_random_val = std.mem.readInt(u64, &ut_random, .little);
-    var ut_path_buf: [80]u8 = undefined;
-    const ut_path = std.fmt.bufPrint(&ut_path_buf, "/tmp/git-hunk-ut-idx.{x:0>16}", .{ut_random_val}) catch unreachable;
-    const ut_path_z = try arena.dupeZ(u8, ut_path);
-
-    var ut_env = try std.process.getEnvMap(allocator);
-    defer ut_env.deinit();
-    try ut_env.put("GIT_INDEX_FILE", ut_path_z);
-
-    defer std.posix.unlink(ut_path_z) catch {};
-
-    // Hash each untracked file and add to temp index
-    for (untracked_matched) |m| {
-        var link_buf: [std.fs.max_path_bytes]u8 = undefined;
-        const symlink_target = std.fs.cwd().readLink(m.hunk.file_path, &link_buf) catch null;
-
-        const blob_sha = if (symlink_target) |target|
-            try git.runGitHashObjectStdin(allocator, target)
-        else
-            try git.runGitHashObject(allocator, m.hunk.file_path);
-        defer allocator.free(blob_sha);
-
-        const mode: []const u8 = if (symlink_target != null)
-            "120000"
-        else blk: {
-            const stat = std.fs.cwd().statFile(m.hunk.file_path) catch break :blk "100644";
-            break :blk if (stat.mode & std.posix.S.IXUSR != 0) "100755" else "100644";
-        };
-        try git.runGitUpdateIndexCacheinfo(allocator, mode, blob_sha, m.hunk.file_path, &ut_env);
-    }
-
-    const untracked_tree = try git.runGitWriteTreeWithEnv(allocator, &ut_env);
-    defer allocator.free(untracked_tree);
-
-    const ut_msg = try std.fmt.allocPrint(arena, "untracked files on {s}: {s}", .{ branch_name, head_msg });
-    return git.runGitCommitTree(allocator, untracked_tree, &.{head_sha}, ut_msg);
-}
-
-/// Reverse-apply tracked patch and delete untracked files from the worktree.
-/// Intentionally swallows errors to avoid aborting after a successful stash store.
-fn cleanupWorktree(
-    allocator: Allocator,
-    has_tracked: bool,
-    has_untracked: bool,
-    index_patches: []const []const u8,
-    untracked_matched: []const MatchedHunk,
-) void {
-    if (has_tracked) {
-        // Reverse order for typechange patches (undo create before undo delete)
-        var i: usize = index_patches.len;
-        while (i > 0) {
-            i -= 1;
-            git.runGitApply(allocator, index_patches[i], true, .worktree, false, null) catch {
-                std.debug.print("warning: stash created but worktree changes could not be removed\n", .{});
-                std.debug.print("hint: use 'git stash pop' to undo or manually resolve\n", .{});
-                break;
-            };
-        }
-    }
-    if (has_untracked) {
-        for (untracked_matched) |m| {
-            std.fs.cwd().deleteFile(m.hunk.file_path) catch {
-                std.debug.print("warning: could not delete untracked file '{s}'\n", .{m.hunk.file_path});
-            };
-        }
-    }
-}
-
-/// Print per-hunk stash results and summary to stdout/stderr.
-fn reportStashResults(stdout: *std.Io.Writer, opts: StashOptions, matched: []const MatchedHunk) !void {
-    const use_color = format.shouldUseColor(opts.output, opts.no_color);
-
-    var count: usize = 0;
-    for (matched) |m| {
-        count += 1;
-        if (opts.verbosity != .quiet) {
-            switch (opts.output) {
-                .human => {
-                    try stdout.print("stashed ", .{});
-                    if (use_color) try stdout.print("{s}", .{format.COLOR_YELLOW});
-                    try stdout.print("{s}", .{m.hunk.sha_hex[0..7]});
-                    if (m.line_spec) |ls| {
-                        try stdout.print(":", .{});
-                        try writeLineSpec(stdout, ls);
-                    }
-                    if (use_color) try stdout.print("{s}", .{format.COLOR_RESET});
-                    try stdout.writeAll("  ");
-                    try format.writeFilePath(stdout, m.hunk);
-                    try stdout.writeByte('\n');
-                },
-                .porcelain => {
-                    try stdout.print("stashed\t{s}", .{m.hunk.sha_hex[0..7]});
-                    if (m.line_spec) |ls| {
-                        try stdout.print(":", .{});
-                        try writeLineSpec(stdout, ls);
-                    }
-                    try stdout.writeByte('\t');
-                    try format.writeFilePath(stdout, m.hunk);
-                    try stdout.writeByte('\n');
-                },
-            }
-        }
-    }
-
-    // Summary on stderr (verbose + human mode only)
-    if (opts.verbosity == .verbose and opts.output == .human) {
-        if (count == 1) {
-            std.debug.print("1 hunk stashed\n", .{});
-        } else {
-            std.debug.print("{d} hunks stashed\n", .{count});
-        }
-        // Hint on stderr (only with --verbose)
-        std.debug.print("hint: use 'git stash list' to see stashed entries, 'git hunk stash pop' to restore\n", .{});
-    }
-}
-
 pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions) !void {
     if (opts.pop) {
-        try stashPop(allocator, opts.verbosity);
+        try stash_mod.stashPop(allocator, opts.verbosity);
         return;
     }
 
@@ -1378,29 +1099,10 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
         std.process.exit(1);
     }
 
-    // Resolve hunks: bulk mode (--all or bare --file) or SHA prefix matching
     var matched: std.ArrayList(MatchedHunk) = .empty;
     defer matched.deinit(arena);
-
-    if (opts.sha_args.items.len == 0) {
-        for (hunks.items) |*h| {
-            if (opts.file_filter) |filter| {
-                if (!std.mem.eql(u8, h.file_path, filter)) continue;
-            }
-            try matched.append(arena, .{ .hunk = h, .line_spec = null });
-        }
-    } else {
-        try resolveMatchedHunks(arena, hunks.items, opts.sha_args.items, opts.file_filter, &matched);
-    }
-
-    if (matched.items.len == 0) {
-        if (opts.file_filter) |filter| {
-            std.debug.print("no hunks matching file '{s}'\n", .{filter});
-        } else {
-            std.debug.print("no unstaged changes\n", .{});
-        }
-        std.process.exit(1);
-    }
+    try resolveHunksFromOpts(arena, hunks.items, opts.sha_args.items, opts.file_filter, &matched);
+    exitIfNoMatches(matched.items.len, opts.file_filter);
 
     // Split matched hunks into tracked-text, tracked-binary, and untracked
     var tracked_matched: std.ArrayList(MatchedHunk) = .empty;
@@ -1439,7 +1141,7 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
     var owns_stash_tree = false;
 
     if (has_tracked) {
-        const result = try buildTrackedStashTree(arena, allocator, tracked_matched.items, head_tree, opts.context);
+        const result = try stash_mod.buildTrackedStashTree(arena, allocator, tracked_matched.items, head_tree, opts.context);
         index_patches = result.index_patches;
         stash_tree = result.stash_tree;
         owns_stash_tree = true;
@@ -1447,30 +1149,11 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
 
     // --- Binary tracked hunks: add to stash tree via temp index ---
     if (has_binary_tracked) {
-        // Create a temp index from current stash_tree, add binary files, write new tree
-        var random_bytes: [8]u8 = undefined;
-        std.crypto.random.bytes(&random_bytes);
-        const random_val = std.mem.readInt(u64, &random_bytes, .little);
-        var tmp_path_buf: [64]u8 = undefined;
-        const tmp_idx_path = std.fmt.bufPrint(&tmp_path_buf, "/tmp/git-hunk-bin-idx.{x:0>16}", .{random_val}) catch unreachable;
-        const tmp_idx_z = try arena.dupeZ(u8, tmp_idx_path);
-
-        var env_map = try std.process.getEnvMap(allocator);
-        defer env_map.deinit();
-        try env_map.put("GIT_INDEX_FILE", tmp_idx_z);
-
-        defer std.posix.unlink(tmp_idx_z) catch {};
-
-        try git.runGitReadTreeWithEnv(allocator, stash_tree, &env_map);
-
-        // Add binary files to temp index
         const bin_paths = try arena.alloc([]const u8, binary_tracked_matched.items.len);
         for (binary_tracked_matched.items, 0..) |m, i| {
             bin_paths[i] = m.hunk.file_path;
         }
-        try git.runGitAddFilesWithEnv(allocator, bin_paths, &env_map);
-
-        const new_tree = try git.runGitWriteTreeWithEnv(allocator, &env_map);
+        const new_tree = try stash_mod.addBinaryFilesToTree(arena, allocator, stash_tree, bin_paths);
         if (owns_stash_tree) allocator.free(stash_tree);
         stash_tree = new_tree;
         owns_stash_tree = true;
@@ -1485,12 +1168,12 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
     // --- Untracked hunks pipeline (parent 3) ---
     var untracked_commit: ?[]const u8 = null;
     if (has_untracked) {
-        untracked_commit = try buildUntrackedCommit(arena, allocator, head_sha, branch_name, head_msg, untracked_matched.items);
+        untracked_commit = try stash_mod.buildUntrackedCommit(arena, allocator, head_sha, branch_name, head_msg, untracked_matched.items);
     }
     defer if (untracked_commit) |uc| allocator.free(uc);
 
     // Collect ALL file paths for stash message
-    const all_file_paths = try collectUniqueFilePaths(arena, matched.items);
+    const all_file_paths = try patch_mod.collectUniqueFilePaths(arena, matched.items);
 
     // Build stash message
     const stash_msg = if (opts.message) |m| m else blk: {
@@ -1522,9 +1205,9 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
             std.debug.print("warning: stash created but could not restore binary files from index\n", .{});
         };
     }
-    cleanupWorktree(allocator, has_tracked, has_untracked, index_patches, untracked_matched.items);
+    stash_mod.cleanupWorktree(allocator, has_tracked, has_untracked, index_patches, untracked_matched.items);
 
-    try reportStashResults(stdout, opts, matched.items);
+    try stash_mod.reportStashResults(stdout, opts, matched.items);
 }
 
 pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptions) !void {
@@ -1566,25 +1249,8 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
     var matched: std.ArrayList(MatchedHunk) = .empty;
     defer matched.deinit(arena);
 
-    if (opts.sha_args.items.len == 0) {
-        for (hunks.items) |*h| {
-            if (opts.file_filter) |filter| {
-                if (!std.mem.eql(u8, h.file_path, filter)) continue;
-            }
-            try matched.append(arena, .{ .hunk = h, .line_spec = null });
-        }
-    } else {
-        try resolveMatchedHunks(arena, hunks.items, opts.sha_args.items, opts.file_filter, &matched);
-    }
-
-    if (matched.items.len == 0) {
-        if (opts.file_filter) |filter| {
-            std.debug.print("no hunks matching file '{s}'\n", .{filter});
-        } else {
-            std.debug.print("no unstaged changes\n", .{});
-        }
-        std.process.exit(1);
-    }
+    try resolveHunksFromOpts(arena, hunks.items, opts.sha_args.items, opts.file_filter, &matched);
+    exitIfNoMatches(matched.items.len, opts.file_filter);
 
     // Partition into text and binary hunks
     var text_matched: std.ArrayList(MatchedHunk) = .empty;
@@ -1626,31 +1292,7 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
         const use_color = format.shouldUseColor(opts.output, opts.no_color);
         for (matched.items) |m| {
             if (opts.verbosity != .quiet) {
-                switch (opts.output) {
-                    .human => {
-                        try stdout.print("would commit ", .{});
-                        if (use_color) try stdout.print("{s}", .{format.COLOR_YELLOW});
-                        try stdout.print("{s}", .{m.hunk.sha_hex[0..7]});
-                        if (m.line_spec) |ls| {
-                            try stdout.print(":", .{});
-                            try writeLineSpec(stdout, ls);
-                        }
-                        if (use_color) try stdout.print("{s}", .{format.COLOR_RESET});
-                        try stdout.writeAll("  ");
-                        try format.writeFilePath(stdout, m.hunk);
-                        try stdout.writeByte('\n');
-                    },
-                    .porcelain => {
-                        try stdout.print("would-commit\t{s}", .{m.hunk.sha_hex[0..7]});
-                        if (m.line_spec) |ls| {
-                            try stdout.print(":", .{});
-                            try writeLineSpec(stdout, ls);
-                        }
-                        try stdout.writeByte('\t');
-                        try format.writeFilePath(stdout, m.hunk);
-                        try stdout.writeByte('\n');
-                    },
-                }
+                try format.printMatchedHunkLine(stdout, "would commit", "would-commit", m, use_color, opts.output);
             }
         }
         return;
@@ -1664,36 +1306,28 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
         std.process.exit(1);
     };
 
+    const abortCommit = struct {
+        fn abort(c: std.fs.Dir, bp: []const u8, ip: []const u8) noreturn {
+            c.copyFile(bp, c, ip, .{}) catch {};
+            c.deleteFile(bp) catch {};
+            std.process.exit(1);
+        }
+    }.abort;
+
     // 2. Reset index to HEAD (or HEAD~1 for amend)
     const read_tree_ref: []const u8 = if (opts.amend) "HEAD~1" else "HEAD";
-    git.runGitReadTree(allocator, read_tree_ref) catch {
-        cwd.copyFile(backup_path, cwd, index_path, .{}) catch {};
-        cwd.deleteFile(backup_path) catch {};
-        std.process.exit(1);
-    };
+    git.runGitReadTree(allocator, read_tree_ref) catch abortCommit(cwd, backup_path, index_path);
 
     // 3. Stage target hunks (text via patch, binary via git add)
     for (patches) |p| {
-        git.runGitApply(allocator, p, false, .index, false, opts.ref) catch {
-            cwd.copyFile(backup_path, cwd, index_path, .{}) catch {};
-            cwd.deleteFile(backup_path) catch {};
-            std.process.exit(1);
-        };
+        git.runGitApply(allocator, p, false, .index, false, opts.ref) catch abortCommit(cwd, backup_path, index_path);
     }
     if (binary_paths.items.len > 0) {
-        git.runGitAddFiles(allocator, binary_paths.items) catch {
-            cwd.copyFile(backup_path, cwd, index_path, .{}) catch {};
-            cwd.deleteFile(backup_path) catch {};
-            std.process.exit(1);
-        };
+        git.runGitAddFiles(allocator, binary_paths.items) catch abortCommit(cwd, backup_path, index_path);
     }
 
     // 4. Commit
-    const commit_output = git.runGitCommit(allocator, .{ .message = message, .amend = opts.amend }) catch {
-        cwd.copyFile(backup_path, cwd, index_path, .{}) catch {};
-        cwd.deleteFile(backup_path) catch {};
-        std.process.exit(1);
-    };
+    const commit_output = git.runGitCommit(allocator, .{ .message = message, .amend = opts.amend }) catch abortCommit(cwd, backup_path, index_path);
     defer allocator.free(commit_output);
 
     // 5. Restore original index
@@ -1717,37 +1351,13 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
     // 7. Cleanup
     cwd.deleteFile(backup_path) catch {};
 
-    // Output: print committed hunks (same format as cmdRestore)
+    // Output: print committed hunks
     const use_color = format.shouldUseColor(opts.output, opts.no_color);
     var count: usize = 0;
     for (matched.items) |m| {
         count += 1;
         if (opts.verbosity != .quiet) {
-            switch (opts.output) {
-                .human => {
-                    try stdout.print("committed ", .{});
-                    if (use_color) try stdout.print("{s}", .{format.COLOR_YELLOW});
-                    try stdout.print("{s}", .{m.hunk.sha_hex[0..7]});
-                    if (m.line_spec) |ls| {
-                        try stdout.print(":", .{});
-                        try writeLineSpec(stdout, ls);
-                    }
-                    if (use_color) try stdout.print("{s}", .{format.COLOR_RESET});
-                    try stdout.writeAll("  ");
-                    try format.writeFilePath(stdout, m.hunk);
-                    try stdout.writeByte('\n');
-                },
-                .porcelain => {
-                    try stdout.print("committed\t{s}", .{m.hunk.sha_hex[0..7]});
-                    if (m.line_spec) |ls| {
-                        try stdout.print(":", .{});
-                        try writeLineSpec(stdout, ls);
-                    }
-                    try stdout.writeByte('\t');
-                    try format.writeFilePath(stdout, m.hunk);
-                    try stdout.writeByte('\n');
-                },
-            }
+            try format.printMatchedHunkLine(stdout, "committed", "committed", m, use_color, opts.output);
         }
     }
 
@@ -1977,4 +1587,34 @@ test "buildResultGroups line-spec multi-output merges into one group" {
     try std.testing.expectEqualStrings("yyyyyyy", groups[0].result_shas[0]);
     try std.testing.expectEqualStrings("zzzzzzz", groups[0].result_shas[1]);
     try std.testing.expect(groups[0].applied[0].line_spec != null);
+}
+
+test "buildResultGroups orphan with no sibling becomes standalone" {
+    const allocator = std.testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // No applied hunks — simulates a scenario where a result exists with no matching applied input
+    const matched = [_]MatchedHunk{};
+    const old_target = [_]Hunk{};
+
+    // One result hunk with no applied hunk to match
+    var orphan_result = types.testMakeHunk("orphan.zig", 1, 1, 1, 2);
+    orphan_result.diff_lines = "+orphaned";
+    orphan_result.sha_hex = comptime blk: {
+        var h: [40]u8 = undefined;
+        @memcpy(h[0..7], "ooooooo");
+        @memset(h[7..], '0');
+        break :blk h;
+    };
+    const new_target = [_]Hunk{orphan_result};
+
+    const groups = try buildResultGroups(arena, &matched, &old_target, &new_target);
+
+    // Orphan with no sibling file becomes a standalone group
+    try std.testing.expectEqual(@as(usize, 1), groups.len);
+    try std.testing.expectEqual(@as(usize, 0), groups[0].applied.len);
+    try std.testing.expectEqual(@as(usize, 1), groups[0].result_shas.len);
+    try std.testing.expectEqualStrings("ooooooo", groups[0].result_shas[0]);
 }

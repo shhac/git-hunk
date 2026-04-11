@@ -39,6 +39,22 @@ pub fn hunkPatchOrder(_: void, a: *const Hunk, b: *const Hunk) bool {
     return a.old_start < b.old_start;
 }
 
+/// Collect unique file paths from matched hunks (preserving first-seen order).
+pub fn collectUniqueFilePaths(arena: Allocator, matches: []const MatchedHunk) ![]const []const u8 {
+    var list: std.ArrayList([]const u8) = .empty;
+    for (matches) |m| {
+        var already_present = false;
+        for (list.items) |fp| {
+            if (std.mem.eql(u8, fp, m.hunk.file_path)) {
+                already_present = true;
+                break;
+            }
+        }
+        if (!already_present) try list.append(arena, m.hunk.file_path);
+    }
+    return list.items;
+}
+
 /// Build one or more patches from matched hunks. Returns multiple patches when
 /// typechanges are present (same file with delete + create requires separate
 /// git-apply calls because git cannot apply both in a single patch).
@@ -423,6 +439,21 @@ test "buildFilteredHunkPatch multiple changes partial select" {
         "@@ -1,4 +1,4 @@\n ctx1\n-rem1\n+add1\n ctx2\n rem2\n",
         result,
     );
+}
+
+test "buildFilteredHunkPatch no-newline marker with partial select" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var h = testMakeHunk("f.txt", 1, 2, 1, 2);
+    // Hunk has two changes, second has no trailing newline
+    h.raw_lines = "@@ -1,2 +1,2 @@\n-old1\n+new1\n-old2\n+new2\n\\ No newline at end of file\n";
+    // Select only lines 1-2 (first pair), deselect lines 3-4 (second pair)
+    const ranges = [_]LineRange{.{ .start = 1, .end = 2 }};
+    const result = try buildFilteredHunkPatch(arena.allocator(), &h, .{ .ranges = &ranges });
+    // old2 becomes context, new2 is dropped, "\ No newline" follows the dropped + so it's dropped too
+    try std.testing.expect(std.mem.indexOf(u8, result, "\\ No newline") == null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "-old1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "+new1") != null);
 }
 
 test "buildCombinedPatches typechange splits into two patches" {
