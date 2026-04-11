@@ -6,7 +6,7 @@ source "$(dirname "$0")/harness.sh" "$1"
 # ============================================================================
 
 # ============================================================================
-# Test 800: binary file changes are gracefully skipped (no crash, 0 hunks)
+# Test 800: binary file changes produce a single hunk marked as binary
 # ============================================================================
 new_repo
 printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00' > image.png
@@ -14,12 +14,125 @@ git add image.png && git commit -q -m "add binary"
 printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\xff' > image.png
 
 COUNT800="$("$GIT_HUNK" count --file image.png 2>/dev/null)"
-[[ "$COUNT800" == "0" ]] \
-    || fail "test 800: expected 0 hunks for binary file, got '$COUNT800'"
+[[ "$COUNT800" == "1" ]] \
+    || fail "test 800: expected 1 hunk for binary file, got '$COUNT800'"
 LIST800="$("$GIT_HUNK" list --porcelain --oneline --file image.png 2>/dev/null)"
-[[ -z "$LIST800" ]] \
-    || fail "test 800: expected empty list for binary file, got '$LIST800'"
-pass "test 800: binary file changes skipped gracefully"
+echo "$LIST800" | grep -q "binary" \
+    || fail "test 800: expected binary marker in list, got '$LIST800'"
+SHA800="$(echo "$LIST800" | cut -f1)"
+[[ ${#SHA800} -eq 7 ]] \
+    || fail "test 800: SHA not 7 chars: '$SHA800'"
+pass "test 800: binary file listed with binary marker"
+
+# ============================================================================
+# Test 801: binary hunk can be staged with add
+# ============================================================================
+SHA801="$SHA800"
+"$GIT_HUNK" add "$SHA801" > /dev/null
+STAGED801="$(git diff --cached --stat image.png | wc -l | tr -d ' ')"
+[[ "$STAGED801" -gt 0 ]] \
+    || fail "test 801: binary file was not staged"
+pass "test 801: binary hunk staged with add"
+
+# ============================================================================
+# Test 802: binary hunk can be unstaged with reset
+# ============================================================================
+STAGED_SHA802="$("$GIT_HUNK" list --staged --porcelain --oneline --file image.png 2>/dev/null | head -1 | cut -f1)"
+[[ -n "$STAGED_SHA802" ]] || fail "test 802: no staged binary hunk found"
+"$GIT_HUNK" reset "$STAGED_SHA802" > /dev/null
+REMAINING802="$(git diff --cached --stat image.png | wc -l | tr -d ' ')"
+[[ "$REMAINING802" -eq 0 ]] \
+    || fail "test 802: binary hunk was not unstaged"
+pass "test 802: binary hunk unstaged with reset"
+
+# ============================================================================
+# Test 803: binary hunk restore reverts worktree change
+# ============================================================================
+new_repo
+printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00' > image.png
+git add image.png && git commit -q -m "add binary"
+printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\xff' > image.png
+BEFORE803="$(md5sum image.png 2>/dev/null || md5 -q image.png)"
+SHA803="$("$GIT_HUNK" list --porcelain --oneline --file image.png 2>/dev/null | head -1 | cut -f1)"
+"$GIT_HUNK" restore "$SHA803" > /dev/null
+AFTER803="$(md5sum image.png 2>/dev/null || md5 -q image.png)"
+[[ "$BEFORE803" != "$AFTER803" ]] \
+    || fail "test 803: binary file was not restored (checksum unchanged)"
+COUNT803="$("$GIT_HUNK" count --file image.png 2>/dev/null)"
+[[ "$COUNT803" == "0" ]] \
+    || fail "test 803: expected 0 hunks after restore, got '$COUNT803'"
+pass "test 803: binary hunk restore reverts worktree"
+
+# ============================================================================
+# Test 804: binary hunk can be committed
+# ============================================================================
+new_repo
+printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00' > image.png
+git add image.png && git commit -q -m "add binary"
+printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\xff' > image.png
+SHA804="$("$GIT_HUNK" list --porcelain --oneline --file image.png 2>/dev/null | head -1 | cut -f1)"
+"$GIT_HUNK" commit "$SHA804" -m "update binary" > /dev/null 2>/dev/null
+LAST_MSG804="$(git log -1 --format=%s)"
+[[ "$LAST_MSG804" == "update binary" ]] \
+    || fail "test 804: expected commit message 'update binary', got '$LAST_MSG804'"
+pass "test 804: binary hunk committed"
+
+# ============================================================================
+# Test 805: binary + text changes together
+# ============================================================================
+new_repo
+printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00' > image.png
+git add image.png && git commit -q -m "add binary"
+printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\xff' > image.png
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
+COUNT805="$("$GIT_HUNK" count 2>/dev/null)"
+[[ "$COUNT805" -ge 2 ]] \
+    || fail "test 805: expected at least 2 hunks (text+binary), got '$COUNT805'"
+"$GIT_HUNK" add --all > /dev/null
+UNSTAGED805="$("$GIT_HUNK" count 2>/dev/null)"
+[[ "$UNSTAGED805" == "0" ]] \
+    || fail "test 805: expected 0 unstaged hunks after --all, got '$UNSTAGED805'"
+pass "test 805: binary + text changes staged together with --all"
+
+# ============================================================================
+# Test 806: line-spec syntax rejected for binary hunks
+# ============================================================================
+new_repo
+printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00' > image.png
+git add image.png && git commit -q -m "add binary"
+printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\xff' > image.png
+SHA806="$("$GIT_HUNK" list --porcelain --oneline --file image.png 2>/dev/null | head -1 | cut -f1)"
+EXIT806=0
+"$GIT_HUNK" add "${SHA806}:1-5" > /dev/null 2>/dev/null || EXIT806=$?
+[[ "$EXIT806" -ne 0 ]] \
+    || fail "test 806: line-spec on binary hunk should fail"
+pass "test 806: line-spec rejected for binary hunks"
+
+# ============================================================================
+# Test 807: binary diff command shows Binary file changed
+# ============================================================================
+new_repo
+printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00' > image.png
+git add image.png && git commit -q -m "add binary"
+printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\xff' > image.png
+SHA807="$("$GIT_HUNK" list --porcelain --oneline --file image.png 2>/dev/null | head -1 | cut -f1)"
+DIFF807="$("$GIT_HUNK" diff "$SHA807" --no-color 2>/dev/null)"
+echo "$DIFF807" | grep -q "Binary file changed" \
+    || fail "test 807: expected 'Binary file changed' in diff output, got: '$DIFF807'"
+pass "test 807: binary diff shows Binary file changed"
+
+# ============================================================================
+# Test 808: new untracked binary file appears in list
+# ============================================================================
+new_repo
+printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00' > newimage.png
+COUNT808="$("$GIT_HUNK" count --file newimage.png 2>/dev/null)"
+[[ "$COUNT808" == "1" ]] \
+    || fail "test 808: expected 1 hunk for untracked binary, got '$COUNT808'"
+LIST808="$("$GIT_HUNK" list --porcelain --oneline --file newimage.png 2>/dev/null)"
+echo "$LIST808" | grep -q "binary" \
+    || fail "test 808: expected binary marker for untracked binary, got '$LIST808'"
+pass "test 808: untracked binary file listed"
 
 # ============================================================================
 # T15 — Unicode filenames

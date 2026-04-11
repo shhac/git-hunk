@@ -18,6 +18,7 @@ pub const Hunk = struct {
     is_deleted_file: bool,
     is_untracked: bool,
     is_symlink: bool,
+    is_binary: bool,
     /// Patch header for applying: ---/+++ lines (and diff --git + mode for new/deleted).
     patch_header: []const u8,
 };
@@ -186,6 +187,7 @@ pub fn testMakeHunk(file_path: []const u8, old_start: u32, old_count: u32, new_s
         .is_deleted_file = false,
         .is_untracked = false,
         .is_symlink = false,
+        .is_binary = false,
         .patch_header = "",
     };
 }

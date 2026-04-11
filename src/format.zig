@@ -100,6 +100,10 @@ pub fn printHunkPorcelain(stdout: *std.Io.Writer, h: Hunk, mode: DiffMode) !void
 }
 
 pub fn printDiffHuman(stdout: *std.Io.Writer, h: Hunk, use_color: bool) !void {
+    if (h.is_binary) {
+        try stdout.writeAll("    Binary file changed\n\n");
+        return;
+    }
     if (h.raw_lines.len == 0) {
         try stdout.writeAll("\n");
         return;
@@ -237,6 +241,10 @@ fn formatNumPadded(buf: []u8, num: u32, width: usize) []const u8 {
 }
 
 pub fn printDiffPorcelain(stdout: *std.Io.Writer, h: Hunk) !void {
+    if (h.is_binary) {
+        try stdout.writeAll("Binary file changed\n\n");
+        return;
+    }
     if (h.raw_lines.len == 0) {
         try stdout.writeAll("\n");
         return;
@@ -263,6 +271,9 @@ fn stableEndLine(h: Hunk, mode: DiffMode) u32 {
 }
 
 fn hunkSummaryWithFallback(buf: []u8, h: Hunk) []const u8 {
+    if (h.is_binary and h.is_new_file) return "new binary file";
+    if (h.is_binary and h.is_deleted_file) return "binary deleted";
+    if (h.is_binary) return "binary";
     if (h.is_new_file) return "new file";
     if (h.is_deleted_file) return "deleted";
     // Prefer first changed line — answers "what changed?" for quick scanning
@@ -293,6 +304,7 @@ fn firstChangedLine(buf: []u8, diff_lines: []const u8) []const u8 {
 }
 
 fn formatLineRange(buf: []u8, h: Hunk, mode: DiffMode) []const u8 {
+    if (h.is_binary) return "(binary)";
     const start = stableStartLine(h, mode);
     const end = stableEndLine(h, mode);
     if (start == 0 and end == 0) return "empty";

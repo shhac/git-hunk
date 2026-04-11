@@ -172,6 +172,145 @@ pub fn runGitApply(allocator: Allocator, patch: []const u8, reverse: bool, targe
     }
 }
 
+/// Stage files by path: `git add -- path1 path2 ...`
+pub fn runGitAddFiles(allocator: Allocator, file_paths: []const []const u8) !void {
+    const argv_buf = try allocator.alloc([]const u8, 3 + file_paths.len);
+    defer allocator.free(argv_buf);
+    argv_buf[0] = "git";
+    argv_buf[1] = "add";
+    argv_buf[2] = "--";
+    for (file_paths, 0..) |fp, i| {
+        argv_buf[3 + i] = fp;
+    }
+
+    var child = std.process.Child.init(argv_buf, allocator);
+    child.stdout_behavior = .Pipe;
+    child.stderr_behavior = .Pipe;
+    try child.spawn();
+
+    var child_stderr: std.ArrayList(u8) = .empty;
+    defer child_stderr.deinit(allocator);
+    var child_stdout: std.ArrayList(u8) = .empty;
+    defer child_stdout.deinit(allocator);
+    try child.collectOutput(allocator, &child_stdout, &child_stderr, 1 * 1024 * 1024);
+    const term = try child.wait();
+
+    switch (term) {
+        .Exited => |code| {
+            if (code != 0) {
+                if (child_stderr.items.len > 0) std.debug.print("{s}", .{child_stderr.items});
+                fatal("git add exited with code {d}", .{code});
+            }
+        },
+        else => fatal("git add terminated abnormally", .{}),
+    }
+}
+
+/// Unstage files: `git reset HEAD -- path1 path2 ...`
+pub fn runGitResetFiles(allocator: Allocator, file_paths: []const []const u8) !void {
+    const argv_buf = try allocator.alloc([]const u8, 4 + file_paths.len);
+    defer allocator.free(argv_buf);
+    argv_buf[0] = "git";
+    argv_buf[1] = "reset";
+    argv_buf[2] = "HEAD";
+    argv_buf[3] = "--";
+    for (file_paths, 0..) |fp, i| {
+        argv_buf[4 + i] = fp;
+    }
+
+    var child = std.process.Child.init(argv_buf, allocator);
+    child.stdout_behavior = .Pipe;
+    child.stderr_behavior = .Pipe;
+    try child.spawn();
+
+    var child_stderr: std.ArrayList(u8) = .empty;
+    defer child_stderr.deinit(allocator);
+    var child_stdout: std.ArrayList(u8) = .empty;
+    defer child_stdout.deinit(allocator);
+    try child.collectOutput(allocator, &child_stdout, &child_stderr, 1 * 1024 * 1024);
+    const term = try child.wait();
+
+    switch (term) {
+        .Exited => |code| {
+            if (code != 0) {
+                if (child_stderr.items.len > 0) std.debug.print("{s}", .{child_stderr.items});
+                fatal("git reset exited with code {d}", .{code});
+            }
+        },
+        else => fatal("git reset terminated abnormally", .{}),
+    }
+}
+
+/// Restore files from index: `git checkout -- path1 path2 ...`
+pub fn runGitCheckoutFiles(allocator: Allocator, file_paths: []const []const u8) !void {
+    const argv_buf = try allocator.alloc([]const u8, 3 + file_paths.len);
+    defer allocator.free(argv_buf);
+    argv_buf[0] = "git";
+    argv_buf[1] = "checkout";
+    argv_buf[2] = "--";
+    for (file_paths, 0..) |fp, i| {
+        argv_buf[3 + i] = fp;
+    }
+
+    var child = std.process.Child.init(argv_buf, allocator);
+    child.stdout_behavior = .Pipe;
+    child.stderr_behavior = .Pipe;
+    try child.spawn();
+
+    var child_stderr: std.ArrayList(u8) = .empty;
+    defer child_stderr.deinit(allocator);
+    var child_stdout: std.ArrayList(u8) = .empty;
+    defer child_stdout.deinit(allocator);
+    try child.collectOutput(allocator, &child_stdout, &child_stderr, 1 * 1024 * 1024);
+    const term = try child.wait();
+
+    switch (term) {
+        .Exited => |code| {
+            if (code != 0) {
+                if (child_stderr.items.len > 0) std.debug.print("{s}", .{child_stderr.items});
+                fatal("git checkout exited with code {d}", .{code});
+            }
+        },
+        else => fatal("git checkout terminated abnormally", .{}),
+    }
+}
+
+/// Stage files by path with a custom environment (for temp index):
+/// `GIT_INDEX_FILE=... git add -- path1 path2 ...`
+pub fn runGitAddFilesWithEnv(allocator: Allocator, file_paths: []const []const u8, env_map: *const EnvMap) !void {
+    const argv_buf = try allocator.alloc([]const u8, 3 + file_paths.len);
+    defer allocator.free(argv_buf);
+    argv_buf[0] = "git";
+    argv_buf[1] = "add";
+    argv_buf[2] = "--";
+    for (file_paths, 0..) |fp, i| {
+        argv_buf[3 + i] = fp;
+    }
+
+    var child = std.process.Child.init(argv_buf, allocator);
+    child.env_map = env_map;
+    child.stdout_behavior = .Pipe;
+    child.stderr_behavior = .Pipe;
+    try child.spawn();
+
+    var child_stderr: std.ArrayList(u8) = .empty;
+    defer child_stderr.deinit(allocator);
+    var child_stdout: std.ArrayList(u8) = .empty;
+    defer child_stdout.deinit(allocator);
+    try child.collectOutput(allocator, &child_stdout, &child_stderr, 1 * 1024 * 1024);
+    const term = try child.wait();
+
+    switch (term) {
+        .Exited => |code| {
+            if (code != 0) {
+                if (child_stderr.items.len > 0) std.debug.print("{s}", .{child_stderr.items});
+                fatal("git add (with env) exited with code {d}", .{code});
+            }
+        },
+        else => fatal("git add (with env) terminated abnormally", .{}),
+    }
+}
+
 /// Generate diff output for untracked files using `git diff --no-index`.
 /// The output matches the standard `git diff` format expected by parseDiff.
 /// Only files matching `file_filter` are included (null = all untracked files).
