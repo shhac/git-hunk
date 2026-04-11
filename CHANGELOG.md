@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.12.0] - 2026-04-11
+
+### Added
+- Binary files (images, databases, compiled assets, etc.) are now visible in all commands — they appear as single whole-file hunks with a `(binary)` marker and can be staged, unstaged, restored, committed, and stashed by hash like any other hunk
+- Line-spec syntax (e.g., `hash:3-5`) is rejected for binary hunks with a clear error message, since binary files have no line-level granularity
+
+### Changed
+- Internal refactoring: extracted shared helpers, moved stash orchestration to `stash.zig`, deduplicated git subprocess boilerplate (-473 lines net)
+
 ## [0.11.1] - 2026-04-09
 
 ### Fixed
