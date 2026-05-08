@@ -103,6 +103,24 @@ pub fn printHunkPorcelain(stdout: *std.Io.Writer, h: Hunk, mode: DiffMode) !void
     });
 }
 
+/// Print raw hunk lines (`@@`-header + body) with optional color for +/- lines
+/// and an optional indent prefix on every line. The shared core of the
+/// printDiffHuman + printRawLinesHuman pair.
+fn printRawLines(stdout: *std.Io.Writer, raw_lines: []const u8, indent: []const u8, use_color: bool) !void {
+    var iter = std.mem.splitScalar(u8, raw_lines, '\n');
+    while (iter.next()) |line| {
+        const color: []const u8 = if (use_color and line.len > 0)
+            (if (line[0] == '+') COLOR_GREEN else if (line[0] == '-') COLOR_RED else "")
+        else
+            "";
+        if (color.len > 0) {
+            try stdout.print("{s}{s}{s}{s}\n", .{ indent, color, line, COLOR_RESET });
+        } else {
+            try stdout.print("{s}{s}\n", .{ indent, line });
+        }
+    }
+}
+
 pub fn printDiffHuman(stdout: *std.Io.Writer, h: Hunk, use_color: bool) !void {
     if (h.is_binary) {
         try stdout.writeAll("    Binary file changed\n\n");
@@ -112,17 +130,7 @@ pub fn printDiffHuman(stdout: *std.Io.Writer, h: Hunk, use_color: bool) !void {
         try stdout.writeAll("\n");
         return;
     }
-    var iter = std.mem.splitScalar(u8, h.raw_lines, '\n');
-    while (iter.next()) |line| {
-        if (use_color and line.len > 0) {
-            const color: []const u8 = if (line[0] == '+') COLOR_GREEN else if (line[0] == '-') COLOR_RED else "";
-            if (color.len > 0) {
-                try stdout.print("    {s}{s}{s}\n", .{ color, line, COLOR_RESET });
-                continue;
-            }
-        }
-        try stdout.print("    {s}\n", .{line});
-    }
+    try printRawLines(stdout, h.raw_lines, "    ", use_color);
     try stdout.writeAll("\n");
 }
 
@@ -130,17 +138,7 @@ pub fn printDiffHuman(stdout: *std.Io.Writer, h: Hunk, use_color: bool) !void {
 /// Used by cmdDiff human mode.
 pub fn printRawLinesHuman(stdout: *std.Io.Writer, raw_lines: []const u8, use_color: bool) !void {
     if (raw_lines.len == 0) return;
-    var iter = std.mem.splitScalar(u8, raw_lines, '\n');
-    while (iter.next()) |line| {
-        if (use_color and line.len > 0) {
-            const color: []const u8 = if (line[0] == '+') COLOR_GREEN else if (line[0] == '-') COLOR_RED else "";
-            if (color.len > 0) {
-                try stdout.print("{s}{s}{s}\n", .{ color, line, COLOR_RESET });
-                continue;
-            }
-        }
-        try stdout.print("{s}\n", .{line});
-    }
+    try printRawLines(stdout, raw_lines, "", use_color);
 }
 
 /// Print raw hunk lines with line numbers and selection markers.
@@ -272,6 +270,40 @@ pub fn writeLineSpec(stdout: *std.Io.Writer, ls: LineSpec) !void {
         } else {
             try stdout.print("{d}-{d}", .{ r.start, r.end });
         }
+    }
+}
+
+/// Iterate `matched`, printing one line per hunk via `printMatchedHunkLine`
+/// when verbosity is not quiet. Returns the count of hunks iterated. Used by
+/// cmdRestore, cmdStash, and cmdCommit (post-commit and dry-run output).
+pub fn printMatchedHunks(
+    stdout: *std.Io.Writer,
+    matched: []const MatchedHunk,
+    verb: []const u8,
+    porcelain_verb: []const u8,
+    use_color: bool,
+    output: OutputMode,
+    verbosity: types.Verbosity,
+) !usize {
+    var count: usize = 0;
+    for (matched) |m| {
+        count += 1;
+        if (verbosity != .quiet) {
+            try printMatchedHunkLine(stdout, verb, porcelain_verb, m, use_color, output);
+        }
+    }
+    return count;
+}
+
+/// Print a verbose-mode summary line of the form "1 hunk {verb}" or
+/// "{N} hunks {verb}". No-op for quiet/porcelain modes. Used by every
+/// hunk-applying command.
+pub fn printHunkCountSummary(verbosity: types.Verbosity, output: OutputMode, count: usize, verb: []const u8) void {
+    if (verbosity != .verbose or output != .human) return;
+    if (count == 1) {
+        std.debug.print("1 hunk {s}\n", .{verb});
+    } else {
+        std.debug.print("{d} hunks {s}\n", .{ count, verb });
     }
 }
 

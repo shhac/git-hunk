@@ -410,6 +410,54 @@ fn findCreated(arena: Allocator, old_target: []const Hunk, new_target: []const H
 /// For each created hunk, attribute contributing applied inputs (by content or
 /// new-side line overlap) and consumed hunks (by old-side line overlap). Marks
 /// `applied_used` / `consumed_used` flags as it goes.
+/// Find applied inputs that contributed to `created`. Match by content
+/// (line_spec=null + identical diff_lines) first, otherwise by new-side line
+/// overlap. Marks `applied_used[i]=true` for each match so a single applied
+/// hunk maps to at most one created hunk.
+fn collectAppliedFor(
+    arena: Allocator,
+    matched: []const MatchedHunk,
+    applied_used: []bool,
+    created: *const Hunk,
+) ![]AppliedInput {
+    var app_buf: std.ArrayList(AppliedInput) = .empty;
+    for (matched, 0..) |m, i| {
+        if (applied_used[i]) continue;
+        if (!std.mem.eql(u8, m.hunk.file_path, created.file_path)) continue;
+        const content_match = m.line_spec == null and
+            std.mem.eql(u8, m.hunk.diff_lines, created.diff_lines);
+        const line_match = !content_match and rangesOverlap(
+            m.hunk.new_start, m.hunk.new_count,
+            created.new_start, created.new_count,
+        );
+        if (content_match or line_match) {
+            try app_buf.append(arena, .{ .sha7 = m.hunk.sha_hex[0..7], .line_spec = m.line_spec });
+            applied_used[i] = true;
+        }
+    }
+    return app_buf.items;
+}
+
+/// Find consumed hunks whose old-side range overlaps `created`'s old-side
+/// range and same file. Marks `consumed_used[i]=true` per match.
+fn collectConsumedFor(
+    arena: Allocator,
+    consumed: []const *const Hunk,
+    consumed_used: []bool,
+    created: *const Hunk,
+) ![][]const u8 {
+    var con_buf: std.ArrayList([]const u8) = .empty;
+    for (consumed, 0..) |con, i| {
+        if (consumed_used[i]) continue;
+        if (!std.mem.eql(u8, con.file_path, created.file_path)) continue;
+        if (rangesOverlap(con.old_start, con.old_count, created.old_start, created.old_count)) {
+            try con_buf.append(arena, con.sha_hex[0..7]);
+            consumed_used[i] = true;
+        }
+    }
+    return con_buf.items;
+}
+
 fn assignAppliedAndConsumed(
     arena: Allocator,
     matched: []const MatchedHunk,
@@ -419,48 +467,15 @@ fn assignAppliedAndConsumed(
     consumed_used: []bool,
 ) ![]ResultGroup {
     var groups: std.ArrayList(ResultGroup) = .empty;
-
     for (created) |c| {
-        var app_buf: std.ArrayList(AppliedInput) = .empty;
-        var con_buf: std.ArrayList([]const u8) = .empty;
-
-        for (matched, 0..) |m, i| {
-            if (applied_used[i]) continue;
-            if (!std.mem.eql(u8, m.hunk.file_path, c.file_path)) continue;
-
-            const content_match = m.line_spec == null and
-                std.mem.eql(u8, m.hunk.diff_lines, c.diff_lines);
-            const line_match = !content_match and rangesOverlap(
-                m.hunk.new_start, m.hunk.new_count,
-                c.new_start, c.new_count,
-            );
-
-            if (content_match or line_match) {
-                try app_buf.append(arena, .{
-                    .sha7 = m.hunk.sha_hex[0..7],
-                    .line_spec = m.line_spec,
-                });
-                applied_used[i] = true;
-            }
-        }
-
-        for (consumed, 0..) |con, i| {
-            if (consumed_used[i]) continue;
-            if (!std.mem.eql(u8, con.file_path, c.file_path)) continue;
-
-            if (rangesOverlap(con.old_start, con.old_count, c.old_start, c.old_count)) {
-                try con_buf.append(arena, con.sha_hex[0..7]);
-                consumed_used[i] = true;
-            }
-        }
-
+        const applied = try collectAppliedFor(arena, matched, applied_used, c);
+        const con_paths = try collectConsumedFor(arena, consumed, consumed_used, c);
         const result_sha = try arena.alloc([]const u8, 1);
         result_sha[0] = c.sha_hex[0..7];
-
         try groups.append(arena, .{
             .result_shas = result_sha,
-            .applied = try app_buf.toOwnedSlice(arena),
-            .consumed = try con_buf.toOwnedSlice(arena),
+            .applied = applied,
+            .consumed = con_paths,
             .file_path = c.file_path,
             .is_symlink = c.is_symlink,
         });
@@ -717,6 +732,17 @@ fn resolveHunksFromOpts(
 }
 
 /// Exit with an error message if no hunks were matched.
+/// Print "no [un]staged changes\n" and exit(1). Centralises the message so it
+/// can't drift across commands.
+fn exitNoChanges(mode: DiffMode) noreturn {
+    const msg = switch (mode) {
+        .unstaged => "no unstaged changes\n",
+        .staged => "no staged changes\n",
+    };
+    std.debug.print("{s}", .{msg});
+    std.process.exit(1);
+}
+
 fn exitIfNoMatches(matched_len: usize, file_filter: []const []const u8) void {
     if (matched_len > 0) return;
     if (file_filter.len == 1) {
@@ -854,14 +880,7 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
     defer allocator.free(diffs.tracked);
     defer allocator.free(diffs.untracked);
 
-    if (hunks.items.len == 0) {
-        const msg = switch (action) {
-            .stage => "no unstaged changes\n",
-            .unstage => "no staged changes\n",
-        };
-        std.debug.print("{s}", .{msg});
-        std.process.exit(1);
-    }
+    if (hunks.items.len == 0) exitNoChanges(diff_mode);
 
     var matched: std.ArrayList(MatchedHunk) = .empty;
     defer matched.deinit(arena);
@@ -906,10 +925,7 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
     defer allocator.free(diffs.tracked);
     defer allocator.free(diffs.untracked);
 
-    if (hunks.items.len == 0) {
-        std.debug.print("no unstaged changes\n", .{});
-        std.process.exit(1);
-    }
+    if (hunks.items.len == 0) exitNoChanges(.unstaged);
 
     var matched: std.ArrayList(MatchedHunk) = .empty;
     defer matched.deinit(arena);
@@ -961,31 +977,10 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
 
     const verb: []const u8 = if (opts.dry_run) "would restore" else "restored";
     const porcelain_verb: []const u8 = if (opts.dry_run) "would-restore" else "restored";
+    const summary_verb: []const u8 = if (opts.dry_run) "would be restored" else "restored";
 
-    var count: usize = 0;
-    for (matched.items) |m| {
-        count += 1;
-        if (opts.verbosity != .quiet) {
-            try format.printMatchedHunkLine(stdout, verb, porcelain_verb, m, use_color, opts.output);
-        }
-    }
-
-    // Summary on stderr (verbose + human mode only)
-    if (opts.verbosity == .verbose and opts.output == .human) {
-        if (opts.dry_run) {
-            if (count == 1) {
-                std.debug.print("1 hunk would be restored\n", .{});
-            } else {
-                std.debug.print("{d} hunks would be restored\n", .{count});
-            }
-        } else {
-            if (count == 1) {
-                std.debug.print("1 hunk restored\n", .{});
-            } else {
-                std.debug.print("{d} hunks restored\n", .{count});
-            }
-        }
-    }
+    const count = try format.printMatchedHunks(stdout, matched.items, verb, porcelain_verb, use_color, opts.output, opts.verbosity);
+    format.printHunkCountSummary(opts.verbosity, opts.output, count, summary_verb);
 }
 
 pub fn cmdDiff(allocator: Allocator, stdout: *std.Io.Writer, opts: DiffOptions) !void {
@@ -1000,14 +995,7 @@ pub fn cmdDiff(allocator: Allocator, stdout: *std.Io.Writer, opts: DiffOptions) 
     defer allocator.free(diffs.tracked);
     defer allocator.free(diffs.untracked);
 
-    if (hunks.items.len == 0) {
-        const msg: []const u8 = switch (opts.mode) {
-            .unstaged => "no unstaged changes\n",
-            .staged => "no staged changes\n",
-        };
-        std.debug.print("{s}", .{msg});
-        std.process.exit(1);
-    }
+    if (hunks.items.len == 0) exitNoChanges(opts.mode);
 
     // Resolve each SHA arg to a hunk, deduplicating by full SHA
     var matched: std.ArrayList(MatchedHunk) = .empty;
@@ -1153,10 +1141,7 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
     defer allocator.free(diffs.tracked);
     defer allocator.free(diffs.untracked);
 
-    if (hunks.items.len == 0) {
-        std.debug.print("no unstaged changes\n", .{});
-        std.process.exit(1);
-    }
+    if (hunks.items.len == 0) exitNoChanges(.unstaged);
 
     var matched: std.ArrayList(MatchedHunk) = .empty;
     defer matched.deinit(arena);
@@ -1297,25 +1282,11 @@ fn runTransactionalCommit(ctx: CommitContext) ![]const u8 {
 
 fn printCommitResults(stdout: *std.Io.Writer, opts: CommitOptions, matched: []const MatchedHunk, commit_output: []const u8) !void {
     const use_color = format.shouldUseColor(opts.output, opts.no_color);
-    var count: usize = 0;
-    for (matched) |m| {
-        count += 1;
-        if (opts.verbosity != .quiet) {
-            try format.printMatchedHunkLine(stdout, "committed", "committed", m, use_color, opts.output);
-        }
-    }
-
+    const count = try format.printMatchedHunks(stdout, matched, "committed", "committed", use_color, opts.output, opts.verbosity);
     if (opts.verbosity != .quiet and commit_output.len > 0) {
         std.debug.print("{s}\n", .{commit_output});
     }
-
-    if (opts.verbosity == .verbose and opts.output == .human) {
-        if (count == 1) {
-            std.debug.print("1 hunk committed\n", .{});
-        } else {
-            std.debug.print("{d} hunks committed\n", .{count});
-        }
-    }
+    format.printHunkCountSummary(opts.verbosity, opts.output, count, "committed");
 }
 
 pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptions) !void {
@@ -1341,10 +1312,7 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
     defer allocator.free(diffs.tracked);
     defer allocator.free(diffs.untracked);
 
-    if (hunks.items.len == 0) {
-        std.debug.print("no unstaged changes\n", .{});
-        std.process.exit(1);
-    }
+    if (hunks.items.len == 0) exitNoChanges(.unstaged);
 
     var matched: std.ArrayList(MatchedHunk) = .empty;
     defer matched.deinit(arena);
@@ -1375,11 +1343,7 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
             try git.runGitApply(allocator, p, false, .index, true, opts.ref);
         }
         const use_color = format.shouldUseColor(opts.output, opts.no_color);
-        for (matched.items) |m| {
-            if (opts.verbosity != .quiet) {
-                try format.printMatchedHunkLine(stdout, "would commit", "would-commit", m, use_color, opts.output);
-            }
-        }
+        _ = try format.printMatchedHunks(stdout, matched.items, "would commit", "would-commit", use_color, opts.output, opts.verbosity);
         return;
     }
 
@@ -1786,4 +1750,171 @@ test "runChecks: file_filter scopes both prefix lookup and unexpected scan" {
     const summary = try runChecks(arena, &.{ h_a, h_b }, &.{}, &filter, true);
     try std.testing.expectEqual(@as(usize, 1), summary.unexpected.len);
     try std.testing.expectEqualStrings("a.txt", summary.unexpected[0].file_path);
+}
+
+test "collectAppliedFor: content match takes precedence over line match" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var m_hunk = types.testMakeHunk("a.txt", 1, 1, 1, 1);
+    m_hunk.diff_lines = "+identical";
+    const matched = [_]MatchedHunk{.{ .hunk = &m_hunk, .line_spec = null }};
+
+    var c_hunk = types.testMakeHunk("a.txt", 1, 1, 1, 1);
+    c_hunk.diff_lines = "+identical";
+
+    var applied_used = [_]bool{false};
+    const applied = try collectAppliedFor(arena, &matched, &applied_used, &c_hunk);
+    try std.testing.expectEqual(@as(usize, 1), applied.len);
+    try std.testing.expect(applied_used[0]);
+}
+
+test "collectAppliedFor: line overlap matches when content differs" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var m_hunk = types.testMakeHunk("a.txt", 5, 3, 5, 3);
+    m_hunk.diff_lines = "+different";
+    const matched = [_]MatchedHunk{.{ .hunk = &m_hunk, .line_spec = null }};
+
+    var c_hunk = types.testMakeHunk("a.txt", 5, 3, 6, 3);
+    c_hunk.diff_lines = "+merged";
+
+    var applied_used = [_]bool{false};
+    const applied = try collectAppliedFor(arena, &matched, &applied_used, &c_hunk);
+    try std.testing.expectEqual(@as(usize, 1), applied.len);
+    try std.testing.expect(applied_used[0]);
+}
+
+test "collectAppliedFor: applied_used flag prevents double-attribution" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var m_hunk = types.testMakeHunk("a.txt", 1, 1, 1, 1);
+    const matched = [_]MatchedHunk{.{ .hunk = &m_hunk, .line_spec = null }};
+
+    var c_hunk = types.testMakeHunk("a.txt", 1, 1, 1, 1);
+
+    var applied_used = [_]bool{true}; // already attributed
+    const applied = try collectAppliedFor(arena, &matched, &applied_used, &c_hunk);
+    try std.testing.expectEqual(@as(usize, 0), applied.len);
+}
+
+test "collectAppliedFor: different file path skips" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var m_hunk = types.testMakeHunk("a.txt", 1, 1, 1, 1);
+    const matched = [_]MatchedHunk{.{ .hunk = &m_hunk, .line_spec = null }};
+
+    var c_hunk = types.testMakeHunk("b.txt", 1, 1, 1, 1);
+
+    var applied_used = [_]bool{false};
+    const applied = try collectAppliedFor(arena, &matched, &applied_used, &c_hunk);
+    try std.testing.expectEqual(@as(usize, 0), applied.len);
+    try std.testing.expect(!applied_used[0]);
+}
+
+test "collectConsumedFor: range overlap on same file" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var con_hunk = types.testMakeHunk("a.txt", 5, 3, 5, 3);
+    @memcpy(con_hunk.sha_hex[0..7], "deadbef");
+    @memset(con_hunk.sha_hex[7..], '0');
+    const consumed = [_]*const Hunk{&con_hunk};
+
+    var c_hunk = types.testMakeHunk("a.txt", 5, 3, 5, 3);
+
+    var consumed_used = [_]bool{false};
+    const con_paths = try collectConsumedFor(arena, &consumed, &consumed_used, &c_hunk);
+    try std.testing.expectEqual(@as(usize, 1), con_paths.len);
+    try std.testing.expectEqualStrings("deadbef", con_paths[0]);
+    try std.testing.expect(consumed_used[0]);
+}
+
+test "collectConsumedFor: no overlap returns empty" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var con_hunk = types.testMakeHunk("a.txt", 1, 1, 1, 1);
+    const consumed = [_]*const Hunk{&con_hunk};
+
+    var c_hunk = types.testMakeHunk("a.txt", 100, 1, 100, 1);
+
+    var consumed_used = [_]bool{false};
+    const con_paths = try collectConsumedFor(arena, &consumed, &consumed_used, &c_hunk);
+    try std.testing.expectEqual(@as(usize, 0), con_paths.len);
+}
+
+test "appendOrphanedApplied: unmatched applied hunks become standalone groups" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var h1 = types.testMakeHunk("a.txt", 1, 1, 1, 1);
+    @memcpy(h1.sha_hex[0..7], "abcdef0");
+    @memset(h1.sha_hex[7..], '0');
+    var h2 = types.testMakeHunk("b.txt", 1, 1, 1, 1);
+    @memcpy(h2.sha_hex[0..7], "1234567");
+    @memset(h2.sha_hex[7..], '0');
+    const matched = [_]MatchedHunk{
+        .{ .hunk = &h1, .line_spec = null },
+        .{ .hunk = &h2, .line_spec = null },
+    };
+
+    var groups: std.ArrayList(ResultGroup) = .empty;
+    const applied_used = [_]bool{ false, true }; // h1 unmatched, h2 already used
+    try appendOrphanedApplied(arena, &groups, &matched, &applied_used);
+
+    try std.testing.expectEqual(@as(usize, 1), groups.items.len);
+    try std.testing.expectEqualStrings("a.txt", groups.items[0].file_path);
+    try std.testing.expectEqual(@as(usize, 0), groups.items[0].result_shas.len);
+    try std.testing.expectEqual(@as(usize, 1), groups.items[0].applied.len);
+}
+
+test "mergeOrphansIntoSiblings: orphan with sibling for same file gets merged" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const sibling_apps = try arena.alloc(AppliedInput, 1);
+    sibling_apps[0] = .{ .sha7 = "abcdef0", .line_spec = null };
+    const sibling_shas = try arena.alloc([]const u8, 1);
+    sibling_shas[0] = "result1";
+
+    const orphan_shas = try arena.alloc([]const u8, 1);
+    orphan_shas[0] = "result2";
+
+    var groups = [_]ResultGroup{
+        .{ .result_shas = sibling_shas, .applied = sibling_apps, .consumed = &.{}, .file_path = "a.txt", .is_symlink = false },
+        .{ .result_shas = orphan_shas, .applied = &.{}, .consumed = &.{}, .file_path = "a.txt", .is_symlink = false },
+    };
+
+    const final = try mergeOrphansIntoSiblings(arena, &groups);
+    try std.testing.expectEqual(@as(usize, 1), final.len);
+    try std.testing.expectEqual(@as(usize, 2), final[0].result_shas.len);
+}
+
+test "mergeOrphansIntoSiblings: orphan without sibling kept as-is (fallback path)" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const orphan_shas = try arena.alloc([]const u8, 1);
+    orphan_shas[0] = "stranger";
+
+    var groups = [_]ResultGroup{
+        .{ .result_shas = orphan_shas, .applied = &.{}, .consumed = &.{}, .file_path = "lonely.txt", .is_symlink = false },
+    };
+
+    const final = try mergeOrphansIntoSiblings(arena, &groups);
+    try std.testing.expectEqual(@as(usize, 1), final.len);
+    try std.testing.expectEqualStrings("lonely.txt", final[0].file_path);
 }
