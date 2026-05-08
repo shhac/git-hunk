@@ -316,4 +316,17 @@ OUT922="$("$GIT_HUNK" diff -U3 --no-color "$SHA922" 2>&1)"
 echo "$OUT922" | grep -q "file922.txt" || fail "test 922: -U3 --no-color <sha> should show diff for file922.txt, got: '$OUT922'"
 pass "test 922: -U<n> works with flags interspersed before positional argument"
 
+# ============================================================================
+# Test 923: diff --file a --file c can resolve SHA from either file (multi-file)
+# ============================================================================
+new_repo
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed beta./' beta.txt
+sed -i.bak '1s/.*/Changed gamma./' gamma.txt
+SHA923_A="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+[[ -n "$SHA923_A" ]] || fail "test 923: alpha hash not found"
+OUT923="$("$GIT_HUNK" diff --no-color --file alpha.txt --file gamma.txt "$SHA923_A")"
+echo "$OUT923" | grep -q "alpha.txt" || fail "test 923: alpha.txt missing in diff with multi-file filter"
+pass "test 923: diff --file a --file c finds SHA from a"
+
 report_results

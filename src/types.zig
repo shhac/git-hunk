@@ -329,3 +329,28 @@ test "computeHunkSha different line" {
     const sha2 = computeHunkSha("a.zig", 11, "+line");
     try std.testing.expect(!std.mem.eql(u8, &sha1, &sha2));
 }
+
+test "matchesFileFilter empty filter matches everything" {
+    try std.testing.expect(matchesFileFilter("anything.txt", &.{}));
+    try std.testing.expect(matchesFileFilter("", &.{}));
+}
+
+test "matchesFileFilter exact match" {
+    const filter = [_][]const u8{"foo.zig"};
+    try std.testing.expect(matchesFileFilter("foo.zig", &filter));
+    try std.testing.expect(!matchesFileFilter("bar.zig", &filter));
+}
+
+test "matchesFileFilter any-of with multiple entries" {
+    const filter = [_][]const u8{ "a.zig", "b.zig", "c.zig" };
+    try std.testing.expect(matchesFileFilter("a.zig", &filter));
+    try std.testing.expect(matchesFileFilter("b.zig", &filter));
+    try std.testing.expect(matchesFileFilter("c.zig", &filter));
+    try std.testing.expect(!matchesFileFilter("d.zig", &filter));
+}
+
+test "matchesFileFilter requires exact equality (no prefix match)" {
+    const filter = [_][]const u8{"a.txt"};
+    try std.testing.expect(!matchesFileFilter("a.txt.bak", &filter));
+    try std.testing.expect(!matchesFileFilter("dir/a.txt", &filter));
+}

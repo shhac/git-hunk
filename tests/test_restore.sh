@@ -316,4 +316,18 @@ echo "$WORKTREE517" | grep -q "line 18 changed" \
     || fail "test 517: bottom hunk should still be present in worktree"
 pass "test 517: restore hunk A does not affect adjacent hunk B"
 
+# ============================================================================
+# Test 518: restore --file a --file c restores union of files (multi-file)
+# ============================================================================
+new_repo
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed beta./' beta.txt
+sed -i.bak '1s/.*/Changed gamma./' gamma.txt
+"$GIT_HUNK" restore --file alpha.txt --file gamma.txt > /dev/null 2>/dev/null
+UNSTAGED518="$(git diff --name-only)"
+echo "$UNSTAGED518" | grep -q "beta.txt" || fail "test 518: beta.txt should remain modified"
+echo "$UNSTAGED518" | grep -q "alpha.txt" && fail "test 518: alpha.txt should have been restored" || true
+echo "$UNSTAGED518" | grep -q "gamma.txt" && fail "test 518: gamma.txt should have been restored" || true
+pass "test 518: restore --file a --file c restores union, leaves b"
+
 report_results

@@ -1760,3 +1760,83 @@ test "parseCommitArgs --file without sha allowed" {
     try std.testing.expectEqualStrings("src/main.zig", opts.file_filter[0]);
     try std.testing.expectEqual(@as(usize, 0), opts.sha_args.items.len);
 }
+
+test "validateRefStagedCombo rejects --staged with range ref" {
+    try std.testing.expectError(error.InvalidArgument, validateRefStagedCombo("main..HEAD", .staged));
+}
+
+test "validateRefStagedCombo allows --staged with single ref" {
+    try validateRefStagedCombo("HEAD", .staged);
+    try validateRefStagedCombo("main", .staged);
+}
+
+test "validateRefStagedCombo allows range ref with unstaged" {
+    try validateRefStagedCombo("main..HEAD", .unstaged);
+}
+
+test "validateRefStagedCombo allows null ref" {
+    try validateRefStagedCombo(null, .staged);
+    try validateRefStagedCombo(null, .unstaged);
+}
+
+test "deinitFileFilter no-op on empty slice" {
+    deinitFileFilter(std.testing.allocator, &.{});
+}
+
+test "deinitFileFilter frees an allocated spine" {
+    const allocator = std.testing.allocator;
+    const spine = try allocator.alloc([]const u8, 2);
+    spine[0] = "a.txt";
+    spine[1] = "b.txt";
+    deinitFileFilter(allocator, spine);
+}
+
+// Leak-detection tests: ensure parsers free file_filter when an error fires
+// after `--file` has been accumulated. std.testing.allocator fails on leak.
+
+test "parseListArgs leaks no memory when --file then --unknown" {
+    const args_arr = [_][:0]const u8{ "--file", "a.txt", "--file", "b.txt", "--unknown" };
+    try std.testing.expectError(error.UnknownFlag, parseListArgs(std.testing.allocator, &args_arr));
+}
+
+test "parseAddResetArgs leaks no memory when --file then --unknown" {
+    const args_arr = [_][:0]const u8{ "--file", "a.txt", "--unknown" };
+    try std.testing.expectError(error.UnknownFlag, parseAddResetArgs(std.testing.allocator, &args_arr));
+}
+
+test "parseDiffArgs leaks no memory when --file then --unknown" {
+    const args_arr = [_][:0]const u8{ "abcd1234", "--file", "a.txt", "--unknown" };
+    try std.testing.expectError(error.UnknownFlag, parseDiffArgs(std.testing.allocator, &args_arr));
+}
+
+test "parseCheckArgs leaks no memory when --file then --unknown" {
+    const args_arr = [_][:0]const u8{ "abcd1234", "--file", "a.txt", "--unknown" };
+    try std.testing.expectError(error.UnknownFlag, parseCheckArgs(std.testing.allocator, &args_arr));
+}
+
+test "parseRestoreArgs leaks no memory when --file then --unknown" {
+    const args_arr = [_][:0]const u8{ "--file", "a.txt", "--unknown" };
+    try std.testing.expectError(error.UnknownFlag, parseRestoreArgs(std.testing.allocator, &args_arr));
+}
+
+test "parseStashArgs leaks no memory when --file then --unknown" {
+    const args_arr = [_][:0]const u8{ "--file", "a.txt", "--unknown" };
+    try std.testing.expectError(error.UnknownFlag, parseStashArgs(std.testing.allocator, &args_arr));
+}
+
+test "parseCommitArgs leaks no memory when --file then --unknown" {
+    const args_arr = [_][:0]const u8{ "--file", "a.txt", "--unknown" };
+    try std.testing.expectError(error.UnknownFlag, parseCommitArgs(std.testing.allocator, &args_arr));
+}
+
+test "parseCountArgs leaks no memory when --file then --unknown" {
+    const args_arr = [_][:0]const u8{ "--file", "a.txt", "--unknown" };
+    try std.testing.expectError(error.UnknownFlag, parseCountArgs(std.testing.allocator, &args_arr));
+}
+
+test "parseListArgs leaks no memory when --file then --staged with range ref" {
+    // applyCommonFlags succeeds; validateRefStagedCombo fails. Exercises
+    // the post-applyCommonFlags errdefer path.
+    const args_arr = [_][:0]const u8{ "--file", "a.txt", "--ref", "main..HEAD", "--staged" };
+    try std.testing.expectError(error.InvalidArgument, parseListArgs(std.testing.allocator, &args_arr));
+}

@@ -150,4 +150,19 @@ if "$GIT_HUNK" check --tracked-only "$UT_SHA310" 2>/dev/null; then
 fi
 pass "test 310: check --tracked-only ignores untracked hashes"
 
+# ============================================================================
+# Test 311: check --file a --file c scopes lookup to union of files
+# ============================================================================
+new_repo
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed beta./' beta.txt
+sed -i.bak '1s/.*/Changed gamma./' gamma.txt
+SHA311_B="$("$GIT_HUNK" list --porcelain --oneline --file beta.txt | head -1 | cut -f1)"
+[[ -n "$SHA311_B" ]] || fail "test 311: beta hash not found"
+# Beta is excluded by --file a --file c, so its SHA should appear stale
+if "$GIT_HUNK" check --file alpha.txt --file gamma.txt "$SHA311_B" 2>/dev/null; then
+    fail "test 311: beta SHA should be stale when scoped to a + c only"
+fi
+pass "test 311: check --file a --file c excludes b SHAs"
+
 report_results

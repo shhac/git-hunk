@@ -93,4 +93,15 @@ COUNT407="$("$GIT_HUNK" count --untracked-only)"
 [[ "$COUNT407" == "0" ]] || fail "test 407: expected 0 untracked count, got '$COUNT407'"
 pass "test 407: count --untracked-only with no untracked files returns 0"
 
+# ============================================================================
+# Test 408: count --file a --file c counts union of two files (multi-file filter)
+# ============================================================================
+new_repo
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed beta./' beta.txt
+sed -i.bak '1s/.*/Changed gamma./' gamma.txt
+COUNT408="$("$GIT_HUNK" count --file alpha.txt --file gamma.txt)"
+[[ "$COUNT408" == "2" ]] || fail "test 408: expected count 2 (a + c), got '$COUNT408'"
+pass "test 408: count --file a --file c counts union"
+
 report_results

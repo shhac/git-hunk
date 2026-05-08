@@ -582,4 +582,34 @@ echo "$UNSTAGED227" | grep -q "beta.txt" || fail "test 227: beta.txt should stil
 echo "$UNSTAGED227" | grep -q "gamma.txt" || fail "test 227: gamma.txt should still be unstaged-modified"
 pass "test 227: reset --all unstages all staged hunks across multiple files"
 
+# ============================================================================
+# Test 228: add --file a --file c stages union, excluding b (multi-file filter)
+# ============================================================================
+new_repo
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed beta./' beta.txt
+sed -i.bak '1s/.*/Changed gamma./' gamma.txt
+
+"$GIT_HUNK" add --file alpha.txt --file gamma.txt > /dev/null 2>/dev/null
+STAGED228="$(git diff --cached --name-only)"
+echo "$STAGED228" | grep -q "alpha.txt" || fail "test 228: alpha.txt missing from --file a --file c"
+echo "$STAGED228" | grep -q "gamma.txt" || fail "test 228: gamma.txt missing from --file a --file c"
+echo "$STAGED228" | grep -q "beta.txt" && fail "test 228: beta.txt leaked into --file a --file c" || true
+pass "test 228: add --file a --file c stages union, excluding b"
+
+# ============================================================================
+# Test 229: reset --file a --file c unstages union, leaving b (multi-file filter)
+# ============================================================================
+new_repo
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed beta./' beta.txt
+sed -i.bak '1s/.*/Changed gamma./' gamma.txt
+"$GIT_HUNK" add --all > /dev/null 2>/dev/null
+"$GIT_HUNK" reset --file alpha.txt --file gamma.txt > /dev/null 2>/dev/null
+STAGED229="$(git diff --cached --name-only)"
+echo "$STAGED229" | grep -q "beta.txt" || fail "test 229: beta.txt should remain staged"
+echo "$STAGED229" | grep -q "alpha.txt" && fail "test 229: alpha.txt should have been unstaged" || true
+echo "$STAGED229" | grep -q "gamma.txt" && fail "test 229: gamma.txt should have been unstaged" || true
+pass "test 229: reset --file a --file c unstages union, leaving b"
+
 report_results

@@ -969,3 +969,39 @@ test "matchIndexToHead dirty index nearby staged change not captured" {
     try std.testing.expectEqual(@as(u32, 8), spec.ranges[0].start);
     try std.testing.expectEqual(@as(u32, 9), spec.ranges[0].end);
 }
+
+test "cloneEnvMap empty parent" {
+    const allocator = std.testing.allocator;
+    var src: EnvMap = .{ .array_hash_map = .empty, .allocator = allocator };
+    defer src.deinit();
+    var dst = try cloneEnvMap(allocator, &src);
+    defer dst.deinit();
+    try std.testing.expectEqual(@as(usize, 0), dst.array_hash_map.count());
+}
+
+test "cloneEnvMap copies all entries" {
+    const allocator = std.testing.allocator;
+    var src: EnvMap = .{ .array_hash_map = .empty, .allocator = allocator };
+    defer src.deinit();
+    try src.put("FOO", "1");
+    try src.put("BAR", "2");
+
+    var dst = try cloneEnvMap(allocator, &src);
+    defer dst.deinit();
+    try std.testing.expectEqualStrings("1", dst.get("FOO").?);
+    try std.testing.expectEqualStrings("2", dst.get("BAR").?);
+}
+
+test "cloneEnvMap mutating clone doesn't affect source" {
+    const allocator = std.testing.allocator;
+    var src: EnvMap = .{ .array_hash_map = .empty, .allocator = allocator };
+    defer src.deinit();
+    try src.put("KEY", "src_value");
+
+    var dst = try cloneEnvMap(allocator, &src);
+    defer dst.deinit();
+    try dst.put("KEY", "dst_value");
+
+    try std.testing.expectEqualStrings("src_value", src.get("KEY").?);
+    try std.testing.expectEqualStrings("dst_value", dst.get("KEY").?);
+}

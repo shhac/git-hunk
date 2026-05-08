@@ -431,3 +431,40 @@ pub fn runGitCommit(allocator: Allocator, args: struct { message: []const u8, am
     allocator.free(result.stderr);
     return trimAndShrink(allocator, result.stdout);
 }
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+test "trimAndShrink no trailing newline returns input pointer" {
+    const allocator = std.testing.allocator;
+    const buf = try allocator.dupe(u8, "hello");
+    const out = try trimAndShrink(allocator, buf);
+    defer allocator.free(out);
+    try std.testing.expectEqual(buf.ptr, out.ptr);
+    try std.testing.expectEqualStrings("hello", out);
+}
+
+test "trimAndShrink strips trailing newline (re-allocates)" {
+    const allocator = std.testing.allocator;
+    const buf = try allocator.dupe(u8, "hello\n");
+    const out = try trimAndShrink(allocator, buf);
+    defer allocator.free(out);
+    try std.testing.expectEqualStrings("hello", out);
+}
+
+test "trimAndShrink strips multiple trailing newlines" {
+    const allocator = std.testing.allocator;
+    const buf = try allocator.dupe(u8, "abc\n\n\n");
+    const out = try trimAndShrink(allocator, buf);
+    defer allocator.free(out);
+    try std.testing.expectEqualStrings("abc", out);
+}
+
+test "trimAndShrink empty string is a no-op" {
+    const allocator = std.testing.allocator;
+    const buf = try allocator.dupe(u8, "");
+    const out = try trimAndShrink(allocator, buf);
+    defer allocator.free(out);
+    try std.testing.expectEqualStrings("", out);
+}

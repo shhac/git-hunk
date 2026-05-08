@@ -384,36 +384,27 @@ const ResultGroup = struct {
     is_symlink: bool,
 };
 
-/// Pre-existing target-side hunks absorbed into the result (sha not in new_target).
-fn findConsumed(arena: Allocator, old_target: []const Hunk, new_target: []const Hunk) ![]*const Hunk {
+/// Returns pointers to hunks in `minuend` whose `sha_hex` is absent from
+/// `subtrahend`. Used to compute "consumed" (old\new) and "created" (new\old).
+fn shaSetDifference(arena: Allocator, minuend: []const Hunk, subtrahend: []const Hunk) ![]*const Hunk {
     var list: std.ArrayList(*const Hunk) = .empty;
-    for (old_target) |*oh| {
-        var survived = false;
-        for (new_target) |*nh| {
-            if (std.mem.eql(u8, &oh.sha_hex, &nh.sha_hex)) {
-                survived = true;
-                break;
-            }
+    outer: for (minuend) |*m| {
+        for (subtrahend) |*s| {
+            if (std.mem.eql(u8, &m.sha_hex, &s.sha_hex)) continue :outer;
         }
-        if (!survived) try list.append(arena, oh);
+        try list.append(arena, m);
     }
     return list.items;
 }
 
+/// Pre-existing target-side hunks absorbed into the result (sha not in new_target).
+fn findConsumed(arena: Allocator, old_target: []const Hunk, new_target: []const Hunk) ![]*const Hunk {
+    return shaSetDifference(arena, old_target, new_target);
+}
+
 /// New target-side hunks that didn't exist before (sha not in old_target).
 fn findCreated(arena: Allocator, old_target: []const Hunk, new_target: []const Hunk) ![]*const Hunk {
-    var list: std.ArrayList(*const Hunk) = .empty;
-    for (new_target) |*nh| {
-        var existed = false;
-        for (old_target) |*oh| {
-            if (std.mem.eql(u8, &nh.sha_hex, &oh.sha_hex)) {
-                existed = true;
-                break;
-            }
-        }
-        if (!existed) try list.append(arena, nh);
-    }
-    return list.items;
+    return shaSetDifference(arena, new_target, old_target);
 }
 
 /// For each created hunk, attribute contributing applied inputs (by content or
@@ -877,19 +868,9 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
     try resolveHunksFromOpts(arena, hunks.items, opts.sha_args.items, opts.file_filter, &matched);
 
     const partition = try patch_mod.partitionByKind(arena, matched.items);
-    const text_matched = blk: {
-        var combined: std.ArrayList(MatchedHunk) = .empty;
-        try combined.appendSlice(arena, partition.tracked_text);
-        try combined.appendSlice(arena, partition.untracked_text);
-        break :blk combined.items;
-    };
+    const text_matched = try partition.combinedText(arena);
     const binary_paths = partition.binary_paths;
-    const binary_matched = blk: {
-        var combined: std.ArrayList(MatchedHunk) = .empty;
-        try combined.appendSlice(arena, partition.tracked_binary);
-        try combined.appendSlice(arena, partition.untracked_binary);
-        break :blk combined.items;
-    };
+    const binary_matched = try partition.combinedBinary(arena);
 
     // Capture target-side hunks BEFORE and AFTER applying so buildResultGroups
     // can detect merges and map applied hunks to their post-apply hashes.
@@ -947,14 +928,12 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
     }
 
     const partition = try patch_mod.partitionByKind(arena, matched.items);
-    var text_matched: std.ArrayList(MatchedHunk) = .empty;
-    try text_matched.appendSlice(arena, partition.tracked_text);
-    try text_matched.appendSlice(arena, partition.untracked_text);
+    const text_matched = try partition.combinedText(arena);
 
     // Text hunks: reverse-apply patches to worktree
-    if (text_matched.items.len > 0) {
-        std.mem.sort(MatchedHunk, text_matched.items, {}, patch_mod.matchedHunkPatchOrder);
-        const patches = try patch_mod.buildCombinedPatches(arena, text_matched.items);
+    if (text_matched.len > 0) {
+        std.mem.sort(MatchedHunk, text_matched, {}, patch_mod.matchedHunkPatchOrder);
+        const patches = try patch_mod.buildCombinedPatches(arena, text_matched);
         var i: usize = patches.len;
         while (i > 0) {
             i -= 1;
@@ -1374,12 +1353,7 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
     exitIfNoMatches(matched.items.len, opts.file_filter);
 
     const partition = try patch_mod.partitionByKind(arena, matched.items);
-    const text_matched = blk: {
-        var combined: std.ArrayList(MatchedHunk) = .empty;
-        try combined.appendSlice(arena, partition.tracked_text);
-        try combined.appendSlice(arena, partition.untracked_text);
-        break :blk combined.items;
-    };
+    const text_matched = try partition.combinedText(arena);
     const binary_paths = partition.binary_paths;
 
     std.mem.sort(MatchedHunk, text_matched, {}, patch_mod.matchedHunkPatchOrder);
@@ -1667,4 +1641,149 @@ test "buildResultGroups orphan with no sibling becomes standalone" {
     try std.testing.expectEqual(@as(usize, 0), groups[0].applied.len);
     try std.testing.expectEqual(@as(usize, 1), groups[0].result_shas.len);
     try std.testing.expectEqualStrings("ooooooo", groups[0].result_shas[0]);
+}
+
+test "findConsumed returns hunks whose sha is absent from new_target" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var h_old1 = types.testMakeHunk("a.txt", 1, 1, 1, 1);
+    h_old1.sha_hex = comptime [_]u8{'a'} ** 40;
+    var h_old2 = types.testMakeHunk("a.txt", 5, 1, 5, 1);
+    h_old2.sha_hex = comptime [_]u8{'b'} ** 40;
+    var h_new = types.testMakeHunk("a.txt", 1, 1, 1, 1);
+    h_new.sha_hex = comptime [_]u8{'a'} ** 40; // h_old1 survives, h_old2 consumed
+
+    const consumed = try findConsumed(arena, &.{ h_old1, h_old2 }, &.{h_new});
+    try std.testing.expectEqual(@as(usize, 1), consumed.len);
+    try std.testing.expectEqualSlices(u8, &h_old2.sha_hex, &consumed[0].sha_hex);
+}
+
+test "findConsumed returns empty when all hunks survive" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var h = types.testMakeHunk("a.txt", 1, 1, 1, 1);
+    h.sha_hex = comptime [_]u8{'a'} ** 40;
+    const consumed = try findConsumed(arena, &.{h}, &.{h});
+    try std.testing.expectEqual(@as(usize, 0), consumed.len);
+}
+
+test "findCreated returns hunks whose sha is absent from old_target" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var h_old = types.testMakeHunk("a.txt", 1, 1, 1, 1);
+    h_old.sha_hex = comptime [_]u8{'a'} ** 40;
+    var h_new1 = types.testMakeHunk("a.txt", 1, 1, 1, 1);
+    h_new1.sha_hex = comptime [_]u8{'a'} ** 40; // already existed
+    var h_new2 = types.testMakeHunk("a.txt", 5, 1, 5, 1);
+    h_new2.sha_hex = comptime [_]u8{'c'} ** 40; // genuinely new
+
+    const created = try findCreated(arena, &.{h_old}, &.{ h_new1, h_new2 });
+    try std.testing.expectEqual(@as(usize, 1), created.len);
+    try std.testing.expectEqualSlices(u8, &h_new2.sha_hex, &created[0].sha_hex);
+}
+
+test "runChecks: ok status for matching SHA" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var h = types.testMakeHunk("a.txt", 1, 1, 1, 1);
+    @memcpy(h.sha_hex[0..7], "1234567");
+    @memset(h.sha_hex[7..], '0');
+
+    const sha_args = [_]types.ShaArg{.{ .prefix = "1234567", .line_spec = null }};
+    const summary = try runChecks(arena, &.{h}, &sha_args, &.{}, false);
+    try std.testing.expectEqual(@as(usize, 1), summary.results.len);
+    try std.testing.expectEqual(CheckStatus.ok, summary.results[0].status);
+    try std.testing.expect(!summary.has_failure);
+}
+
+test "runChecks: stale status for missing SHA" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const sha_args = [_]types.ShaArg{.{ .prefix = "deadbeef", .line_spec = null }};
+    const summary = try runChecks(arena, &.{}, &sha_args, &.{}, false);
+    try std.testing.expectEqual(@as(usize, 1), summary.results.len);
+    try std.testing.expectEqual(CheckStatus.stale, summary.results[0].status);
+    try std.testing.expect(summary.has_failure);
+}
+
+test "runChecks: ambiguous status for prefix matching multiple hunks" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var h1 = types.testMakeHunk("a.txt", 1, 1, 1, 1);
+    @memcpy(h1.sha_hex[0..7], "1234567");
+    @memset(h1.sha_hex[7..], '0');
+    var h2 = types.testMakeHunk("b.txt", 1, 1, 1, 1);
+    @memcpy(h2.sha_hex[0..7], "1234567"); // same prefix
+    @memset(h2.sha_hex[7..], '1');
+
+    const sha_args = [_]types.ShaArg{.{ .prefix = "1234567", .line_spec = null }};
+    const summary = try runChecks(arena, &.{ h1, h2 }, &sha_args, &.{}, false);
+    try std.testing.expectEqual(CheckStatus.ambiguous, summary.results[0].status);
+    try std.testing.expect(summary.has_failure);
+}
+
+test "runChecks: deduplicates repeated prefixes" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var h = types.testMakeHunk("a.txt", 1, 1, 1, 1);
+    @memcpy(h.sha_hex[0..7], "1234567");
+    @memset(h.sha_hex[7..], '0');
+
+    const sha_args = [_]types.ShaArg{
+        .{ .prefix = "1234567", .line_spec = null },
+        .{ .prefix = "1234567", .line_spec = null },
+    };
+    const summary = try runChecks(arena, &.{h}, &sha_args, &.{}, false);
+    try std.testing.expectEqual(@as(usize, 1), summary.results.len);
+}
+
+test "runChecks: --exclusive populates unexpected for unmatched hunks" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var h1 = types.testMakeHunk("a.txt", 1, 1, 1, 1);
+    @memcpy(h1.sha_hex[0..7], "1234567");
+    @memset(h1.sha_hex[7..], '0');
+    var h2 = types.testMakeHunk("a.txt", 5, 1, 5, 1);
+    @memcpy(h2.sha_hex[0..7], "abcdefg");
+    @memset(h2.sha_hex[7..], '0');
+
+    const sha_args = [_]types.ShaArg{.{ .prefix = "1234567", .line_spec = null }};
+    const summary = try runChecks(arena, &.{ h1, h2 }, &sha_args, &.{}, true);
+    try std.testing.expectEqual(@as(usize, 1), summary.unexpected.len);
+    try std.testing.expectEqualSlices(u8, &h2.sha_hex, &summary.unexpected[0].sha_hex);
+    try std.testing.expect(summary.has_failure);
+}
+
+test "runChecks: file_filter scopes both prefix lookup and unexpected scan" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var h_a = types.testMakeHunk("a.txt", 1, 1, 1, 1);
+    @memcpy(h_a.sha_hex[0..7], "1234567");
+    @memset(h_a.sha_hex[7..], '0');
+    var h_b = types.testMakeHunk("b.txt", 1, 1, 1, 1);
+    @memcpy(h_b.sha_hex[0..7], "abcdefg");
+    @memset(h_b.sha_hex[7..], '0');
+
+    const filter = [_][]const u8{"a.txt"};
+    const summary = try runChecks(arena, &.{ h_a, h_b }, &.{}, &filter, true);
+    try std.testing.expectEqual(@as(usize, 1), summary.unexpected.len);
+    try std.testing.expectEqualStrings("a.txt", summary.unexpected[0].file_path);
 }

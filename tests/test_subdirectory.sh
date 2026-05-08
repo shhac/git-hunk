@@ -174,4 +174,35 @@ echo "$STAGED" | grep -q "^alpha.txt$" \
     || fail "test 1110: expected alpha.txt staged from deep subdir, got: '$STAGED'"
 pass "test 1110: deeply nested subdirectory works"
 
+# ============================================================================
+# Test 1111: chdirToRepoRoot resolves a symlinked toplevel correctly.
+# Regression for the macOS-specific bug where Io.Dir.cwd().realPath fails on
+# AT_FDCWD via fcntl(F_GETPATH); we now use std.process.currentPath. On macOS
+# /tmp is a symlink to /private/tmp so this exercises the canonicalization path.
+# ============================================================================
+SYM_REPO=$(mktemp -d)
+cd "$SYM_REPO"
+git init -q
+git config user.email test@test.test
+git config user.name test
+echo "first line" > alpha.txt
+git add alpha.txt
+git commit -q -m init
+mkdir -p subdir
+sed -i.bak '1s/.*/changed/' alpha.txt && rm alpha.txt.bak
+
+# On macOS the cwd resolves through a /private/tmp symlink. From a subdir,
+# `git hunk add <sha>` must chdir to repo root and then apply the patch with
+# the right path. If realpath fails (the bug), the patch path keeps the
+# subdir prefix and `git apply` errors with "does not exist in index".
+SHA1111=$(cd subdir && "$GIT_HUNK" list --porcelain --oneline | head -1 | cut -f1)
+[[ -n "$SHA1111" ]] || fail "test 1111: no hunk found from /tmp/<repo>/subdir"
+(cd subdir && "$GIT_HUNK" add "$SHA1111" 2>&1 > /dev/null) \
+    || fail "test 1111: add from subdir of /tmp-rooted repo failed (likely realpath fallback bug)"
+STAGED1111=$(git diff --cached --name-only)
+echo "$STAGED1111" | grep -q "^alpha.txt$" \
+    || fail "test 1111: expected alpha.txt staged, got: '$STAGED1111'"
+cd /tmp && rm -rf "$SYM_REPO"
+pass "test 1111: chdirToRepoRoot handles symlinked /tmp toplevel (macOS realpath regression)"
+
 report_results

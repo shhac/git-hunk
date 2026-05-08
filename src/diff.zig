@@ -38,306 +38,285 @@ const DiffCursor = struct {
     }
 };
 
+/// State accumulated by `parseExtendedHeaders` for the per-file header block
+/// between `diff --git` and the body. All slices are sub-slices of the input.
+const FileHeaderState = struct {
+    is_new_file: bool = false,
+    is_deleted_file: bool = false,
+    is_binary: bool = false,
+    is_submodule: bool = false,
+    is_symlink: bool = false,
+    file_mode: []const u8 = "100644",
+    rename_from: ?[]const u8 = null,
+    rename_to: ?[]const u8 = null,
+};
+
+/// Consume extended-header lines (new/deleted file mode, Binary, rename, index,
+/// old/new mode, similarity, copy) until a non-header line is reached. Stops
+/// without consuming the first non-header line.
+fn parseExtendedHeaders(cursor: *DiffCursor) FileHeaderState {
+    var state: FileHeaderState = .{};
+    while (cursor.peek()) |line| {
+        if (std.mem.startsWith(u8, line, "new file mode ")) {
+            state.is_new_file = true;
+            state.file_mode = line["new file mode ".len..];
+            if (std.mem.eql(u8, state.file_mode, "120000")) state.is_symlink = true;
+        } else if (std.mem.startsWith(u8, line, "deleted file mode ")) {
+            state.is_deleted_file = true;
+            state.file_mode = line["deleted file mode ".len..];
+            if (std.mem.eql(u8, state.file_mode, "120000")) state.is_symlink = true;
+        } else if (std.mem.startsWith(u8, line, "Binary files ")) {
+            state.is_binary = true;
+        } else if (std.mem.startsWith(u8, line, "rename from ")) {
+            state.rename_from = line["rename from ".len..];
+        } else if (std.mem.startsWith(u8, line, "rename to ")) {
+            state.rename_to = line["rename to ".len..];
+        } else if (std.mem.startsWith(u8, line, "index ")) {
+            if (std.mem.endsWith(u8, line, " 160000")) {
+                state.is_submodule = true;
+            } else if (std.mem.endsWith(u8, line, " 120000")) {
+                state.is_symlink = true;
+            }
+        } else if (std.mem.startsWith(u8, line, "old mode ") or
+            std.mem.startsWith(u8, line, "new mode ") or
+            std.mem.startsWith(u8, line, "similarity index ") or
+            std.mem.startsWith(u8, line, "copy from ") or
+            std.mem.startsWith(u8, line, "copy to "))
+        {
+            // Extended header, continue.
+        } else {
+            break;
+        }
+        cursor.advance();
+    }
+    return state;
+}
+
+/// Append a `new file mode <m>\n` or `deleted file mode <m>\n` line to `ph` if
+/// the file is new or deleted. No-op for an in-place modification.
+fn appendModeLine(arena: Allocator, ph: *std.ArrayList(u8), state: FileHeaderState) !void {
+    if (state.is_new_file) {
+        try ph.appendSlice(arena, "new file mode ");
+    } else if (state.is_deleted_file) {
+        try ph.appendSlice(arena, "deleted file mode ");
+    } else return;
+    try ph.appendSlice(arena, state.file_mode);
+    try ph.append(arena, '\n');
+}
+
+/// Build a patch header for the standard case (---/+++ lines present plus the
+/// usual diff_git_line and rename/mode metadata when applicable).
+fn buildPatchHeader(
+    arena: Allocator,
+    diff_git_line: []const u8,
+    minus_line: []const u8,
+    plus_line: []const u8,
+    state: FileHeaderState,
+) ![]const u8 {
+    var ph: std.ArrayList(u8) = .empty;
+    const need_diff_git = state.is_new_file or state.is_deleted_file or
+        (state.rename_from != null and state.rename_to != null);
+    if (need_diff_git) {
+        try ph.appendSlice(arena, diff_git_line);
+        try ph.append(arena, '\n');
+    }
+    try appendModeLine(arena, &ph, state);
+    if (state.rename_from) |from| {
+        try ph.appendSlice(arena, "rename from ");
+        try ph.appendSlice(arena, from);
+        try ph.append(arena, '\n');
+    }
+    if (state.rename_to) |to| {
+        try ph.appendSlice(arena, "rename to ");
+        try ph.appendSlice(arena, to);
+        try ph.append(arena, '\n');
+    }
+    try ph.appendSlice(arena, minus_line);
+    try ph.append(arena, '\n');
+    try ph.appendSlice(arena, plus_line);
+    try ph.append(arena, '\n');
+    return ph.items;
+}
+
+/// Build the patch header for a binary file (no ---/+++ lines).
+fn buildBinaryPatchHeader(arena: Allocator, diff_git_line: []const u8, state: FileHeaderState) ![]const u8 {
+    var ph: std.ArrayList(u8) = .empty;
+    try ph.appendSlice(arena, diff_git_line);
+    try ph.append(arena, '\n');
+    try appendModeLine(arena, &ph, state);
+    return ph.items;
+}
+
+/// Build the patch header for an empty new/deleted file with no ---/+++ lines
+/// in the input (synthesized).
+fn buildEmptyFilePatchHeader(arena: Allocator, diff_git_line: []const u8, file_path: []const u8, state: FileHeaderState) ![]const u8 {
+    var ph: std.ArrayList(u8) = .empty;
+    try ph.appendSlice(arena, diff_git_line);
+    try ph.append(arena, '\n');
+    try appendModeLine(arena, &ph, state);
+    if (state.is_deleted_file) {
+        try ph.appendSlice(arena, "--- a/");
+        try ph.appendSlice(arena, file_path);
+        try ph.appendSlice(arena, "\n+++ /dev/null\n");
+    } else {
+        try ph.appendSlice(arena, "--- /dev/null\n+++ b/");
+        try ph.appendSlice(arena, file_path);
+        try ph.append(arena, '\n');
+    }
+    return ph.items;
+}
+
+/// Build a synthetic whole-file hunk (no line-level content) for the binary,
+/// empty-file, or empty-after-headers cases. `sha_payload` is hashed alongside
+/// the file path / line 0 to disambiguate between cases.
+fn synthesizeWholeFileHunk(
+    file_path: []const u8,
+    patch_header: []const u8,
+    state: FileHeaderState,
+    is_binary: bool,
+    sha_payload: []const u8,
+) Hunk {
+    return .{
+        .file_path = file_path,
+        .old_start = 0,
+        .old_count = 0,
+        .new_start = 0,
+        .new_count = 0,
+        .context = "",
+        .raw_lines = "",
+        .diff_lines = "",
+        .sha_hex = computeHunkSha(file_path, 0, sha_payload),
+        .is_new_file = state.is_new_file,
+        .is_deleted_file = state.is_deleted_file,
+        .is_untracked = false,
+        .is_symlink = state.is_symlink,
+        .is_binary = is_binary,
+        .patch_header = patch_header,
+    };
+}
+
+const HunkBody = struct {
+    diff_lines: []const u8,
+    raw_lines: []const u8,
+};
+
+/// Parse the body of a single `@@` hunk. Consumes context, +, -, and "\ No newline"
+/// lines until a non-body line is reached. Returns null if the body is empty.
+fn parseHunkBody(arena: Allocator, cursor: *DiffCursor, diff: []const u8, hunk_header_line: []const u8) !?HunkBody {
+    var diff_lines_buf: std.ArrayList(u8) = .empty;
+    // last_line_end tracks the end-of-line of the last consumed line; initialized
+    // to the @@ line itself so raw_lines is correct even if no body lines are consumed.
+    var last_line_end = sliceEnd(diff, hunk_header_line);
+
+    while (cursor.peek()) |bline| {
+        if (bline.len == 0) {
+            // Empty line: could be an empty context line (space prefix stripped) or
+            // end of diff. Inspect the next line to decide.
+            const next_line = cursor.peekNext();
+            const is_body = if (next_line) |nl|
+                std.mem.startsWith(u8, nl, " ") or
+                    std.mem.startsWith(u8, nl, "+") or
+                    std.mem.startsWith(u8, nl, "-") or
+                    std.mem.startsWith(u8, nl, "\\")
+            else
+                false;
+            if (is_body) {
+                last_line_end = sliceEnd(diff, bline);
+                cursor.advance();
+                continue;
+            }
+            break;
+        }
+
+        const first = bline[0];
+        if (first == ' ' or first == '+' or first == '-') {
+            if (first == '+' or first == '-') {
+                if (diff_lines_buf.items.len > 0) try diff_lines_buf.append(arena, '\n');
+                try diff_lines_buf.appendSlice(arena, bline);
+            }
+            last_line_end = sliceEnd(diff, bline);
+            cursor.advance();
+            continue;
+        }
+
+        if (first == '\\' and std.mem.startsWith(u8, bline, "\\ No newline")) {
+            if (diff_lines_buf.items.len > 0) try diff_lines_buf.append(arena, '\n');
+            try diff_lines_buf.appendSlice(arena, bline);
+            last_line_end = sliceEnd(diff, bline);
+            cursor.advance();
+            continue;
+        }
+
+        // Not a body line.
+        break;
+    }
+
+    if (diff_lines_buf.items.len == 0) return null;
+    return .{
+        .diff_lines = diff_lines_buf.items,
+        .raw_lines = diff[sliceStart(diff, hunk_header_line)..last_line_end],
+    };
+}
+
 pub fn parseDiff(arena: Allocator, diff: []const u8, mode: DiffMode, hunks: *std.ArrayList(Hunk)) !void {
     var cursor = DiffCursor.init(diff);
 
     while (cursor.peek() != null) {
-        // Look for "diff --git" to start a new file section
         const outer_line = cursor.peek().?;
         cursor.advance();
         if (!std.mem.startsWith(u8, outer_line, "diff --git ")) continue;
 
         const diff_git_line = outer_line;
+        const state = parseExtendedHeaders(&cursor);
+        if (state.is_submodule) continue;
 
-        // Parse extended headers
-        var is_new_file = false;
-        var is_deleted_file = false;
-        var is_binary = false;
-        var is_submodule = false;
-        var file_mode: []const u8 = "100644";
-        var is_symlink = false;
-        var rename_from: ?[]const u8 = null;
-        var rename_to: ?[]const u8 = null;
-
-        while (cursor.peek()) |line| {
-            if (std.mem.startsWith(u8, line, "new file mode ")) {
-                is_new_file = true;
-                file_mode = line["new file mode ".len..];
-                if (std.mem.eql(u8, file_mode, "120000")) is_symlink = true;
-            } else if (std.mem.startsWith(u8, line, "deleted file mode ")) {
-                is_deleted_file = true;
-                file_mode = line["deleted file mode ".len..];
-                if (std.mem.eql(u8, file_mode, "120000")) is_symlink = true;
-            } else if (std.mem.startsWith(u8, line, "Binary files ")) {
-                is_binary = true;
-            } else if (std.mem.startsWith(u8, line, "rename from ")) {
-                rename_from = line["rename from ".len..];
-            } else if (std.mem.startsWith(u8, line, "rename to ")) {
-                rename_to = line["rename to ".len..];
-            } else if (std.mem.startsWith(u8, line, "index ")) {
-                // Detect submodule mode (160000) and symlink mode (120000)
-                if (std.mem.endsWith(u8, line, " 160000")) {
-                    is_submodule = true;
-                } else if (std.mem.endsWith(u8, line, " 120000")) {
-                    is_symlink = true;
-                }
-            } else if (std.mem.startsWith(u8, line, "old mode ") or
-                std.mem.startsWith(u8, line, "new mode ") or
-                std.mem.startsWith(u8, line, "similarity index ") or
-                std.mem.startsWith(u8, line, "copy from ") or
-                std.mem.startsWith(u8, line, "copy to "))
-            {
-                // Extended header, continue
-            } else {
-                break; // Not an extended header
-            }
-            cursor.advance();
-        }
-
-        if (is_submodule) continue;
-
-        // Binary files: synthesize a single whole-file hunk (no line-level content)
-        if (is_binary) {
+        // Binary files: synthesize a single whole-file hunk.
+        if (state.is_binary) {
             const file_path = (try extractPathFromDiffGitLine(arena, diff_git_line)) orelse continue;
-
-            var ph: std.ArrayList(u8) = .empty;
-            try ph.appendSlice(arena, diff_git_line);
-            try ph.append(arena, '\n');
-            if (is_new_file) {
-                try ph.appendSlice(arena, "new file mode ");
-                try ph.appendSlice(arena, file_mode);
-                try ph.append(arena, '\n');
-            } else if (is_deleted_file) {
-                try ph.appendSlice(arena, "deleted file mode ");
-                try ph.appendSlice(arena, file_mode);
-                try ph.append(arena, '\n');
-            }
-
-            const sha = computeHunkSha(file_path, 0, "binary");
-            try hunks.append(arena, .{
-                .file_path = file_path,
-                .old_start = 0,
-                .old_count = 0,
-                .new_start = 0,
-                .new_count = 0,
-                .context = "",
-                .raw_lines = "",
-                .diff_lines = "",
-                .sha_hex = sha,
-                .is_new_file = is_new_file,
-                .is_deleted_file = is_deleted_file,
-                .is_untracked = false,
-                .is_symlink = is_symlink,
-                .is_binary = true,
-                .patch_header = ph.items,
-            });
+            const ph = try buildBinaryPatchHeader(arena, diff_git_line, state);
+            try hunks.append(arena, synthesizeWholeFileHunk(file_path, ph, state, true, "binary"));
             continue;
         }
 
-        // Check for empty files: new/deleted files without ---/+++ lines
+        // Empty new/deleted file with no ---/+++ at all.
         const peeked = cursor.peek();
-        const has_minus_plus = peeked != null and std.mem.startsWith(u8, peeked.?, "--- ");
-        if (!has_minus_plus and (is_new_file or is_deleted_file)) {
-            // Empty file: no ---/+++ lines, no @@ hunks.
-            // Extract path from diff --git line and synthesize a hunk.
+        const has_minus = peeked != null and std.mem.startsWith(u8, peeked.?, "--- ");
+        if (!has_minus and (state.is_new_file or state.is_deleted_file)) {
             const file_path = (try extractPathFromDiffGitLine(arena, diff_git_line)) orelse continue;
-
-            // Build patch header with synthesized ---/+++ lines
-            var ph: std.ArrayList(u8) = .empty;
-            try ph.appendSlice(arena, diff_git_line);
-            try ph.append(arena, '\n');
-            if (is_new_file) {
-                try ph.appendSlice(arena, "new file mode ");
-            } else {
-                try ph.appendSlice(arena, "deleted file mode ");
-            }
-            try ph.appendSlice(arena, file_mode);
-            try ph.append(arena, '\n');
-            if (is_deleted_file) {
-                try ph.appendSlice(arena, "--- a/");
-                try ph.appendSlice(arena, file_path);
-                try ph.append(arena, '\n');
-                try ph.appendSlice(arena, "+++ /dev/null\n");
-            } else {
-                try ph.appendSlice(arena, "--- /dev/null\n+++ b/");
-                try ph.appendSlice(arena, file_path);
-                try ph.append(arena, '\n');
-            }
-
-            const sha = computeHunkSha(file_path, 0, "");
-            try hunks.append(arena, .{
-                .file_path = file_path,
-                .old_start = 0,
-                .old_count = 0,
-                .new_start = 0,
-                .new_count = 0,
-                .context = "",
-                .raw_lines = "",
-                .diff_lines = "",
-                .sha_hex = sha,
-                .is_new_file = is_new_file,
-                .is_deleted_file = is_deleted_file,
-                .is_untracked = false,
-                .is_symlink = is_symlink,
-                .is_binary = false,
-                .patch_header = ph.items,
-            });
+            const ph = try buildEmptyFilePatchHeader(arena, diff_git_line, file_path, state);
+            try hunks.append(arena, synthesizeWholeFileHunk(file_path, ph, state, false, ""));
             continue;
         }
 
-        // Expect ---/+++ lines
+        // Standard ---/+++ lines.
         const minus_line = cursor.peek() orelse continue;
         if (!std.mem.startsWith(u8, minus_line, "--- ")) continue;
         cursor.advance();
-
         const plus_line = cursor.peek() orelse continue;
         if (!std.mem.startsWith(u8, plus_line, "+++ ")) continue;
         cursor.advance();
 
-        // Extract file path (handles both normal and C-quoted paths)
-        const file_path = if (is_deleted_file)
+        const file_path = if (state.is_deleted_file)
             (try extractDiffPath(arena, minus_line, .old)) orelse continue
         else
             (try extractDiffPath(arena, plus_line, .new)) orelse continue;
 
-        // Build patch header
-        var patch_header: []const u8 = undefined;
-        if (is_new_file or is_deleted_file) {
-            // Need full diff --git header for new/deleted files
-            var ph: std.ArrayList(u8) = .empty;
-            try ph.appendSlice(arena, diff_git_line);
-            try ph.append(arena, '\n');
-            if (is_new_file) {
-                try ph.appendSlice(arena, "new file mode ");
-            } else {
-                try ph.appendSlice(arena, "deleted file mode ");
-            }
-            try ph.appendSlice(arena, file_mode);
-            try ph.append(arena, '\n');
-            try ph.appendSlice(arena, minus_line);
-            try ph.append(arena, '\n');
-            try ph.appendSlice(arena, plus_line);
-            try ph.append(arena, '\n');
-            patch_header = ph.items;
-        } else if (rename_from != null and rename_to != null) {
-            // Renames need diff --git header + rename metadata
-            var ph: std.ArrayList(u8) = .empty;
-            try ph.appendSlice(arena, diff_git_line);
-            try ph.append(arena, '\n');
-            try ph.appendSlice(arena, "rename from ");
-            try ph.appendSlice(arena, rename_from.?);
-            try ph.append(arena, '\n');
-            try ph.appendSlice(arena, "rename to ");
-            try ph.appendSlice(arena, rename_to.?);
-            try ph.append(arena, '\n');
-            try ph.appendSlice(arena, minus_line);
-            try ph.append(arena, '\n');
-            try ph.appendSlice(arena, plus_line);
-            try ph.append(arena, '\n');
-            patch_header = ph.items;
-        } else {
-            var ph: std.ArrayList(u8) = .empty;
-            try ph.appendSlice(arena, minus_line);
-            try ph.append(arena, '\n');
-            try ph.appendSlice(arena, plus_line);
-            try ph.append(arena, '\n');
-            patch_header = ph.items;
-        }
+        const patch_header = try buildPatchHeader(arena, diff_git_line, minus_line, plus_line, state);
 
-        // Empty new/deleted file: ---/+++ present but no @@ hunk (Linux git behavior)
+        // Empty new/deleted file: ---/+++ present but no @@ hunk (some Linux git versions emit this).
         const next_peek = cursor.peek();
-        const has_at_hunk = next_peek != null and std.mem.startsWith(u8, next_peek.?, "@@ ");
-        if (!has_at_hunk and (is_new_file or is_deleted_file)) {
-            const sha = computeHunkSha(file_path, 0, "");
-            try hunks.append(arena, .{
-                .file_path = file_path,
-                .old_start = 0,
-                .old_count = 0,
-                .new_start = 0,
-                .new_count = 0,
-                .context = "",
-                .raw_lines = "",
-                .diff_lines = "",
-                .sha_hex = sha,
-                .is_new_file = is_new_file,
-                .is_deleted_file = is_deleted_file,
-                .is_untracked = false,
-                .is_symlink = is_symlink,
-                .is_binary = false,
-                .patch_header = patch_header,
-            });
+        const has_at = next_peek != null and std.mem.startsWith(u8, next_peek.?, "@@ ");
+        if (!has_at and (state.is_new_file or state.is_deleted_file)) {
+            try hunks.append(arena, synthesizeWholeFileHunk(file_path, patch_header, state, false, ""));
             continue;
         }
 
-        // Parse hunks for this file
+        // Per-hunk body parsing.
         while (cursor.peek()) |hdr| {
             if (!std.mem.startsWith(u8, hdr, "@@ ")) break;
             cursor.advance();
-            const hunk_header_line = hdr;
-            const header = parseHunkHeader(hunk_header_line) orelse continue;
-
-            // Collect body lines and diff_lines.
-            // last_line_end tracks sliceEnd of the last consumed line; initialized to the
-            // @@ line itself so raw_end is correct when no body lines are consumed.
-            var diff_lines_buf: std.ArrayList(u8) = .empty;
-            var last_line_end = sliceEnd(diff, hunk_header_line);
-
-            while (cursor.peek()) |bline| {
-                if (bline.len == 0) {
-                    // Could be empty context line (space prefix stripped?) or end of diff.
-                    // Check next line to decide.
-                    const next_line = cursor.peekNext();
-                    const is_body = if (next_line) |nl|
-                        std.mem.startsWith(u8, nl, " ") or
-                        std.mem.startsWith(u8, nl, "+") or
-                        std.mem.startsWith(u8, nl, "-") or
-                        std.mem.startsWith(u8, nl, "\\")
-                    else
-                        false;
-                    if (is_body) {
-                        last_line_end = sliceEnd(diff, bline);
-                        cursor.advance();
-                        continue;
-                    }
-                    break;
-                }
-
-                const first = bline[0];
-                if (first == ' ' or first == '+' or first == '-') {
-                    if (first == '+' or first == '-') {
-                        if (diff_lines_buf.items.len > 0) {
-                            try diff_lines_buf.append(arena, '\n');
-                        }
-                        try diff_lines_buf.appendSlice(arena, bline);
-                    }
-                    last_line_end = sliceEnd(diff, bline);
-                    cursor.advance();
-                    continue;
-                }
-
-                if (bline[0] == '\\' and std.mem.startsWith(u8, bline, "\\ No newline")) {
-                    if (diff_lines_buf.items.len > 0) {
-                        try diff_lines_buf.append(arena, '\n');
-                    }
-                    try diff_lines_buf.appendSlice(arena, bline);
-                    last_line_end = sliceEnd(diff, bline);
-                    cursor.advance();
-                    continue;
-                }
-
-                // Not a hunk body line
-                break;
-            }
-
-            // Skip hunks with no actual changes (shouldn't happen, but defensive)
-            if (diff_lines_buf.items.len == 0) continue;
-
-            // Compute raw_lines (from @@ line through end of body)
-            const raw_start = sliceStart(diff, hunk_header_line);
-            const raw_lines = diff[raw_start..last_line_end];
-
-            const sha = computeHunkSha(file_path, header.stable_line(mode), diff_lines_buf.items);
-
+            const header = parseHunkHeader(hdr) orelse continue;
+            const body = (try parseHunkBody(arena, &cursor, diff, hdr)) orelse continue;
             try hunks.append(arena, .{
                 .file_path = file_path,
                 .old_start = header.old_start,
@@ -345,13 +324,13 @@ pub fn parseDiff(arena: Allocator, diff: []const u8, mode: DiffMode, hunks: *std
                 .new_start = header.new_start,
                 .new_count = header.new_count,
                 .context = header.func_context,
-                .raw_lines = raw_lines,
-                .diff_lines = diff_lines_buf.items,
-                .sha_hex = sha,
-                .is_new_file = is_new_file,
-                .is_deleted_file = is_deleted_file,
+                .raw_lines = body.raw_lines,
+                .diff_lines = body.diff_lines,
+                .sha_hex = computeHunkSha(file_path, header.stable_line(mode), body.diff_lines),
+                .is_new_file = state.is_new_file,
+                .is_deleted_file = state.is_deleted_file,
                 .is_untracked = false,
-                .is_symlink = is_symlink,
+                .is_symlink = state.is_symlink,
                 .is_binary = false,
                 .patch_header = patch_header,
             });

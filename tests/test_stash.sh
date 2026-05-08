@@ -326,4 +326,49 @@ echo "$STAGED721" | grep -q "alpha.txt" \
     || fail "test 721: alpha.txt should still be staged after stashing beta.txt"
 pass "test 721: stash preserves staged index, only stashes the specified hunk"
 
+# ============================================================================
+# Test 722: stash --file a --file c stashes union of files (multi-file filter)
+# ============================================================================
+new_repo
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed beta./' beta.txt
+sed -i.bak '1s/.*/Changed gamma./' gamma.txt
+"$GIT_HUNK" stash --file alpha.txt --file gamma.txt > /dev/null 2>/dev/null
+WT722="$(git diff --name-only)"
+echo "$WT722" | grep -q "beta.txt" || fail "test 722: beta.txt should remain modified"
+echo "$WT722" | grep -q "alpha.txt" && fail "test 722: alpha.txt should have been stashed" || true
+echo "$WT722" | grep -q "gamma.txt" && fail "test 722: gamma.txt should have been stashed" || true
+"$GIT_HUNK" stash pop > /dev/null 2>/dev/null
+WT722_POPPED="$(git diff --name-only)"
+echo "$WT722_POPPED" | grep -q "alpha.txt" || fail "test 722: alpha.txt should be restored after pop"
+echo "$WT722_POPPED" | grep -q "gamma.txt" || fail "test 722: gamma.txt should be restored after pop"
+pass "test 722: stash --file a --file c stashes union, restores after pop"
+
+# ============================================================================
+# Test 723: stash mixed binary + text in --all preserves both after pop (T3)
+# ============================================================================
+new_repo
+sed -i.bak '1s/.*/Mixed test./' alpha.txt
+printf '\x00\x01\x02BIN' > binfile.bin
+git add binfile.bin > /dev/null 2>&1
+git commit -q -m "add binfile" > /dev/null 2>&1
+printf '\x00\x01\x02BINMODIFIED' > binfile.bin
+
+"$GIT_HUNK" stash --all > /dev/null 2>/dev/null
+
+# Both should be removed from worktree by stash
+[[ "$(cat alpha.txt | head -1)" != "Mixed test." ]] \
+    || fail "test 723: alpha.txt change should be stashed away"
+[[ "$(cat binfile.bin)" != *"MODIFIED"* ]] \
+    || fail "test 723: binfile.bin change should be stashed away"
+
+"$GIT_HUNK" stash pop > /dev/null 2>/dev/null
+
+# Both should be restored
+[[ "$(head -1 alpha.txt)" == "Mixed test." ]] \
+    || fail "test 723: alpha.txt should be restored after pop"
+grep -q "MODIFIED" binfile.bin \
+    || fail "test 723: binfile.bin should be restored with MODIFIED contents after pop"
+pass "test 723: stash --all with mixed text + binary survives a pop round-trip"
+
 report_results

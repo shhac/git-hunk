@@ -272,4 +272,20 @@ echo "$OUT1015" | grep -q "^would-commit" \
     || fail "test 1015: expected 'would-commit' verb in porcelain dry-run, got: '$OUT1015'"
 pass "test 1015: commit --dry-run --porcelain uses would-commit verb"
 
+# ============================================================================
+# Test 1016: commit --file a --file c -m commits union of files (multi-file)
+# ============================================================================
+new_repo
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed beta./' beta.txt
+sed -i.bak '1s/.*/Changed gamma./' gamma.txt
+"$GIT_HUNK" commit --file alpha.txt --file gamma.txt -m "test 1016: commit a + c" > /dev/null 2>/dev/null
+COMMITTED_FILES="$(git show --name-only --pretty=format: HEAD | tr -s '\n')"
+echo "$COMMITTED_FILES" | grep -q "alpha.txt" || fail "test 1016: alpha.txt missing from commit"
+echo "$COMMITTED_FILES" | grep -q "gamma.txt" || fail "test 1016: gamma.txt missing from commit"
+echo "$COMMITTED_FILES" | grep -q "beta.txt" && fail "test 1016: beta.txt leaked into commit" || true
+WT1016="$(git diff --name-only)"
+echo "$WT1016" | grep -q "beta.txt" || fail "test 1016: beta.txt should still be modified in worktree"
+pass "test 1016: commit --file a --file c -m commits union, leaves b modified"
+
 report_results
