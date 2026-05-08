@@ -11,9 +11,7 @@ fn getEnv(name: [*:0]const u8) ?[]const u8 {
     return null;
 }
 
-fn defaultIo() std.Io {
-    return types.getIo();
-}
+const defaultIo = types.getIo;
 
 /// Write the file path with a trailing '@' suffix for symlinks (like ls -F).
 pub fn writeFilePath(stdout: *std.Io.Writer, h: anytype) !void {
@@ -391,7 +389,6 @@ pub fn getTerminalWidth() u16 {
 // Tests
 // ============================================================================
 
-const diff_mod = @import("diff.zig");
 const testMakeHunk = types.testMakeHunk;
 
 test "firstChangedLine empty input" {
@@ -498,7 +495,7 @@ test "printHunkPorcelain format" {
     var w = std.Io.Writer.Allocating.init(allocator);
     defer w.deinit();
 
-    const sha = diff_mod.computeHunkSha("a.zig", 1, "+hello");
+    const sha = types.computeHunkSha("a.zig", 1, "+hello");
     var h = testMakeHunk("a.zig", 1, 1, 1, 1);
     h.sha_hex = sha;
     h.diff_lines = "+hello";

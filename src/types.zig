@@ -174,6 +174,26 @@ pub const CommitOptions = struct {
     context: ?u32 = null,
 };
 
+/// Compute the stable SHA1 fingerprint of a hunk: SHA1(file_path || \x00 ||
+/// stable_line_decimal || \x00 || diff_lines). Returns 40-char lowercase hex.
+pub fn computeHunkSha(file_path: []const u8, stable_line: u32, diff_lines: []const u8) [40]u8 {
+    var hasher = std.crypto.hash.Sha1.init(.{});
+    hasher.update(file_path);
+    hasher.update(&[_]u8{0});
+
+    var line_buf: [20]u8 = undefined;
+    const line_str = std.fmt.bufPrint(&line_buf, "{d}", .{stable_line}) catch "0";
+    hasher.update(line_str);
+    hasher.update(&[_]u8{0});
+
+    hasher.update(diff_lines);
+
+    var digest: [std.crypto.hash.Sha1.digest_length]u8 = undefined;
+    hasher.final(&digest);
+
+    return std.fmt.bytesToHex(digest, .lower);
+}
+
 /// Returns true if `file_path` matches the `--file` filter set.
 /// Empty filter slice means "no filter, match everything".
 pub fn matchesFileFilter(file_path: []const u8, filter: []const []const u8) bool {
@@ -277,4 +297,22 @@ test "LineSpec.containsLine multiple ranges" {
     try std.testing.expect(!spec.containsLine(4));
     try std.testing.expect(spec.containsLine(7));
     try std.testing.expect(!spec.containsLine(8));
+}
+
+test "computeHunkSha deterministic" {
+    const sha1 = computeHunkSha("src/main.zig", 10, "+added line\n-removed line");
+    const sha2 = computeHunkSha("src/main.zig", 10, "+added line\n-removed line");
+    try std.testing.expectEqualStrings(&sha1, &sha2);
+}
+
+test "computeHunkSha different path" {
+    const sha1 = computeHunkSha("a.zig", 10, "+line");
+    const sha2 = computeHunkSha("b.zig", 10, "+line");
+    try std.testing.expect(!std.mem.eql(u8, &sha1, &sha2));
+}
+
+test "computeHunkSha different line" {
+    const sha1 = computeHunkSha("a.zig", 10, "+line");
+    const sha2 = computeHunkSha("a.zig", 11, "+line");
+    try std.testing.expect(!std.mem.eql(u8, &sha1, &sha2));
 }

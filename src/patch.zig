@@ -1,6 +1,5 @@
 const std = @import("std");
 const types = @import("types.zig");
-const diff_mod = @import("diff.zig");
 
 const Allocator = std.mem.Allocator;
 const Hunk = types.Hunk;
@@ -51,6 +50,53 @@ pub fn collectUniqueFilePaths(arena: Allocator, matches: []const MatchedHunk) ![
         if (!already_present) try list.append(arena, m.hunk.file_path);
     }
     return list.items;
+}
+
+/// A 4-way split of matched hunks by `is_untracked` × `is_binary`, plus deduped
+/// path lists for the binary buckets. Every slice is arena-owned.
+pub const HunkPartition = struct {
+    tracked_text: []const MatchedHunk,
+    tracked_binary: []const MatchedHunk,
+    untracked_text: []const MatchedHunk,
+    untracked_binary: []const MatchedHunk,
+    /// Deduped file paths from `tracked_binary`.
+    tracked_binary_paths: []const []const u8,
+    /// Deduped file paths from `untracked_binary`.
+    untracked_binary_paths: []const []const u8,
+    /// Deduped file paths from `tracked_binary` + `untracked_binary`.
+    binary_paths: []const []const u8,
+};
+
+/// Partition matched hunks into tracked-text, tracked-binary, untracked-text,
+/// untracked-binary buckets plus deduped path lists for the binary cases.
+/// Arena-allocates all returned slices.
+pub fn partitionByKind(arena: Allocator, matches: []const MatchedHunk) !HunkPartition {
+    var tracked_text: std.ArrayList(MatchedHunk) = .empty;
+    var tracked_binary: std.ArrayList(MatchedHunk) = .empty;
+    var untracked_text: std.ArrayList(MatchedHunk) = .empty;
+    var untracked_binary: std.ArrayList(MatchedHunk) = .empty;
+    for (matches) |m| {
+        const list = if (m.hunk.is_untracked)
+            (if (m.hunk.is_binary) &untracked_binary else &untracked_text)
+        else
+            (if (m.hunk.is_binary) &tracked_binary else &tracked_text);
+        try list.append(arena, m);
+    }
+
+    return .{
+        .tracked_text = tracked_text.items,
+        .tracked_binary = tracked_binary.items,
+        .untracked_text = untracked_text.items,
+        .untracked_binary = untracked_binary.items,
+        .tracked_binary_paths = try collectUniqueFilePaths(arena, tracked_binary.items),
+        .untracked_binary_paths = try collectUniqueFilePaths(arena, untracked_binary.items),
+        .binary_paths = blk: {
+            var combined: std.ArrayList(MatchedHunk) = .empty;
+            try combined.appendSlice(arena, tracked_binary.items);
+            try combined.appendSlice(arena, untracked_binary.items);
+            break :blk try collectUniqueFilePaths(arena, combined.items);
+        },
+    };
 }
 
 /// Build one or more patches from matched hunks. Returns multiple patches when
@@ -220,7 +266,7 @@ fn buildFilteredHunkPatch(arena: Allocator, h: *const Hunk, line_spec: LineSpec)
 // ============================================================================
 
 const testMakeHunk = types.testMakeHunk;
-const computeHunkSha = diff_mod.computeHunkSha;
+const computeHunkSha = types.computeHunkSha;
 
 test "hunkPatchOrder same file by line" {
     const a = testMakeHunk("a.txt", 5, 3, 5, 3);

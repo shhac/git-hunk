@@ -7,8 +7,16 @@ const EnvMap = std.process.Environ.Map;
 const DiffMode = types.DiffMode;
 const fatal = types.fatal;
 
-fn defaultIo() Io {
-    return types.getIo();
+const defaultIo = types.getIo;
+
+/// Trim a trailing newline from `owned` (allocated by `allocator`) and shrink
+/// the allocation if needed. Takes ownership: caller must not free `owned`.
+fn trimAndShrink(allocator: Allocator, owned: []u8) ![]u8 {
+    const trimmed = std.mem.trimEnd(u8, owned, "\n");
+    if (trimmed.len == owned.len) return owned;
+    const duped = try allocator.dupe(u8, trimmed);
+    allocator.free(owned);
+    return duped;
 }
 
 const RunOpts = struct {
@@ -106,12 +114,7 @@ fn runGitCapture(allocator: Allocator, argv: []const []const u8, opts: RunOpts, 
         fatal("{s} exited with code {d}", .{ label, result.exit_code });
     }
 
-    // Trim trailing newline and dupe to right-size the allocation
-    const trimmed = std.mem.trimEnd(u8, result.stdout, "\n");
-    if (trimmed.len == result.stdout.len) return result.stdout;
-    const duped = try allocator.dupe(u8, trimmed);
-    allocator.free(result.stdout);
-    return duped;
+    return trimAndShrink(allocator, result.stdout);
 }
 
 pub fn runGitDiff(allocator: Allocator, mode: DiffMode, ref: ?[]const u8, context: ?u32) ![]u8 {
@@ -122,59 +125,30 @@ pub fn runGitDiff(allocator: Allocator, mode: DiffMode, ref: ?[]const u8, contex
 /// Pass an empty slice for no file filter (equivalent to runGitDiff).
 pub fn runGitDiffFiles(allocator: Allocator, mode: DiffMode, ref: ?[]const u8, context: ?u32, file_paths: []const []const u8) ![]u8 {
     // Base args: git diff [--cached] [ref..] [-U<n>] --src-prefix=a/ --dst-prefix=b/ --no-color [-- file1 ...]
-    // Use stack buffer for the common case (no file paths, no ref); heap-allocate only when needed.
-    var stack_buf: [10][]const u8 = undefined;
-    const argv_buf = if (file_paths.len == 0)
-        &stack_buf
-    else blk: {
-        const max_args = 10 + 1 + file_paths.len;
-        break :blk try allocator.alloc([]const u8, max_args);
-    };
-    defer if (file_paths.len > 0) allocator.free(argv_buf);
-    var argc: usize = 0;
-    argv_buf[argc] = "git";
-    argc += 1;
-    argv_buf[argc] = "diff";
-    argc += 1;
-    if (mode == .staged) {
-        argv_buf[argc] = "--cached";
-        argc += 1;
-    }
+    var argv: std.ArrayList([]const u8) = .empty;
+    defer argv.deinit(allocator);
+    try argv.appendSlice(allocator, &.{ "git", "diff" });
+    if (mode == .staged) try argv.append(allocator, "--cached");
     if (ref) |r| {
         if (std.mem.indexOf(u8, r, "..")) |dot_pos| {
             // Range: A..B → two separate positional args
-            argv_buf[argc] = r[0..dot_pos];
-            argc += 1;
-            argv_buf[argc] = r[dot_pos + 2 ..];
-            argc += 1;
+            try argv.append(allocator, r[0..dot_pos]);
+            try argv.append(allocator, r[dot_pos + 2 ..]);
         } else {
-            // Single ref
-            argv_buf[argc] = r;
-            argc += 1;
+            try argv.append(allocator, r);
         }
     }
+    var context_buf: [16]u8 = undefined;
     if (context) |ctx| {
-        var context_buf: [16]u8 = undefined;
-        argv_buf[argc] = std.fmt.bufPrint(&context_buf, "-U{d}", .{ctx}) catch "-U0";
-        argc += 1;
+        try argv.append(allocator, std.fmt.bufPrint(&context_buf, "-U{d}", .{ctx}) catch "-U0");
     }
-    argv_buf[argc] = "--src-prefix=a/";
-    argc += 1;
-    argv_buf[argc] = "--dst-prefix=b/";
-    argc += 1;
-    argv_buf[argc] = "--no-color";
-    argc += 1;
+    try argv.appendSlice(allocator, &.{ "--src-prefix=a/", "--dst-prefix=b/", "--no-color" });
     if (file_paths.len > 0) {
-        argv_buf[argc] = "--";
-        argc += 1;
-        for (file_paths) |fp| {
-            argv_buf[argc] = fp;
-            argc += 1;
-        }
+        try argv.append(allocator, "--");
+        try argv.appendSlice(allocator, file_paths);
     }
-    const argv: []const []const u8 = argv_buf[0..argc];
 
-    const result = try runCommand(allocator, argv, .{ .max_bytes = 10 * 1024 * 1024 });
+    const result = try runCommand(allocator, argv.items, .{ .max_bytes = 10 * 1024 * 1024 });
     defer allocator.free(result.stderr);
     if (result.exit_code != 0) {
         allocator.free(result.stdout);
@@ -187,29 +161,15 @@ pub fn runGitDiffFiles(allocator: Allocator, mode: DiffMode, ref: ?[]const u8, c
 pub const ApplyTarget = enum { index, worktree };
 
 pub fn runGitApply(allocator: Allocator, patch: []const u8, reverse: bool, target: ApplyTarget, check_only: bool, ref: ?[]const u8) !void {
-    var argv_buf: [7][]const u8 = undefined;
-    var argc: usize = 0;
-    argv_buf[argc] = "git";
-    argc += 1;
-    argv_buf[argc] = "apply";
-    argc += 1;
-    if (target == .index) {
-        argv_buf[argc] = "--cached";
-        argc += 1;
-    }
-    if (reverse) {
-        argv_buf[argc] = "--reverse";
-        argc += 1;
-    }
-    argv_buf[argc] = "--unidiff-zero";
-    argc += 1;
-    if (check_only) {
-        argv_buf[argc] = "--check";
-        argc += 1;
-    }
-    const argv: []const []const u8 = argv_buf[0..argc];
+    var argv: std.ArrayList([]const u8) = .empty;
+    defer argv.deinit(allocator);
+    try argv.appendSlice(allocator, &.{ "git", "apply" });
+    if (target == .index) try argv.append(allocator, "--cached");
+    if (reverse) try argv.append(allocator, "--reverse");
+    try argv.append(allocator, "--unidiff-zero");
+    if (check_only) try argv.append(allocator, "--check");
 
-    const result = runCommand(allocator, argv, .{ .stdin_data = patch }) catch |err| {
+    const result = runCommand(allocator, argv.items, .{ .stdin_data = patch }) catch |err| {
         if (err == error.AbnormalTermination) {
             std.debug.print("error: git apply terminated abnormally\n", .{});
             return error.PatchFailed;
@@ -347,11 +307,7 @@ pub fn runGitSymbolicRef(allocator: Allocator) !?[]u8 {
         allocator.free(result.stdout);
         return null;
     }
-    const trimmed = std.mem.trimEnd(u8, result.stdout, "\n");
-    if (trimmed.len == result.stdout.len) return result.stdout;
-    const duped = try allocator.dupe(u8, trimmed);
-    allocator.free(result.stdout);
-    return duped;
+    return try trimAndShrink(allocator, result.stdout);
 }
 
 /// Run `git log --oneline -1 HEAD` and return the trimmed output.
@@ -378,33 +334,12 @@ pub fn runGitWriteTreeWithEnv(allocator: Allocator, env_map: *const EnvMap) ![]u
 
 /// Run `git commit-tree -p <p1> [-p <p2>] -m <msg> <tree>` and return the trimmed commit SHA.
 pub fn runGitCommitTree(allocator: Allocator, tree_sha: []const u8, parents: []const []const u8, message: []const u8) ![]u8 {
-    // Args: "git" "commit-tree" [-p <parent>]... "-m" <message> <tree>
-    const arg_count = 5 + 2 * parents.len;
-    var stack_buf: [11][]const u8 = undefined; // fits up to 3 parents
-    const argv_buf = if (arg_count <= stack_buf.len)
-        &stack_buf
-    else
-        try allocator.alloc([]const u8, arg_count);
-    defer if (arg_count > stack_buf.len) allocator.free(argv_buf);
-
-    var argc: usize = 0;
-    argv_buf[argc] = "git";
-    argc += 1;
-    argv_buf[argc] = "commit-tree";
-    argc += 1;
-    for (parents) |p| {
-        argv_buf[argc] = "-p";
-        argc += 1;
-        argv_buf[argc] = p;
-        argc += 1;
-    }
-    argv_buf[argc] = "-m";
-    argc += 1;
-    argv_buf[argc] = message;
-    argc += 1;
-    argv_buf[argc] = tree_sha;
-    argc += 1;
-    return runGitCapture(allocator, argv_buf[0..argc], .{}, "git commit-tree");
+    var argv: std.ArrayList([]const u8) = .empty;
+    defer argv.deinit(allocator);
+    try argv.appendSlice(allocator, &.{ "git", "commit-tree" });
+    for (parents) |p| try argv.appendSlice(allocator, &.{ "-p", p });
+    try argv.appendSlice(allocator, &.{ "-m", message, tree_sha });
+    return runGitCapture(allocator, argv.items, .{}, "git commit-tree");
 }
 
 /// Run `git stash store -m <msg> <sha>`.
@@ -442,56 +377,6 @@ pub fn runGitUpdateIndexCacheinfo(allocator: Allocator, mode: []const u8, blob_h
     allocator.free(out);
 }
 
-/// Run `git diff HEAD [-U<n>] --src-prefix=a/ --dst-prefix=b/ --no-color [-- files...]`
-/// and return the raw diff output.
-pub fn runGitDiffHead(allocator: Allocator, context: ?u32, file_paths: []const []const u8) ![]u8 {
-    var stack_buf: [8][]const u8 = undefined;
-    const argv_buf = if (file_paths.len == 0)
-        &stack_buf
-    else blk: {
-        const max_args = 9 + 1 + file_paths.len;
-        break :blk try allocator.alloc([]const u8, max_args);
-    };
-    defer if (file_paths.len > 0) allocator.free(argv_buf);
-
-    var argc: usize = 0;
-    argv_buf[argc] = "git";
-    argc += 1;
-    argv_buf[argc] = "diff";
-    argc += 1;
-    argv_buf[argc] = "HEAD";
-    argc += 1;
-    var context_buf: [16]u8 = undefined;
-    if (context) |ctx| {
-        argv_buf[argc] = std.fmt.bufPrint(&context_buf, "-U{d}", .{ctx}) catch "-U0";
-        argc += 1;
-    }
-    argv_buf[argc] = "--src-prefix=a/";
-    argc += 1;
-    argv_buf[argc] = "--dst-prefix=b/";
-    argc += 1;
-    argv_buf[argc] = "--no-color";
-    argc += 1;
-    if (file_paths.len > 0) {
-        argv_buf[argc] = "--";
-        argc += 1;
-        for (file_paths) |fp| {
-            argv_buf[argc] = fp;
-            argc += 1;
-        }
-    }
-    const argv: []const []const u8 = argv_buf[0..argc];
-
-    const result = try runCommand(allocator, argv, .{ .max_bytes = 10 * 1024 * 1024 });
-    defer allocator.free(result.stderr);
-    if (result.exit_code != 0) {
-        allocator.free(result.stdout);
-        if (result.stderr.len > 0) std.debug.print("{s}", .{result.stderr});
-        fatal("git diff exited with code {d}", .{result.exit_code});
-    }
-    return result.stdout;
-}
-
 /// Run `git rev-parse --show-toplevel` and return the trimmed repo root path.
 pub fn runGitToplevel(allocator: Allocator) ![]u8 {
     const result = try runCommand(allocator, &.{ "git", "rev-parse", "--show-toplevel" }, .{});
@@ -500,11 +385,7 @@ pub fn runGitToplevel(allocator: Allocator) ![]u8 {
         allocator.free(result.stdout);
         return error.NotAGitRepo;
     }
-    const trimmed = std.mem.trimEnd(u8, result.stdout, "\n");
-    if (trimmed.len == result.stdout.len) return result.stdout;
-    const duped = try allocator.dupe(u8, trimmed);
-    allocator.free(result.stdout);
-    return duped;
+    return trimAndShrink(allocator, result.stdout);
 }
 
 // ─── Commit plumbing helpers ──────────────────────────────────────────
@@ -545,16 +426,8 @@ pub fn runGitCommit(allocator: Allocator, args: struct { message: []const u8, am
     // git writes the commit summary to stderr; return that if stdout is empty
     if (result.stderr.len > 0) {
         allocator.free(result.stdout);
-        const trimmed = std.mem.trimEnd(u8, result.stderr, "\n");
-        if (trimmed.len == result.stderr.len) return result.stderr;
-        const duped = try allocator.dupe(u8, trimmed);
-        allocator.free(result.stderr);
-        return duped;
+        return trimAndShrink(allocator, result.stderr);
     }
     allocator.free(result.stderr);
-    const trimmed = std.mem.trimEnd(u8, result.stdout, "\n");
-    if (trimmed.len == result.stdout.len) return result.stdout;
-    const duped = try allocator.dupe(u8, trimmed);
-    allocator.free(result.stdout);
-    return duped;
+    return trimAndShrink(allocator, result.stdout);
 }

@@ -15,9 +15,7 @@ const StashOptions = types.StashOptions;
 const EnvMap = std.process.Environ.Map;
 const rangesOverlap = types.rangesOverlap;
 
-fn defaultIo() std.Io {
-    return types.getIo();
-}
+const defaultIo = types.getIo;
 
 fn cloneEnvMap(allocator: Allocator, src: *const EnvMap) !EnvMap {
     var dst: EnvMap = .{ .array_hash_map = .empty, .allocator = allocator };
@@ -27,6 +25,35 @@ fn cloneEnvMap(allocator: Allocator, src: *const EnvMap) !EnvMap {
         try dst.put(entry.key_ptr.*, entry.value_ptr.*);
     }
     return dst;
+}
+
+/// A throwaway git index in /tmp pre-populated by GIT_INDEX_FILE in `env_map`.
+/// Use as `var tmp = try createTempIndex(...); defer tmp.deinit();`.
+const TempIndex = struct {
+    env_map: EnvMap,
+    path_z: [:0]const u8,
+
+    pub fn deinit(self: *TempIndex) void {
+        std.Io.Dir.cwd().deleteFile(defaultIo(), self.path_z) catch {};
+        self.env_map.deinit();
+    }
+};
+
+/// Build a temporary git index file under /tmp with a unique random suffix and
+/// return an env map (cloned from `parent_env`) that points GIT_INDEX_FILE at
+/// it. `prefix` becomes part of the filename for human-readable diagnostics.
+fn createTempIndex(arena: Allocator, allocator: Allocator, parent_env: *const EnvMap, prefix: []const u8) !TempIndex {
+    var random_bytes: [8]u8 = undefined;
+    std.Io.random(defaultIo(), &random_bytes);
+    const random_val = std.mem.readInt(u64, &random_bytes, .little);
+    var path_buf: [96]u8 = undefined;
+    const tmp_path = std.fmt.bufPrint(&path_buf, "/tmp/git-hunk-{s}idx.{x:0>16}", .{ prefix, random_val }) catch unreachable;
+    const path_z = try arena.dupeZ(u8, tmp_path);
+
+    var env_map = try cloneEnvMap(allocator, parent_env);
+    errdefer env_map.deinit();
+    try env_map.put("GIT_INDEX_FILE", path_z);
+    return .{ .env_map = env_map, .path_z = path_z };
 }
 
 /// Worktree line range [start, end] inclusive.
@@ -334,7 +361,7 @@ pub fn buildTrackedStashTree(
     const tracked_file_paths = try patch_mod.collectUniqueFilePaths(arena, tracked_matched);
 
     // Run HEAD-relative diff + parse
-    const head_diff_output = try git.runGitDiffHead(allocator, context, tracked_file_paths);
+    const head_diff_output = try git.runGitDiffFiles(allocator, .unstaged, "HEAD", context, tracked_file_paths);
     defer allocator.free(head_diff_output);
 
     var head_hunks: std.ArrayList(Hunk) = .empty;
@@ -362,27 +389,15 @@ pub fn buildTrackedStashTree(
     std.mem.sort(MatchedHunk, head_matched_sorted, {}, patch_mod.matchedHunkPatchOrder);
     const head_patches = try patch_mod.buildCombinedPatches(arena, head_matched_sorted);
 
-    // Temp index pipeline
-    const io = defaultIo();
-    var random_bytes: [8]u8 = undefined;
-    std.Io.random(io, &random_bytes);
-    const random_val = std.mem.readInt(u64, &random_bytes, .little);
-    var tmp_path_buf: [64]u8 = undefined;
-    const tmp_idx_path = std.fmt.bufPrint(&tmp_path_buf, "/tmp/git-hunk-idx.{x:0>16}", .{random_val}) catch unreachable;
-    const tmp_idx_z = try arena.dupeZ(u8, tmp_idx_path);
+    var tmp = try createTempIndex(arena, allocator, parent_env, "");
+    defer tmp.deinit();
 
-    var env_map = try cloneEnvMap(allocator, parent_env);
-    defer env_map.deinit();
-    try env_map.put("GIT_INDEX_FILE", tmp_idx_z);
-
-    defer std.Io.Dir.cwd().deleteFile(io, tmp_idx_z) catch {};
-
-    try git.runGitReadTreeWithEnv(allocator, head_tree, &env_map);
+    try git.runGitReadTreeWithEnv(allocator, head_tree, &tmp.env_map);
     for (head_patches) |hp| {
-        try git.runGitApplyWithEnv(allocator, hp, &env_map);
+        try git.runGitApplyWithEnv(allocator, hp, &tmp.env_map);
     }
 
-    const stash_tree = try git.runGitWriteTreeWithEnv(allocator, &env_map);
+    const stash_tree = try git.runGitWriteTreeWithEnv(allocator, &tmp.env_map);
     return .{ .index_patches = index_patches, .stash_tree = stash_tree };
 }
 
@@ -397,21 +412,11 @@ pub fn buildUntrackedCommit(
     untracked_matched: []const MatchedHunk,
     parent_env: *const EnvMap,
 ) ![]const u8 {
-    const io = defaultIo();
-    var ut_random: [8]u8 = undefined;
-    std.Io.random(io, &ut_random);
-    const ut_random_val = std.mem.readInt(u64, &ut_random, .little);
-    var ut_path_buf: [80]u8 = undefined;
-    const ut_path = std.fmt.bufPrint(&ut_path_buf, "/tmp/git-hunk-ut-idx.{x:0>16}", .{ut_random_val}) catch unreachable;
-    const ut_path_z = try arena.dupeZ(u8, ut_path);
-
-    var ut_env = try cloneEnvMap(allocator, parent_env);
-    defer ut_env.deinit();
-    try ut_env.put("GIT_INDEX_FILE", ut_path_z);
-
-    defer std.Io.Dir.cwd().deleteFile(io, ut_path_z) catch {};
+    var tmp = try createTempIndex(arena, allocator, parent_env, "ut-");
+    defer tmp.deinit();
 
     // Hash each untracked file and add to temp index
+    const io = defaultIo();
     const cwd_dir = std.Io.Dir.cwd();
     for (untracked_matched) |m| {
         var link_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
@@ -430,10 +435,10 @@ pub fn buildUntrackedCommit(
             const stat = cwd_dir.statFile(io, m.hunk.file_path, .{}) catch break :blk "100644";
             break :blk if (stat.permissions.toMode() & std.posix.S.IXUSR != 0) "100755" else "100644";
         };
-        try git.runGitUpdateIndexCacheinfo(allocator, mode, blob_sha, m.hunk.file_path, &ut_env);
+        try git.runGitUpdateIndexCacheinfo(allocator, mode, blob_sha, m.hunk.file_path, &tmp.env_map);
     }
 
-    const untracked_tree = try git.runGitWriteTreeWithEnv(allocator, &ut_env);
+    const untracked_tree = try git.runGitWriteTreeWithEnv(allocator, &tmp.env_map);
     defer allocator.free(untracked_tree);
 
     const ut_msg = try std.fmt.allocPrint(arena, "untracked files on {s}: {s}", .{ branch_name, head_msg });
@@ -480,24 +485,13 @@ pub fn addBinaryFilesToTree(
     binary_paths: []const []const u8,
     parent_env: *const EnvMap,
 ) ![]const u8 {
-    const io = defaultIo();
-    var random_bytes: [8]u8 = undefined;
-    std.Io.random(io, &random_bytes);
-    const random_val = std.mem.readInt(u64, &random_bytes, .little);
-    var tmp_path_buf: [64]u8 = undefined;
-    const tmp_idx_path = std.fmt.bufPrint(&tmp_path_buf, "/tmp/git-hunk-bin-idx.{x:0>16}", .{random_val}) catch unreachable;
-    const tmp_idx_z = try arena.dupeZ(u8, tmp_idx_path);
+    var tmp = try createTempIndex(arena, allocator, parent_env, "bin-");
+    defer tmp.deinit();
 
-    var env_map = try cloneEnvMap(allocator, parent_env);
-    defer env_map.deinit();
-    try env_map.put("GIT_INDEX_FILE", tmp_idx_z);
+    try git.runGitReadTreeWithEnv(allocator, current_tree, &tmp.env_map);
+    try git.runGitAddFilesWithEnv(allocator, binary_paths, &tmp.env_map);
 
-    defer std.Io.Dir.cwd().deleteFile(io, tmp_idx_z) catch {};
-
-    try git.runGitReadTreeWithEnv(allocator, current_tree, &env_map);
-    try git.runGitAddFilesWithEnv(allocator, binary_paths, &env_map);
-
-    return git.runGitWriteTreeWithEnv(allocator, &env_map);
+    return git.runGitWriteTreeWithEnv(allocator, &tmp.env_map);
 }
 
 /// Print per-hunk stash results and summary to stdout/stderr.
@@ -529,7 +523,7 @@ pub fn reportStashResults(stdout: *std.Io.Writer, opts: StashOptions, matched: [
 // ============================================================================
 
 const testMakeHunk = types.testMakeHunk;
-const computeHunkSha = @import("diff.zig").computeHunkSha;
+const computeHunkSha = types.computeHunkSha;
 
 test "computeLineSpecForOverlap merged hunk walkthrough" {
     // From investigation notes: HEAD diff merges B→X (staged) and D→Y (unstaged)

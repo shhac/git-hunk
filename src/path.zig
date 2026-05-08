@@ -5,9 +5,7 @@ const types = @import("types.zig");
 
 const Allocator = std.mem.Allocator;
 
-fn defaultIo() Io {
-    return types.getIo();
-}
+const defaultIo = types.getIo;
 
 /// Resolve a path relative to the original cwd into a repo-relative path.
 /// prefix: path components from repo root to original cwd (e.g., "bar/sub")

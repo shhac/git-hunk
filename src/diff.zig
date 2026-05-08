@@ -451,25 +451,7 @@ fn parseU32(s: *[]const u8) ?u32 {
     return val;
 }
 
-pub fn computeHunkSha(file_path: []const u8, stable_line: u32, diff_lines: []const u8) [40]u8 {
-    // SHA1(file_path || '\x00' || stable_start_line_decimal || '\x00' || diff_lines)
-    var hasher = std.crypto.hash.Sha1.init(.{});
-
-    hasher.update(file_path);
-    hasher.update(&[_]u8{0});
-
-    var line_buf: [20]u8 = undefined;
-    const line_str = std.fmt.bufPrint(&line_buf, "{d}", .{stable_line}) catch "0";
-    hasher.update(line_str);
-    hasher.update(&[_]u8{0});
-
-    hasher.update(diff_lines);
-
-    var digest: [std.crypto.hash.Sha1.digest_length]u8 = undefined;
-    hasher.final(&digest);
-
-    return std.fmt.bytesToHex(digest, .lower);
-}
+pub const computeHunkSha = types.computeHunkSha;
 
 /// C-unescape a git quoted path (handles \t, \n, \\, \", and \ooo octal).
 /// Returns the input unchanged if no backslashes are present.
@@ -617,24 +599,6 @@ test "parseHunkHeader new file" {
     try std.testing.expectEqual(@as(u32, 0), h.old_count);
     try std.testing.expectEqual(@as(u32, 1), h.new_start);
     try std.testing.expectEqual(@as(u32, 42), h.new_count);
-}
-
-test "computeHunkSha deterministic" {
-    const sha1 = computeHunkSha("src/main.zig", 10, "+added line\n-removed line");
-    const sha2 = computeHunkSha("src/main.zig", 10, "+added line\n-removed line");
-    try std.testing.expectEqualStrings(&sha1, &sha2);
-}
-
-test "computeHunkSha different path" {
-    const sha1 = computeHunkSha("a.zig", 10, "+line");
-    const sha2 = computeHunkSha("b.zig", 10, "+line");
-    try std.testing.expect(!std.mem.eql(u8, &sha1, &sha2));
-}
-
-test "computeHunkSha different line" {
-    const sha1 = computeHunkSha("a.zig", 10, "+line");
-    const sha2 = computeHunkSha("a.zig", 11, "+line");
-    try std.testing.expect(!std.mem.eql(u8, &sha1, &sha2));
 }
 
 test "stable_line unstaged uses new_start" {
