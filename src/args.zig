@@ -29,8 +29,11 @@ const CommonFlags = struct {
 
 /// Copy common flags into an options struct, using comptime field detection
 /// to handle structs that don't have all fields (e.g. CountOptions lacks no_color/output).
-/// Transfers ownership of `common.file_filter` into `opts.file_filter` as an owned slice;
-/// after this returns successfully, `common.file_filter` is empty.
+/// Transfers ownership of `common.file_filter` into `opts.file_filter` as an owned slice.
+/// After this call, `common.file_filter` is empty regardless of success or error
+/// (the only failure path is `toOwnedSlice` OOM; the list is freed before returning
+/// the error). This makes the parser-side errdefer for `common` a no-op after the
+/// call — only `opts.file_filter` needs further cleanup.
 fn applyCommonFlags(allocator: Allocator, common: *CommonFlags, opts: anytype) !void {
     const fields = .{ "ref", "diff_filter", "no_color", "output", "context", "verbosity" };
     inline for (fields) |name| {
@@ -39,7 +42,11 @@ fn applyCommonFlags(allocator: Allocator, common: *CommonFlags, opts: anytype) !
         }
     }
     if (comptime @hasField(@TypeOf(opts.*), "file_filter")) {
-        opts.file_filter = try common.file_filter.toOwnedSlice(allocator);
+        opts.file_filter = common.file_filter.toOwnedSlice(allocator) catch |err| {
+            common.file_filter.deinit(allocator);
+            common.file_filter = .empty;
+            return err;
+        };
     } else {
         common.file_filter.deinit(allocator);
         common.file_filter = .empty;
@@ -113,6 +120,23 @@ fn parseCommonFlag(allocator: Allocator, arg: []const u8, i: *usize, args: []con
     return false;
 }
 
+/// Print a "unknown flag" error and return error.UnknownFlag. Used by every parser.
+fn unknownFlag(arg: []const u8) error{UnknownFlag} {
+    std.debug.print("error: unknown flag '{s}'\n", .{arg});
+    return error.UnknownFlag;
+}
+
+/// `--staged` is incompatible with a range ref (`A..B`). Returns InvalidArgument
+/// (after printing) when both are present.
+fn validateRefStagedCombo(ref: ?[]const u8, mode: DiffMode) error{InvalidArgument}!void {
+    if (ref) |r| {
+        if (std.mem.indexOf(u8, r, "..") != null and mode == .staged) {
+            std.debug.print("error: --staged cannot be used with a range ref (contains '..')\n", .{});
+            return error.InvalidArgument;
+        }
+    }
+}
+
 pub fn parseListArgs(allocator: Allocator, args: []const [:0]const u8) !ListOptions {
     var opts: ListOptions = .{};
     var common: CommonFlags = .{};
@@ -132,12 +156,7 @@ pub fn parseListArgs(allocator: Allocator, args: []const [:0]const u8) !ListOpti
     try applyCommonFlags(allocator, &common, &opts);
     errdefer deinitFileFilter(allocator, opts.file_filter);
 
-    if (opts.ref) |ref| {
-        if (std.mem.indexOf(u8, ref, "..") != null and opts.mode == .staged) {
-            std.debug.print("error: --staged cannot be used with a range ref (contains '..')\n", .{});
-            return error.InvalidArgument;
-        }
-    }
+    try validateRefStagedCombo(opts.ref, opts.mode);
 
     return opts;
 }
@@ -157,8 +176,7 @@ pub fn parseAddResetArgs(allocator: Allocator, args: []const [:0]const u8) !AddR
         if (std.mem.eql(u8, arg, "--all")) {
             opts.select_all = true;
         } else if (std.mem.startsWith(u8, arg, "-")) {
-            std.debug.print("error: unknown flag '{s}'\n", .{arg});
-            return error.UnknownFlag;
+            return unknownFlag(arg);
         } else {
             const sha_arg = parseShaArg(allocator, arg) catch return error.InvalidArgument;
             try opts.sha_args.append(allocator, sha_arg);
@@ -191,8 +209,7 @@ pub fn parseDiffArgs(allocator: Allocator, args: []const [:0]const u8) !DiffOpti
         if (std.mem.eql(u8, arg, "--staged")) {
             opts.mode = .staged;
         } else if (std.mem.startsWith(u8, arg, "-")) {
-            std.debug.print("error: unknown flag '{s}'\n", .{arg});
-            return error.UnknownFlag;
+            return unknownFlag(arg);
         } else {
             const sha_arg = parseShaArg(allocator, arg) catch return error.InvalidArgument;
             try opts.sha_args.append(allocator, sha_arg);
@@ -202,12 +219,7 @@ pub fn parseDiffArgs(allocator: Allocator, args: []const [:0]const u8) !DiffOpti
     try applyCommonFlags(allocator, &common, &opts);
     errdefer deinitFileFilter(allocator, opts.file_filter);
 
-    if (opts.ref) |ref| {
-        if (std.mem.indexOf(u8, ref, "..") != null and opts.mode == .staged) {
-            std.debug.print("error: --staged cannot be used with a range ref (contains '..')\n", .{});
-            return error.InvalidArgument;
-        }
-    }
+    try validateRefStagedCombo(opts.ref, opts.mode);
 
     if (opts.sha_args.items.len == 0) {
         std.debug.print("error: at least one <sha> argument required\n", .{});
@@ -228,10 +240,7 @@ pub fn parseCountArgs(allocator: Allocator, args: []const [:0]const u8) !CountOp
         if (std.mem.eql(u8, arg, "--staged")) {
             opts.mode = .staged;
         } else {
-            if (std.mem.startsWith(u8, arg, "-")) {
-                std.debug.print("error: unknown flag '{s}'\n", .{arg});
-                return error.UnknownFlag;
-            }
+            if (std.mem.startsWith(u8, arg, "-")) return unknownFlag(arg);
             std.debug.print("error: count does not accept arguments\n", .{});
             return error.InvalidArgument;
         }
@@ -240,12 +249,7 @@ pub fn parseCountArgs(allocator: Allocator, args: []const [:0]const u8) !CountOp
     try applyCommonFlags(allocator, &common, &opts);
     errdefer deinitFileFilter(allocator, opts.file_filter);
 
-    if (opts.ref) |ref| {
-        if (std.mem.indexOf(u8, ref, "..") != null and opts.mode == .staged) {
-            std.debug.print("error: --staged cannot be used with a range ref (contains '..')\n", .{});
-            return error.InvalidArgument;
-        }
-    }
+    try validateRefStagedCombo(opts.ref, opts.mode);
 
     return opts;
 }
@@ -269,8 +273,7 @@ pub fn parseCheckArgs(allocator: Allocator, args: []const [:0]const u8) !CheckOp
         } else if (std.mem.eql(u8, arg, "--allow-empty")) {
             opts.allow_empty = true;
         } else if (std.mem.startsWith(u8, arg, "-")) {
-            std.debug.print("error: unknown flag '{s}'\n", .{arg});
-            return error.UnknownFlag;
+            return unknownFlag(arg);
         } else {
             const sha_arg = parseShaArg(allocator, arg) catch return error.InvalidArgument;
             if (sha_arg.line_spec) |ls| {
@@ -285,12 +288,7 @@ pub fn parseCheckArgs(allocator: Allocator, args: []const [:0]const u8) !CheckOp
     try applyCommonFlags(allocator, &common, &opts);
     errdefer deinitFileFilter(allocator, opts.file_filter);
 
-    if (opts.ref) |ref| {
-        if (std.mem.indexOf(u8, ref, "..") != null and opts.mode == .staged) {
-            std.debug.print("error: --staged cannot be used with a range ref (contains '..')\n", .{});
-            return error.InvalidArgument;
-        }
-    }
+    try validateRefStagedCombo(opts.ref, opts.mode);
 
     if (opts.sha_args.items.len == 0 and !opts.allow_empty) {
         std.debug.print("error: at least one <sha> argument required\n", .{});
@@ -319,8 +317,7 @@ pub fn parseRestoreArgs(allocator: Allocator, args: []const [:0]const u8) !Resto
         } else if (std.mem.eql(u8, arg, "--force")) {
             opts.force = true;
         } else if (std.mem.startsWith(u8, arg, "-")) {
-            std.debug.print("error: unknown flag '{s}'\n", .{arg});
-            return error.UnknownFlag;
+            return unknownFlag(arg);
         } else {
             const sha_arg = parseShaArg(allocator, arg) catch return error.InvalidArgument;
             try opts.sha_args.append(allocator, sha_arg);
@@ -383,8 +380,7 @@ pub fn parseStashArgs(allocator: Allocator, args: []const [:0]const u8) !StashOp
             if (i >= args.len) return error.MissingArgument;
             opts.message = args[i];
         } else if (std.mem.startsWith(u8, arg, "-")) {
-            std.debug.print("error: unknown flag '{s}'\n", .{arg});
-            return error.UnknownFlag;
+            return unknownFlag(arg);
         } else {
             const sha_arg = parseShaArg(allocator, arg) catch return error.InvalidArgument;
             if (sha_arg.line_spec) |ls| {
@@ -445,8 +441,7 @@ pub fn parseCommitArgs(allocator: Allocator, args: []const [:0]const u8) !Commit
         } else if (std.mem.eql(u8, arg, "--dry-run")) {
             opts.dry_run = true;
         } else if (std.mem.startsWith(u8, arg, "-")) {
-            std.debug.print("error: unknown flag '{s}'\n", .{arg});
-            return error.UnknownFlag;
+            return unknownFlag(arg);
         } else {
             const sha_arg = parseShaArg(allocator, arg) catch return error.InvalidArgument;
             try opts.sha_args.append(allocator, sha_arg);
