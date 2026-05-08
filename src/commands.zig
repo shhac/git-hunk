@@ -35,7 +35,7 @@ fn getDiffWithUntracked(
     mode: DiffMode,
     ref: ?[]const u8,
     context: ?u32,
-    file_filter: ?[]const u8,
+    file_filter: []const []const u8,
     diff_filter: DiffFilter,
     hunks: *std.ArrayList(Hunk),
 ) !struct { tracked: []u8, untracked: []u8 } {
@@ -98,9 +98,7 @@ pub fn cmdList(allocator: Allocator, stdout: *std.Io.Writer, opts: ListOptions) 
     var max_path_len: usize = 0;
     if (opts.output == .human) {
         for (hunks.items) |h| {
-            if (opts.file_filter) |filter| {
-                if (!std.mem.eql(u8, h.file_path, filter)) continue;
-            }
+            if (!types.matchesFileFilter(h.file_path, opts.file_filter)) continue;
             max_path_len = @max(max_path_len, h.file_path.len + @as(usize, if (h.is_symlink) 1 else 0));
         }
     }
@@ -114,9 +112,7 @@ pub fn cmdList(allocator: Allocator, stdout: *std.Io.Writer, opts: ListOptions) 
     var last_file: []const u8 = "";
 
     for (hunks.items) |h| {
-        if (opts.file_filter) |filter| {
-            if (!std.mem.eql(u8, h.file_path, filter)) continue;
-        }
+        if (!types.matchesFileFilter(h.file_path, opts.file_filter)) continue;
         if (!std.mem.eql(u8, h.file_path, last_file)) {
             file_count += 1;
             last_file = h.file_path;
@@ -157,9 +153,7 @@ pub fn cmdCount(allocator: Allocator, stdout: *std.Io.Writer, opts: CountOptions
 
     var count: usize = 0;
     for (hunks.items) |h| {
-        if (opts.file_filter) |filter| {
-            if (!std.mem.eql(u8, h.file_path, filter)) continue;
-        }
+        if (!types.matchesFileFilter(h.file_path, opts.file_filter)) continue;
         count += 1;
     }
 
@@ -186,9 +180,7 @@ pub fn cmdCheck(allocator: Allocator, stdout: *std.Io.Writer, opts: CheckOptions
             // Count hunks matching the file filter
             var hunk_count: usize = 0;
             for (hunks.items) |*h| {
-                if (opts.file_filter) |filter| {
-                    if (!std.mem.eql(u8, h.file_path, filter)) continue;
-                }
+                if (!types.matchesFileFilter(h.file_path, opts.file_filter)) continue;
                 hunk_count += 1;
             }
             if (hunk_count > 0) {
@@ -196,18 +188,14 @@ pub fn cmdCheck(allocator: Allocator, stdout: *std.Io.Writer, opts: CheckOptions
                     const color = format.shouldUseColor(opts.output, opts.no_color);
                     if (opts.output == .porcelain) {
                         for (hunks.items) |*h| {
-                            if (opts.file_filter) |filter| {
-                                if (!std.mem.eql(u8, h.file_path, filter)) continue;
-                            }
+                            if (!types.matchesFileFilter(h.file_path, opts.file_filter)) continue;
                             try stdout.print("unexpected\t{s}\t", .{h.sha_hex[0..7]});
                             try format.writeFilePath(stdout, h.*);
                             try stdout.writeByte('\n');
                         }
                     } else {
                         for (hunks.items) |*h| {
-                            if (opts.file_filter) |filter| {
-                                if (!std.mem.eql(u8, h.file_path, filter)) continue;
-                            }
+                            if (!types.matchesFileFilter(h.file_path, opts.file_filter)) continue;
                             if (color) {
                                 try stdout.print("unexpected {s}{s}{s}  ", .{ format.COLOR_YELLOW, h.sha_hex[0..7], format.COLOR_RESET });
                             } else {
@@ -286,9 +274,7 @@ pub fn cmdCheck(allocator: Allocator, stdout: *std.Io.Writer, opts: CheckOptions
     var unexpected_hunks: std.ArrayList(*const Hunk) = .empty;
     if (opts.exclusive) {
         for (hunks.items) |*h| {
-            if (opts.file_filter) |filter| {
-                if (!std.mem.eql(u8, h.file_path, filter)) continue;
-            }
+            if (!types.matchesFileFilter(h.file_path, opts.file_filter)) continue;
             var was_matched = false;
             for (matched_sha_hexes.items) |sha_ptr| {
                 if (std.mem.eql(u8, &h.sha_hex, sha_ptr)) {
@@ -668,7 +654,7 @@ fn resolveMatchedHunks(
     arena: Allocator,
     hunks: []const Hunk,
     sha_args: []const types.ShaArg,
-    file_filter: ?[]const u8,
+    file_filter: []const []const u8,
     matched: *std.ArrayList(MatchedHunk),
 ) !void {
     for (sha_args) |sha_arg| {
@@ -719,14 +705,12 @@ fn resolveHunksFromOpts(
     arena: Allocator,
     hunks: []const Hunk,
     sha_args: []const types.ShaArg,
-    file_filter: ?[]const u8,
+    file_filter: []const []const u8,
     matched: *std.ArrayList(MatchedHunk),
 ) !void {
     if (sha_args.len == 0) {
         for (hunks) |*h| {
-            if (file_filter) |filter| {
-                if (!std.mem.eql(u8, h.file_path, filter)) continue;
-            }
+            if (!types.matchesFileFilter(h.file_path, file_filter)) continue;
             try matched.append(arena, .{ .hunk = h, .line_spec = null });
         }
     } else {
@@ -735,10 +719,17 @@ fn resolveHunksFromOpts(
 }
 
 /// Exit with an error message if no hunks were matched.
-fn exitIfNoMatches(matched_len: usize, file_filter: ?[]const u8) void {
+fn exitIfNoMatches(matched_len: usize, file_filter: []const []const u8) void {
     if (matched_len > 0) return;
-    if (file_filter) |filter| {
-        std.debug.print("no hunks matching file '{s}'\n", .{filter});
+    if (file_filter.len == 1) {
+        std.debug.print("no hunks matching file '{s}'\n", .{file_filter[0]});
+    } else if (file_filter.len > 1) {
+        std.debug.print("no hunks matching files: ", .{});
+        for (file_filter, 0..) |f, idx| {
+            if (idx > 0) std.debug.print(", ", .{});
+            std.debug.print("'{s}'", .{f});
+        }
+        std.debug.print("\n", .{});
     } else {
         std.debug.print("no unstaged changes\n", .{});
     }

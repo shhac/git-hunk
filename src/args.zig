@@ -18,7 +18,7 @@ const StashOptions = types.StashOptions;
 const CommitOptions = types.CommitOptions;
 
 const CommonFlags = struct {
-    file_filter: ?[]const u8 = null,
+    file_filter: std.ArrayList([]const u8) = .empty,
     ref: ?[]const u8 = null,
     diff_filter: DiffFilter = .all,
     no_color: bool = false,
@@ -29,13 +29,26 @@ const CommonFlags = struct {
 
 /// Copy common flags into an options struct, using comptime field detection
 /// to handle structs that don't have all fields (e.g. CountOptions lacks no_color/output).
-fn applyCommonFlags(common: CommonFlags, opts: anytype) void {
-    const fields = .{ "file_filter", "ref", "diff_filter", "no_color", "output", "context", "verbosity" };
+/// Transfers ownership of `common.file_filter` into `opts.file_filter` as an owned slice;
+/// after this returns successfully, `common.file_filter` is empty.
+fn applyCommonFlags(allocator: Allocator, common: *CommonFlags, opts: anytype) !void {
+    const fields = .{ "ref", "diff_filter", "no_color", "output", "context", "verbosity" };
     inline for (fields) |name| {
         if (comptime @hasField(@TypeOf(opts.*), name)) {
             @field(opts, name) = @field(common, name);
         }
     }
+    if (comptime @hasField(@TypeOf(opts.*), "file_filter")) {
+        opts.file_filter = try common.file_filter.toOwnedSlice(allocator);
+    } else {
+        common.file_filter.deinit(allocator);
+        common.file_filter = .empty;
+    }
+}
+
+/// Free a file_filter slice if it was actually allocated (len > 0).
+pub fn deinitFileFilter(allocator: Allocator, file_filter: []const []const u8) void {
+    if (file_filter.len > 0) allocator.free(file_filter);
 }
 
 /// Try to parse arg as a common flag shared across all parsers.
@@ -43,14 +56,13 @@ fn applyCommonFlags(common: CommonFlags, opts: anytype) void {
 /// also increments i.* so the loop's `: (i += 1)` advances past the value).
 /// Returns false if arg is not a common flag (caller handles it).
 /// Returns error on parse failure or HelpRequested.
-fn parseCommonFlag(arg: []const u8, i: *usize, args: []const [:0]u8, c: *CommonFlags) !bool {
+fn parseCommonFlag(allocator: Allocator, arg: []const u8, i: *usize, args: []const [:0]u8, c: *CommonFlags) !bool {
     if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
         return error.HelpRequested;
     } else if (std.mem.eql(u8, arg, "--file")) {
         i.* += 1;
         if (i.* >= args.len) return error.MissingArgument;
-        if (c.file_filter != null) return error.DuplicateFileFilter;
-        c.file_filter = args[i.*];
+        try c.file_filter.append(allocator, args[i.*]);
         return true;
     } else if (std.mem.eql(u8, arg, "--ref")) {
         i.* += 1;
@@ -101,13 +113,14 @@ fn parseCommonFlag(arg: []const u8, i: *usize, args: []const [:0]u8, c: *CommonF
     return false;
 }
 
-pub fn parseListArgs(args: []const [:0]u8) !ListOptions {
+pub fn parseListArgs(allocator: Allocator, args: []const [:0]u8) !ListOptions {
     var opts: ListOptions = .{};
     var common: CommonFlags = .{};
+    errdefer common.file_filter.deinit(allocator);
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
-        if (try parseCommonFlag(arg, &i, args, &common)) continue;
+        if (try parseCommonFlag(allocator, arg, &i, args, &common)) continue;
         if (std.mem.eql(u8, arg, "--staged")) {
             opts.mode = .staged;
         } else if (std.mem.eql(u8, arg, "--oneline")) {
@@ -116,7 +129,8 @@ pub fn parseListArgs(args: []const [:0]u8) !ListOptions {
             return error.UnknownFlag;
         }
     }
-    applyCommonFlags(common, &opts);
+    try applyCommonFlags(allocator, &common, &opts);
+    errdefer deinitFileFilter(allocator, opts.file_filter);
 
     if (opts.ref) |ref| {
         if (std.mem.indexOf(u8, ref, "..") != null and opts.mode == .staged) {
@@ -135,10 +149,11 @@ pub fn parseAddResetArgs(allocator: Allocator, args: []const [:0]u8) !AddResetOp
     errdefer deinitShaArgs(allocator, &opts.sha_args);
 
     var common: CommonFlags = .{};
+    errdefer common.file_filter.deinit(allocator);
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
-        if (try parseCommonFlag(arg, &i, args, &common)) continue;
+        if (try parseCommonFlag(allocator, arg, &i, args, &common)) continue;
         if (std.mem.eql(u8, arg, "--all")) {
             opts.select_all = true;
         } else if (std.mem.startsWith(u8, arg, "-")) {
@@ -150,9 +165,10 @@ pub fn parseAddResetArgs(allocator: Allocator, args: []const [:0]u8) !AddResetOp
         }
     }
 
-    applyCommonFlags(common, &opts);
+    try applyCommonFlags(allocator, &common, &opts);
+    errdefer deinitFileFilter(allocator, opts.file_filter);
 
-    if (opts.sha_args.items.len == 0 and !opts.select_all and opts.file_filter == null) {
+    if (opts.sha_args.items.len == 0 and !opts.select_all and opts.file_filter.len == 0) {
         std.debug.print("error: at least one <sha> argument required (or use --all or --file <path>)\n", .{});
         return error.MissingArgument;
     }
@@ -167,10 +183,11 @@ pub fn parseDiffArgs(allocator: Allocator, args: []const [:0]u8) !DiffOptions {
     errdefer deinitShaArgs(allocator, &opts.sha_args);
 
     var common: CommonFlags = .{};
+    errdefer common.file_filter.deinit(allocator);
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
-        if (try parseCommonFlag(arg, &i, args, &common)) continue;
+        if (try parseCommonFlag(allocator, arg, &i, args, &common)) continue;
         if (std.mem.eql(u8, arg, "--staged")) {
             opts.mode = .staged;
         } else if (std.mem.startsWith(u8, arg, "-")) {
@@ -182,7 +199,8 @@ pub fn parseDiffArgs(allocator: Allocator, args: []const [:0]u8) !DiffOptions {
         }
     }
 
-    applyCommonFlags(common, &opts);
+    try applyCommonFlags(allocator, &common, &opts);
+    errdefer deinitFileFilter(allocator, opts.file_filter);
 
     if (opts.ref) |ref| {
         if (std.mem.indexOf(u8, ref, "..") != null and opts.mode == .staged) {
@@ -199,13 +217,14 @@ pub fn parseDiffArgs(allocator: Allocator, args: []const [:0]u8) !DiffOptions {
     return opts;
 }
 
-pub fn parseCountArgs(args: []const [:0]u8) !CountOptions {
+pub fn parseCountArgs(allocator: Allocator, args: []const [:0]u8) !CountOptions {
     var opts: CountOptions = .{};
     var common: CommonFlags = .{};
+    errdefer common.file_filter.deinit(allocator);
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
-        if (try parseCommonFlag(arg, &i, args, &common)) continue;
+        if (try parseCommonFlag(allocator, arg, &i, args, &common)) continue;
         if (std.mem.eql(u8, arg, "--staged")) {
             opts.mode = .staged;
         } else {
@@ -218,7 +237,8 @@ pub fn parseCountArgs(args: []const [:0]u8) !CountOptions {
         }
     }
     // Apply only the fields CountOptions has (no_color and output not present)
-    applyCommonFlags(common, &opts);
+    try applyCommonFlags(allocator, &common, &opts);
+    errdefer deinitFileFilter(allocator, opts.file_filter);
 
     if (opts.ref) |ref| {
         if (std.mem.indexOf(u8, ref, "..") != null and opts.mode == .staged) {
@@ -237,10 +257,11 @@ pub fn parseCheckArgs(allocator: Allocator, args: []const [:0]u8) !CheckOptions 
     errdefer deinitShaArgs(allocator, &opts.sha_args);
 
     var common: CommonFlags = .{};
+    errdefer common.file_filter.deinit(allocator);
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
-        if (try parseCommonFlag(arg, &i, args, &common)) continue;
+        if (try parseCommonFlag(allocator, arg, &i, args, &common)) continue;
         if (std.mem.eql(u8, arg, "--staged")) {
             opts.mode = .staged;
         } else if (std.mem.eql(u8, arg, "--exclusive")) {
@@ -261,7 +282,8 @@ pub fn parseCheckArgs(allocator: Allocator, args: []const [:0]u8) !CheckOptions 
         }
     }
 
-    applyCommonFlags(common, &opts);
+    try applyCommonFlags(allocator, &common, &opts);
+    errdefer deinitFileFilter(allocator, opts.file_filter);
 
     if (opts.ref) |ref| {
         if (std.mem.indexOf(u8, ref, "..") != null and opts.mode == .staged) {
@@ -285,10 +307,11 @@ pub fn parseRestoreArgs(allocator: Allocator, args: []const [:0]u8) !RestoreOpti
     errdefer deinitShaArgs(allocator, &opts.sha_args);
 
     var common: CommonFlags = .{};
+    errdefer common.file_filter.deinit(allocator);
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
-        if (try parseCommonFlag(arg, &i, args, &common)) continue;
+        if (try parseCommonFlag(allocator, arg, &i, args, &common)) continue;
         if (std.mem.eql(u8, arg, "--all")) {
             opts.select_all = true;
         } else if (std.mem.eql(u8, arg, "--dry-run")) {
@@ -304,9 +327,10 @@ pub fn parseRestoreArgs(allocator: Allocator, args: []const [:0]u8) !RestoreOpti
         }
     }
 
-    applyCommonFlags(common, &opts);
+    try applyCommonFlags(allocator, &common, &opts);
+    errdefer deinitFileFilter(allocator, opts.file_filter);
 
-    if (opts.sha_args.items.len == 0 and !opts.select_all and opts.file_filter == null) {
+    if (opts.sha_args.items.len == 0 and !opts.select_all and opts.file_filter.len == 0) {
         std.debug.print("error: at least one <sha> argument required (or use --all or --file <path>)\n", .{});
         return error.MissingArgument;
     }
@@ -346,9 +370,10 @@ pub fn parseStashArgs(allocator: Allocator, args: []const [:0]u8) !StashOptions 
     }
 
     var common: CommonFlags = .{};
+    errdefer common.file_filter.deinit(allocator);
     while (i < args.len) : (i += 1) {
         const arg = args[i];
-        if (try parseCommonFlag(arg, &i, args, &common)) continue;
+        if (try parseCommonFlag(allocator, arg, &i, args, &common)) continue;
         if (std.mem.eql(u8, arg, "--all")) {
             opts.select_all = true;
         } else if (std.mem.eql(u8, arg, "--include-untracked") or std.mem.eql(u8, arg, "-u")) {
@@ -371,7 +396,8 @@ pub fn parseStashArgs(allocator: Allocator, args: []const [:0]u8) !StashOptions 
         }
     }
 
-    applyCommonFlags(common, &opts);
+    try applyCommonFlags(allocator, &common, &opts);
+    errdefer deinitFileFilter(allocator, opts.file_filter);
 
     if (opts.ref != null) {
         std.debug.print("error: --ref is not supported for stash\n", .{});
@@ -384,7 +410,7 @@ pub fn parseStashArgs(allocator: Allocator, args: []const [:0]u8) !StashOptions 
         return error.InvalidArgument;
     }
 
-    if (opts.sha_args.items.len == 0 and !opts.select_all and opts.file_filter == null) {
+    if (opts.sha_args.items.len == 0 and !opts.select_all and opts.file_filter.len == 0) {
         std.debug.print("error: at least one <sha> argument required (or use --all or --file <path>)\n", .{});
         return error.MissingArgument;
     }
@@ -399,6 +425,7 @@ pub fn parseCommitArgs(allocator: Allocator, args: []const [:0]u8) !CommitOption
     errdefer deinitShaArgs(allocator, &opts.sha_args);
 
     var common: CommonFlags = .{};
+    errdefer common.file_filter.deinit(allocator);
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
@@ -406,7 +433,7 @@ pub fn parseCommitArgs(allocator: Allocator, args: []const [:0]u8) !CommitOption
             std.debug.print("error: --staged is not supported by commit -- use 'git commit' directly\n", .{});
             return error.UnknownFlag;
         }
-        if (try parseCommonFlag(arg, &i, args, &common)) continue;
+        if (try parseCommonFlag(allocator, arg, &i, args, &common)) continue;
         if (std.mem.eql(u8, arg, "--all")) {
             opts.select_all = true;
         } else if (std.mem.eql(u8, arg, "--message") or std.mem.eql(u8, arg, "-m")) {
@@ -426,9 +453,10 @@ pub fn parseCommitArgs(allocator: Allocator, args: []const [:0]u8) !CommitOption
         }
     }
 
-    applyCommonFlags(common, &opts);
+    try applyCommonFlags(allocator, &common, &opts);
+    errdefer deinitFileFilter(allocator, opts.file_filter);
 
-    if (opts.sha_args.items.len == 0 and !opts.select_all and opts.file_filter == null) {
+    if (opts.sha_args.items.len == 0 and !opts.select_all and opts.file_filter.len == 0) {
         std.debug.print("error: at least one <sha> argument required (or use --all or --file <path>)\n", .{});
         return error.MissingArgument;
     }
@@ -544,68 +572,79 @@ fn parseLineSpec(allocator: Allocator, spec: []const u8) !LineSpec {
 // ============================================================================
 
 test "parseListArgs defaults" {
-    const opts = try parseListArgs(&.{});
+    const opts = try parseListArgs(std.testing.allocator, &.{});
     try std.testing.expectEqual(DiffMode.unstaged, opts.mode);
     try std.testing.expectEqual(OutputMode.human, opts.output);
     try std.testing.expect(!opts.oneline);
-    try std.testing.expectEqual(@as(?[]const u8, null), opts.file_filter);
+    try std.testing.expectEqual(@as(usize, 0), opts.file_filter.len);
 }
 
 test "parseListArgs staged" {
     const args_arr = [_][:0]u8{@constCast("--staged")};
-    const opts = try parseListArgs(&args_arr);
+    const opts = try parseListArgs(std.testing.allocator, &args_arr);
     try std.testing.expectEqual(DiffMode.staged, opts.mode);
 }
 
 test "parseListArgs porcelain" {
     const args_arr = [_][:0]u8{@constCast("--porcelain")};
-    const opts = try parseListArgs(&args_arr);
+    const opts = try parseListArgs(std.testing.allocator, &args_arr);
     try std.testing.expectEqual(OutputMode.porcelain, opts.output);
 }
 
 test "parseListArgs oneline" {
     const args_arr = [_][:0]u8{@constCast("--oneline")};
-    const opts = try parseListArgs(&args_arr);
+    const opts = try parseListArgs(std.testing.allocator, &args_arr);
     try std.testing.expect(opts.oneline);
 }
 
 test "parseListArgs no-color" {
     const args_arr = [_][:0]u8{@constCast("--no-color")};
-    const opts = try parseListArgs(&args_arr);
+    const opts = try parseListArgs(std.testing.allocator, &args_arr);
     try std.testing.expect(opts.no_color);
 }
 
 test "parseListArgs file filter" {
     const args_arr = [_][:0]u8{ @constCast("--file"), @constCast("src/main.zig") };
-    const opts = try parseListArgs(&args_arr);
-    try std.testing.expectEqualStrings("src/main.zig", opts.file_filter.?);
+    const opts = try parseListArgs(std.testing.allocator, &args_arr);
+    defer deinitFileFilter(std.testing.allocator, opts.file_filter);
+    try std.testing.expectEqual(@as(usize, 1), opts.file_filter.len);
+    try std.testing.expectEqualStrings("src/main.zig", opts.file_filter[0]);
 }
 
 test "parseListArgs file missing arg" {
     const args_arr = [_][:0]u8{@constCast("--file")};
-    try std.testing.expectError(error.MissingArgument, parseListArgs(&args_arr));
+    try std.testing.expectError(error.MissingArgument, parseListArgs(std.testing.allocator, &args_arr));
 }
 
-test "parseListArgs duplicate --file rejected" {
+test "parseListArgs multiple --file accumulate" {
     const args_arr = [_][:0]u8{
         @constCast("--file"), @constCast("foo.txt"),
         @constCast("--file"), @constCast("bar.txt"),
     };
-    try std.testing.expectError(error.DuplicateFileFilter, parseListArgs(&args_arr));
+    const opts = try parseListArgs(std.testing.allocator, &args_arr);
+    defer deinitFileFilter(std.testing.allocator, opts.file_filter);
+    try std.testing.expectEqual(@as(usize, 2), opts.file_filter.len);
+    try std.testing.expectEqualStrings("foo.txt", opts.file_filter[0]);
+    try std.testing.expectEqualStrings("bar.txt", opts.file_filter[1]);
 }
 
-test "parseAddResetArgs duplicate --file rejected" {
+test "parseAddResetArgs multiple --file accumulate" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]u8{
         @constCast("--file"), @constCast("foo.txt"),
         @constCast("--file"), @constCast("bar.txt"),
     };
-    try std.testing.expectError(error.DuplicateFileFilter, parseAddResetArgs(allocator, &args_arr));
+    var opts = try parseAddResetArgs(allocator, &args_arr);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    defer deinitFileFilter(allocator, opts.file_filter);
+    try std.testing.expectEqual(@as(usize, 2), opts.file_filter.len);
+    try std.testing.expectEqualStrings("foo.txt", opts.file_filter[0]);
+    try std.testing.expectEqualStrings("bar.txt", opts.file_filter[1]);
 }
 
 test "parseListArgs unknown flag" {
     const args_arr = [_][:0]u8{@constCast("--unknown")};
-    try std.testing.expectError(error.UnknownFlag, parseListArgs(&args_arr));
+    try std.testing.expectError(error.UnknownFlag, parseListArgs(std.testing.allocator, &args_arr));
 }
 
 test "parseListArgs all flags combined" {
@@ -617,117 +656,118 @@ test "parseListArgs all flags combined" {
         @constCast("--file"),
         @constCast("foo.txt"),
     };
-    const opts = try parseListArgs(&args_arr);
+    const opts = try parseListArgs(std.testing.allocator, &args_arr);
+    defer deinitFileFilter(std.testing.allocator, opts.file_filter);
     try std.testing.expectEqual(DiffMode.staged, opts.mode);
     try std.testing.expectEqual(OutputMode.porcelain, opts.output);
     try std.testing.expect(opts.oneline);
     try std.testing.expect(opts.no_color);
-    try std.testing.expectEqualStrings("foo.txt", opts.file_filter.?);
+    try std.testing.expectEqualStrings("foo.txt", opts.file_filter[0]);
 }
 
 test "parseListArgs context" {
     const args_arr = [_][:0]u8{ @constCast("--unified"), @constCast("0") };
-    const opts = try parseListArgs(&args_arr);
+    const opts = try parseListArgs(std.testing.allocator, &args_arr);
     try std.testing.expectEqual(@as(?u32, 0), opts.context);
 }
 
 test "parseListArgs context value" {
     const args_arr = [_][:0]u8{ @constCast("--unified"), @constCast("5") };
-    const opts = try parseListArgs(&args_arr);
+    const opts = try parseListArgs(std.testing.allocator, &args_arr);
     try std.testing.expectEqual(@as(?u32, 5), opts.context);
 }
 
 test "parseListArgs context missing arg" {
     const args_arr = [_][:0]u8{@constCast("--unified")};
-    try std.testing.expectError(error.MissingArgument, parseListArgs(&args_arr));
+    try std.testing.expectError(error.MissingArgument, parseListArgs(std.testing.allocator, &args_arr));
 }
 
 test "parseListArgs context invalid" {
     const args_arr = [_][:0]u8{ @constCast("--unified"), @constCast("abc") };
-    try std.testing.expectError(error.InvalidArgument, parseListArgs(&args_arr));
+    try std.testing.expectError(error.InvalidArgument, parseListArgs(std.testing.allocator, &args_arr));
 }
 
 test "parseListArgs context default null" {
-    const opts = try parseListArgs(&.{});
+    const opts = try parseListArgs(std.testing.allocator, &.{});
     try std.testing.expectEqual(@as(?u32, null), opts.context);
 }
 
 test "parseListArgs context -U<n> form" {
     const args_arr = [_][:0]u8{@constCast("-U3")};
-    const opts = try parseListArgs(&args_arr);
+    const opts = try parseListArgs(std.testing.allocator, &args_arr);
     try std.testing.expectEqual(@as(?u32, 3), opts.context);
 }
 
 test "parseListArgs context -U0 form" {
     const args_arr = [_][:0]u8{@constCast("-U0")};
-    const opts = try parseListArgs(&args_arr);
+    const opts = try parseListArgs(std.testing.allocator, &args_arr);
     try std.testing.expectEqual(@as(?u32, 0), opts.context);
 }
 
 test "parseListArgs context --unified=<n> form" {
     const args_arr = [_][:0]u8{@constCast("--unified=5")};
-    const opts = try parseListArgs(&args_arr);
+    const opts = try parseListArgs(std.testing.allocator, &args_arr);
     try std.testing.expectEqual(@as(?u32, 5), opts.context);
 }
 
 test "parseListArgs context -U alone gives error" {
     const args_arr = [_][:0]u8{@constCast("-U")};
-    try std.testing.expectError(error.MissingArgument, parseListArgs(&args_arr));
+    try std.testing.expectError(error.MissingArgument, parseListArgs(std.testing.allocator, &args_arr));
 }
 
 test "parseListArgs context -Uabc gives error" {
     const args_arr = [_][:0]u8{@constCast("-Uabc")};
-    try std.testing.expectError(error.InvalidArgument, parseListArgs(&args_arr));
+    try std.testing.expectError(error.InvalidArgument, parseListArgs(std.testing.allocator, &args_arr));
 }
 
 test "parseListArgs context --unified=abc gives error" {
     const args_arr = [_][:0]u8{@constCast("--unified=abc")};
-    try std.testing.expectError(error.InvalidArgument, parseListArgs(&args_arr));
+    try std.testing.expectError(error.InvalidArgument, parseListArgs(std.testing.allocator, &args_arr));
 }
 
 test "parseListArgs context -U <n> space form" {
     const args_arr = [_][:0]u8{ @constCast("-U"), @constCast("3") };
-    const opts = try parseListArgs(&args_arr);
+    const opts = try parseListArgs(std.testing.allocator, &args_arr);
     try std.testing.expectEqual(@as(?u32, 3), opts.context);
 }
 
 test "parseListArgs verbosity default normal" {
-    const opts = try parseListArgs(&.{});
+    const opts = try parseListArgs(std.testing.allocator, &.{});
     try std.testing.expectEqual(types.Verbosity.normal, opts.verbosity);
 }
 
 test "parseListArgs verbosity --quiet" {
     const args_arr = [_][:0]u8{@constCast("--quiet")};
-    const opts = try parseListArgs(&args_arr);
+    const opts = try parseListArgs(std.testing.allocator, &args_arr);
     try std.testing.expectEqual(types.Verbosity.quiet, opts.verbosity);
 }
 
 test "parseListArgs verbosity -q" {
     const args_arr = [_][:0]u8{@constCast("-q")};
-    const opts = try parseListArgs(&args_arr);
+    const opts = try parseListArgs(std.testing.allocator, &args_arr);
     try std.testing.expectEqual(types.Verbosity.quiet, opts.verbosity);
 }
 
 test "parseListArgs verbosity --verbose" {
     const args_arr = [_][:0]u8{@constCast("--verbose")};
-    const opts = try parseListArgs(&args_arr);
+    const opts = try parseListArgs(std.testing.allocator, &args_arr);
     try std.testing.expectEqual(types.Verbosity.verbose, opts.verbosity);
 }
 
 test "parseListArgs verbosity -v" {
     const args_arr = [_][:0]u8{@constCast("-v")};
-    const opts = try parseListArgs(&args_arr);
+    const opts = try parseListArgs(std.testing.allocator, &args_arr);
     try std.testing.expectEqual(types.Verbosity.verbose, opts.verbosity);
 }
 
 test "parseListArgs verbosity --quiet --verbose conflict" {
     const args_arr = [_][:0]u8{ @constCast("--quiet"), @constCast("--verbose") };
-    try std.testing.expectError(error.ConflictingVerbosity, parseListArgs(&args_arr));
+    try std.testing.expectError(error.ConflictingVerbosity, parseListArgs(std.testing.allocator, &args_arr));
 }
 
 test "parseListArgs verbosity --verbose --quiet conflict" {
     const args_arr = [_][:0]u8{ @constCast("--verbose"), @constCast("--quiet") };
-    try std.testing.expectError(error.ConflictingVerbosity, parseListArgs(&args_arr));
+    try std.testing.expectError(error.ConflictingVerbosity, parseListArgs(std.testing.allocator, &args_arr));
 }
 
 test "parseAddResetArgs verbosity --verbose" {
@@ -764,13 +804,13 @@ test "parseStashArgs verbosity --quiet" {
 
 test "parseCountArgs verbosity --verbose" {
     const args_arr = [_][:0]u8{@constCast("--verbose")};
-    const opts = try parseCountArgs(&args_arr);
+    const opts = try parseCountArgs(std.testing.allocator, &args_arr);
     try std.testing.expectEqual(types.Verbosity.verbose, opts.verbosity);
 }
 
 test "parseCountArgs verbosity --quiet" {
     const args_arr = [_][:0]u8{@constCast("--quiet")};
-    const opts = try parseCountArgs(&args_arr);
+    const opts = try parseCountArgs(std.testing.allocator, &args_arr);
     try std.testing.expectEqual(types.Verbosity.quiet, opts.verbosity);
 }
 
@@ -826,7 +866,8 @@ test "parseAddResetArgs with file flag" {
     };
     var opts = try parseAddResetArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
-    try std.testing.expectEqualStrings("src/main.zig", opts.file_filter.?);
+    defer deinitFileFilter(allocator, opts.file_filter);
+    try std.testing.expectEqualStrings("src/main.zig", opts.file_filter[0]);
 }
 
 test "parseAddResetArgs multiple shas" {
@@ -998,58 +1039,59 @@ test "parseDiffArgs sha with line spec" {
 }
 
 test "parseCountArgs defaults" {
-    const opts = try parseCountArgs(&.{});
+    const opts = try parseCountArgs(std.testing.allocator, &.{});
     try std.testing.expectEqual(DiffMode.unstaged, opts.mode);
-    try std.testing.expectEqual(@as(?[]const u8, null), opts.file_filter);
+    try std.testing.expectEqual(@as(usize, 0), opts.file_filter.len);
     try std.testing.expectEqual(@as(?u32, null), opts.context);
 }
 
 test "parseCountArgs staged" {
     const args_arr = [_][:0]u8{@constCast("--staged")};
-    const opts = try parseCountArgs(&args_arr);
+    const opts = try parseCountArgs(std.testing.allocator, &args_arr);
     try std.testing.expectEqual(DiffMode.staged, opts.mode);
 }
 
 test "parseCountArgs file filter" {
     const args_arr = [_][:0]u8{ @constCast("--file"), @constCast("src/main.zig") };
-    const opts = try parseCountArgs(&args_arr);
-    try std.testing.expectEqualStrings("src/main.zig", opts.file_filter.?);
+    const opts = try parseCountArgs(std.testing.allocator, &args_arr);
+    defer deinitFileFilter(std.testing.allocator, opts.file_filter);
+    try std.testing.expectEqualStrings("src/main.zig", opts.file_filter[0]);
 }
 
 test "parseCountArgs context" {
     const args_arr = [_][:0]u8{ @constCast("--unified"), @constCast("5") };
-    const opts = try parseCountArgs(&args_arr);
+    const opts = try parseCountArgs(std.testing.allocator, &args_arr);
     try std.testing.expectEqual(@as(?u32, 5), opts.context);
 }
 
 test "parseCountArgs porcelain accepted silently" {
-    const opts = try parseCountArgs(&[_][:0]u8{@constCast("--porcelain")});
+    const opts = try parseCountArgs(std.testing.allocator, &[_][:0]u8{@constCast("--porcelain")});
     try std.testing.expectEqual(DiffMode.unstaged, opts.mode);
 }
 
 test "parseCountArgs no-color accepted silently" {
-    const opts = try parseCountArgs(&[_][:0]u8{@constCast("--no-color")});
+    const opts = try parseCountArgs(std.testing.allocator, &[_][:0]u8{@constCast("--no-color")});
     try std.testing.expectEqual(DiffMode.unstaged, opts.mode);
 }
 
 test "parseCountArgs rejects positional args" {
     const args_arr = [_][:0]u8{@constCast("abcd1234")};
-    try std.testing.expectError(error.InvalidArgument, parseCountArgs(&args_arr));
+    try std.testing.expectError(error.InvalidArgument, parseCountArgs(std.testing.allocator, &args_arr));
 }
 
 test "parseCountArgs rejects unknown flags" {
     const args_arr = [_][:0]u8{@constCast("--unknown")};
-    try std.testing.expectError(error.UnknownFlag, parseCountArgs(&args_arr));
+    try std.testing.expectError(error.UnknownFlag, parseCountArgs(std.testing.allocator, &args_arr));
 }
 
 test "parseCountArgs file missing arg" {
     const args_arr = [_][:0]u8{@constCast("--file")};
-    try std.testing.expectError(error.MissingArgument, parseCountArgs(&args_arr));
+    try std.testing.expectError(error.MissingArgument, parseCountArgs(std.testing.allocator, &args_arr));
 }
 
 test "parseCountArgs context missing arg" {
     const args_arr = [_][:0]u8{@constCast("--unified")};
-    try std.testing.expectError(error.MissingArgument, parseCountArgs(&args_arr));
+    try std.testing.expectError(error.MissingArgument, parseCountArgs(std.testing.allocator, &args_arr));
 }
 
 test "parseCountArgs all flags combined" {
@@ -1062,9 +1104,10 @@ test "parseCountArgs all flags combined" {
         @constCast("--porcelain"),
         @constCast("--no-color"),
     };
-    const opts = try parseCountArgs(&args_arr);
+    const opts = try parseCountArgs(std.testing.allocator, &args_arr);
+    defer deinitFileFilter(std.testing.allocator, opts.file_filter);
     try std.testing.expectEqual(DiffMode.staged, opts.mode);
-    try std.testing.expectEqualStrings("foo.txt", opts.file_filter.?);
+    try std.testing.expectEqualStrings("foo.txt", opts.file_filter[0]);
     try std.testing.expectEqual(@as(?u32, 3), opts.context);
 }
 
@@ -1115,7 +1158,8 @@ test "parseCheckArgs file filter" {
     const args_arr = [_][:0]u8{ @constCast("abcd1234"), @constCast("--file"), @constCast("src/main.zig") };
     var opts = try parseCheckArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
-    try std.testing.expectEqualStrings("src/main.zig", opts.file_filter.?);
+    defer deinitFileFilter(allocator, opts.file_filter);
+    try std.testing.expectEqualStrings("src/main.zig", opts.file_filter[0]);
 }
 
 test "parseCheckArgs context" {
@@ -1166,9 +1210,10 @@ test "parseCheckArgs all flags combined" {
     };
     var opts = try parseCheckArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
+    defer deinitFileFilter(allocator, opts.file_filter);
     try std.testing.expectEqual(DiffMode.staged, opts.mode);
     try std.testing.expect(opts.exclusive);
-    try std.testing.expectEqualStrings("foo.txt", opts.file_filter.?);
+    try std.testing.expectEqualStrings("foo.txt", opts.file_filter[0]);
     try std.testing.expectEqual(OutputMode.porcelain, opts.output);
     try std.testing.expect(opts.no_color);
     try std.testing.expectEqual(@as(?u32, 1), opts.context);
@@ -1229,7 +1274,8 @@ test "parseRestoreArgs file filter" {
     const args_arr = [_][:0]u8{ @constCast("abcd1234"), @constCast("--file"), @constCast("src/main.zig") };
     var opts = try parseRestoreArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
-    try std.testing.expectEqualStrings("src/main.zig", opts.file_filter.?);
+    defer deinitFileFilter(allocator, opts.file_filter);
+    try std.testing.expectEqualStrings("src/main.zig", opts.file_filter[0]);
 }
 
 test "parseRestoreArgs porcelain" {
@@ -1277,9 +1323,10 @@ test "parseRestoreArgs all flags combined" {
     };
     var opts = try parseRestoreArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
+    defer deinitFileFilter(allocator, opts.file_filter);
     try std.testing.expect(opts.select_all);
     try std.testing.expect(opts.dry_run);
-    try std.testing.expectEqualStrings("foo.txt", opts.file_filter.?);
+    try std.testing.expectEqualStrings("foo.txt", opts.file_filter[0]);
     try std.testing.expectEqual(OutputMode.porcelain, opts.output);
     try std.testing.expect(opts.no_color);
     try std.testing.expectEqual(@as(?u32, 1), opts.context);
@@ -1290,7 +1337,8 @@ test "parseRestoreArgs bare file flag" {
     const args_arr = [_][:0]u8{ @constCast("--file"), @constCast("src/main.zig") };
     var opts = try parseRestoreArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
-    try std.testing.expectEqualStrings("src/main.zig", opts.file_filter.?);
+    defer deinitFileFilter(allocator, opts.file_filter);
+    try std.testing.expectEqualStrings("src/main.zig", opts.file_filter[0]);
     try std.testing.expectEqual(@as(usize, 0), opts.sha_args.items.len);
 }
 
@@ -1383,7 +1431,8 @@ test "parseStashArgs file filter" {
     const args_arr = [_][:0]u8{ @constCast("--file"), @constCast("src/main.zig") };
     var opts = try parseStashArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
-    try std.testing.expectEqualStrings("src/main.zig", opts.file_filter.?);
+    defer deinitFileFilter(allocator, opts.file_filter);
+    try std.testing.expectEqualStrings("src/main.zig", opts.file_filter[0]);
 }
 
 test "parseStashArgs porcelain" {
@@ -1446,35 +1495,35 @@ test "parseStashArgs old --pop flag rejected as unknown" {
 
 test "parseListArgs --ref sets ref field" {
     const args_arr = [_][:0]u8{ @constCast("--ref"), @constCast("main") };
-    const opts = try parseListArgs(&args_arr);
+    const opts = try parseListArgs(std.testing.allocator, &args_arr);
     try std.testing.expectEqualStrings("main", opts.ref.?);
 }
 
 test "parseListArgs --ref default null" {
-    const opts = try parseListArgs(&.{});
+    const opts = try parseListArgs(std.testing.allocator, &.{});
     try std.testing.expectEqual(@as(?[]const u8, null), opts.ref);
 }
 
 test "parseListArgs --ref missing value" {
     const args_arr = [_][:0]u8{@constCast("--ref")};
-    try std.testing.expectError(error.MissingArgument, parseListArgs(&args_arr));
+    try std.testing.expectError(error.MissingArgument, parseListArgs(std.testing.allocator, &args_arr));
 }
 
 test "parseListArgs --ref with --staged allowed for single ref" {
     const args_arr = [_][:0]u8{ @constCast("--ref"), @constCast("HEAD"), @constCast("--staged") };
-    const opts = try parseListArgs(&args_arr);
+    const opts = try parseListArgs(std.testing.allocator, &args_arr);
     try std.testing.expectEqualStrings("HEAD", opts.ref.?);
     try std.testing.expectEqual(DiffMode.staged, opts.mode);
 }
 
 test "parseListArgs --ref range with --staged rejected" {
     const args_arr = [_][:0]u8{ @constCast("--ref"), @constCast("main..HEAD"), @constCast("--staged") };
-    try std.testing.expectError(error.InvalidArgument, parseListArgs(&args_arr));
+    try std.testing.expectError(error.InvalidArgument, parseListArgs(std.testing.allocator, &args_arr));
 }
 
 test "parseListArgs --ref range without --staged allowed" {
     const args_arr = [_][:0]u8{ @constCast("--ref"), @constCast("main..HEAD") };
-    const opts = try parseListArgs(&args_arr);
+    const opts = try parseListArgs(std.testing.allocator, &args_arr);
     try std.testing.expectEqualStrings("main..HEAD", opts.ref.?);
     try std.testing.expectEqual(DiffMode.unstaged, opts.mode);
 }
@@ -1501,13 +1550,13 @@ test "parseDiffArgs --ref range with --staged rejected" {
 
 test "parseCountArgs --ref sets ref field" {
     const args_arr = [_][:0]u8{ @constCast("--ref"), @constCast("HEAD~1") };
-    const opts = try parseCountArgs(&args_arr);
+    const opts = try parseCountArgs(std.testing.allocator, &args_arr);
     try std.testing.expectEqualStrings("HEAD~1", opts.ref.?);
 }
 
 test "parseCountArgs --ref range with --staged rejected" {
     const args_arr = [_][:0]u8{ @constCast("--ref"), @constCast("main..HEAD"), @constCast("--staged") };
-    try std.testing.expectError(error.InvalidArgument, parseCountArgs(&args_arr));
+    try std.testing.expectError(error.InvalidArgument, parseCountArgs(std.testing.allocator, &args_arr));
 }
 
 test "parseCheckArgs --ref sets ref field" {
@@ -1695,11 +1744,12 @@ test "parseCommitArgs all flags combined" {
     };
     var opts = try parseCommitArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
+    defer deinitFileFilter(allocator, opts.file_filter);
     try std.testing.expectEqual(@as(usize, 1), opts.sha_args.items.len);
     try std.testing.expect(opts.select_all);
     try std.testing.expect(opts.amend);
     try std.testing.expect(opts.dry_run);
-    try std.testing.expectEqualStrings("foo.txt", opts.file_filter.?);
+    try std.testing.expectEqualStrings("foo.txt", opts.file_filter[0]);
     try std.testing.expectEqual(OutputMode.porcelain, opts.output);
     try std.testing.expect(opts.no_color);
     try std.testing.expectEqual(@as(?u32, 1), opts.context);
@@ -1711,6 +1761,7 @@ test "parseCommitArgs --file without sha allowed" {
     const args_arr = [_][:0]u8{ @constCast("--file"), @constCast("src/main.zig"), @constCast("-m"), @constCast("msg") };
     var opts = try parseCommitArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
-    try std.testing.expectEqualStrings("src/main.zig", opts.file_filter.?);
+    defer deinitFileFilter(allocator, opts.file_filter);
+    try std.testing.expectEqualStrings("src/main.zig", opts.file_filter[0]);
     try std.testing.expectEqual(@as(usize, 0), opts.sha_args.items.len);
 }

@@ -13,7 +13,7 @@ git-hunk list [--staged] [--file <path>] [--porcelain] [--oneline] [--unified <n
 | Flag | Description |
 |------|-------------|
 | `--staged` | Show staged hunks (HEAD vs index) instead of unstaged (index vs worktree) |
-| `--file <path>` | Only show hunks for the given file path. Path must match exactly as shown in diff output. |
+| `--file <path>` | Only show hunks for the given file path. Path must match exactly as shown in diff output. May be repeated to match any of several files. |
 | `--porcelain` | Tab-separated machine-readable output. See [output format](output.md). |
 | `--oneline` | Compact one-line-per-hunk output without inline diff content. |
 | `--unified <n>` / `-U<n>` / `--unified=<n>` | Number of context lines to use in diffs (default: git's `diff.context` or 3). Lower values produce more granular hunks. |
@@ -30,6 +30,7 @@ git-hunk list                                    # all unstaged hunks (with diff
 git-hunk list --oneline                          # compact one-line-per-hunk
 git-hunk list --staged                           # all staged hunks
 git-hunk list --file src/main.zig                # unstaged hunks in one file
+git-hunk list --file a.zig --file b.zig          # hunks in either file
 git-hunk list --staged --porcelain               # staged hunks, machine-readable
 git-hunk list --oneline --porcelain              # compact porcelain output
 git-hunk list --unified 1                        # finer-grained hunks
@@ -65,7 +66,7 @@ git-hunk diff <sha[:lines]>... [--staged] [--file <path>] [--porcelain] [--unifi
 | Flag | Description |
 |------|-------------|
 | `--staged` | Show hunks from staged diff (HEAD vs index) instead of unstaged (index vs worktree) |
-| `--file <path>` | Restrict hash matching to hunks in this file. |
+| `--file <path>` | Restrict hash matching to hunks in this file. May be repeated to match any of several files. |
 | `--porcelain` | Machine-readable output: metadata header line + raw diff lines + blank separator. |
 | `--tracked-only` | Only show hunks from tracked files. |
 | `--untracked-only` | Only show hunks from untracked files. |
@@ -128,7 +129,7 @@ git-hunk add [<sha[:lines]>...] [--file <path>] [--all] [--porcelain] [--unified
 
 | Flag | Description |
 |------|-------------|
-| `--file <path>` | Restrict hash matching to hunks in this file. When used without SHAs, stages all hunks in the file. |
+| `--file <path>` | Restrict hash matching to hunks in this file. When used without SHAs, stages all hunks in the file. May be repeated to match any of several files. |
 | `--all` | Stage all unstaged hunks. No SHA arguments required. |
 | `--porcelain` | Tab-separated machine-readable output. See [output format](output.md#porcelain-format-1). |
 | `--tracked-only` | Only include hunks from tracked files. |
@@ -202,7 +203,7 @@ git-hunk commit [<sha[:lines]>...] -m <message> [--file <path>] [--all] [--amend
 | `--amend` | Amend the previous commit instead of creating a new one. |
 | `--dry-run` | Show what would be committed without committing. `-m` not required. |
 | `--all` | Commit all unstaged hunks. No SHA arguments required. |
-| `--file <path>` | Restrict hash matching to hunks in this file. When used without SHAs, commits all hunks in the file. |
+| `--file <path>` | Restrict hash matching to hunks in this file. When used without SHAs, commits all hunks in the file. May be repeated to match any of several files. |
 | `--ref <refspec>` | Diff against a git ref instead of the index. |
 | `--tracked-only` | Only include hunks from tracked files. |
 | `--untracked-only` | Only include hunks from untracked files. |
@@ -269,7 +270,7 @@ git-hunk reset [<sha[:lines]>...] [--file <path>] [--all] [--porcelain] [--unifi
 
 | Flag | Description |
 |------|-------------|
-| `--file <path>` | Restrict hash matching to hunks in this file. When used without SHAs, unstages all hunks in the file. |
+| `--file <path>` | Restrict hash matching to hunks in this file. When used without SHAs, unstages all hunks in the file. May be repeated to match any of several files. |
 | `--all` | Unstage all staged hunks. No SHA arguments required. |
 | `--porcelain` | Tab-separated machine-readable output. See [output format](output.md#porcelain-format-1). |
 | `--tracked-only` | Only include hunks from tracked files. |
@@ -325,7 +326,7 @@ git-hunk restore [<sha[:lines]>...] [--file <path>] [--all] [--dry-run] [--porce
 
 | Flag | Description |
 |------|-------------|
-| `--file <path>` | Restrict hash matching to hunks in this file. When used without SHAs, restores all hunks in the file. |
+| `--file <path>` | Restrict hash matching to hunks in this file. When used without SHAs, restores all hunks in the file. May be repeated to match any of several files. |
 | `--all` | Restore all unstaged hunks. No SHA arguments required. |
 | `--dry-run` | Preview what would be restored without modifying the worktree. Uses `git apply --check`. |
 | `--force` | Required to restore untracked files (they are deleted permanently). |
@@ -398,7 +399,7 @@ git-hunk count [--staged] [--file <path>] [--unified <n>]
 | Flag | Description |
 |------|-------------|
 | `--staged` | Count staged hunks (HEAD vs index) instead of unstaged (index vs worktree) |
-| `--file <path>` | Only count hunks for the given file path. |
+| `--file <path>` | Only count hunks for the given file path. May be repeated to match any of several files. |
 | `--tracked-only` | Only count hunks from tracked files. |
 | `--untracked-only` | Only count hunks from untracked files. |
 | `--unified <n>` / `-U<n>` / `--unified=<n>` | Number of context lines (default: git's `diff.context` or 3). Affects hunk splitting and therefore count. |
@@ -451,7 +452,7 @@ git-hunk check [--staged] [--exclusive] [--allow-empty] [--file <path>] [--porce
 | `--staged` | Check against staged hunks (HEAD vs index) instead of unstaged (index vs worktree) |
 | `--exclusive` | Assert the provided hashes are the ONLY hunks (scoped by `--file` if given) |
 | `--allow-empty` | Allow zero SHA arguments (useful with `--exclusive` to assert no hunks exist) |
-| `--file <path>` | Scope all lookups to hunks in this file |
+| `--file <path>` | Scope all lookups to hunks in this file. May be repeated to match any of several files. |
 | `--porcelain` | Machine-parseable tab-separated output (reports all entries) |
 | `--tracked-only` | Only check hunks from tracked files. |
 | `--untracked-only` | Only check hunks from untracked files. |
@@ -521,7 +522,7 @@ git-hunk stash pop
 
 | Flag | Description |
 |------|-------------|
-| `--file <path>` | Restrict hash matching to hunks in this file. When used without SHAs, stashes all hunks in the file. |
+| `--file <path>` | Restrict hash matching to hunks in this file. When used without SHAs, stashes all hunks in the file. May be repeated to match any of several files. |
 | `--all` | Stash all unstaged hunks. Excludes untracked files by default (like `git stash`). Use `-u`/`--include-untracked` to include them. |
 | `-u`, `--include-untracked` | Include untracked files when using `--all`. Not needed when targeting untracked hunks by explicit hash. |
 | `-m`, `--message <msg>` | Custom stash message. If omitted, auto-generates from affected file paths. |

@@ -289,9 +289,9 @@ fn runGitFileCmd(allocator: Allocator, prefix: []const []const u8, file_paths: [
 
 /// Generate diff output for untracked files using `git diff --no-index`.
 /// The output matches the standard `git diff` format expected by parseDiff.
-/// Only files matching `file_filter` are included (null = all untracked files).
+/// Only files matching `file_filter` are included (empty slice = all untracked files).
 /// Allocates the result with `allocator`; caller must free the returned slice.
-pub fn diffUntrackedFiles(allocator: Allocator, file_filter: ?[]const u8) ![]u8 {
+pub fn diffUntrackedFiles(allocator: Allocator, file_filter: []const []const u8) ![]u8 {
     // Get list of untracked file paths
     const ls_argv: []const []const u8 = &.{ "git", "ls-files", "--others", "--exclude-standard" };
 
@@ -328,9 +328,7 @@ pub fn diffUntrackedFiles(allocator: Allocator, file_filter: ?[]const u8) ![]u8 
         if (file_path.len == 0) continue;
 
         // Apply file filter
-        if (file_filter) |filter| {
-            if (!std.mem.eql(u8, file_path, filter)) continue;
-        }
+        if (!types.matchesFileFilter(file_path, file_filter)) continue;
 
         const diff = diffSingleUntrackedFile(allocator, file_path) catch continue;
         defer allocator.free(diff);

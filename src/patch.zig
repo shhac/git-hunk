@@ -8,12 +8,10 @@ const MatchedHunk = types.MatchedHunk;
 const LineSpec = types.LineSpec;
 const LineRange = types.LineRange;
 
-pub fn findHunkByShaPrefix(hunks: []const Hunk, prefix: []const u8, file_filter: ?[]const u8) !*const Hunk {
+pub fn findHunkByShaPrefix(hunks: []const Hunk, prefix: []const u8, file_filter: []const []const u8) !*const Hunk {
     var match: ?*const Hunk = null;
     for (hunks) |*h| {
-        if (file_filter) |filter| {
-            if (!std.mem.eql(u8, h.file_path, filter)) continue;
-        }
+        if (!types.matchesFileFilter(h.file_path, file_filter)) continue;
         if (std.mem.startsWith(u8, &h.sha_hex, prefix)) {
             if (match != null) return error.AmbiguousPrefix;
             match = h;
@@ -248,14 +246,14 @@ test "findHunkByShaPrefix exact match" {
     var h = testMakeHunk("a.zig", 1, 1, 1, 1);
     h.sha_hex = sha;
     const hunks = [_]Hunk{h};
-    const found = try findHunkByShaPrefix(&hunks, sha[0..7], null);
+    const found = try findHunkByShaPrefix(&hunks, sha[0..7], &.{});
     try std.testing.expectEqualStrings("a.zig", found.file_path);
 }
 
 test "findHunkByShaPrefix not found" {
     const h = testMakeHunk("a.zig", 1, 1, 1, 1);
     const hunks = [_]Hunk{h};
-    try std.testing.expectError(error.NotFound, findHunkByShaPrefix(&hunks, "deadbeef", null));
+    try std.testing.expectError(error.NotFound, findHunkByShaPrefix(&hunks, "deadbeef", &.{}));
 }
 
 test "findHunkByShaPrefix ambiguous" {
@@ -265,7 +263,7 @@ test "findHunkByShaPrefix ambiguous" {
     var h2 = testMakeHunk("b.zig", 1, 1, 1, 1);
     h2.sha_hex = sha; // same SHA → same prefix
     const hunks = [_]Hunk{ h1, h2 };
-    try std.testing.expectError(error.AmbiguousPrefix, findHunkByShaPrefix(&hunks, sha[0..7], null));
+    try std.testing.expectError(error.AmbiguousPrefix, findHunkByShaPrefix(&hunks, sha[0..7], &.{}));
 }
 
 test "findHunkByShaPrefix file filter excludes" {
@@ -273,7 +271,8 @@ test "findHunkByShaPrefix file filter excludes" {
     var h = testMakeHunk("a.zig", 1, 1, 1, 1);
     h.sha_hex = sha;
     const hunks = [_]Hunk{h};
-    try std.testing.expectError(error.NotFound, findHunkByShaPrefix(&hunks, sha[0..7], "b.zig"));
+    const filter = [_][]const u8{"b.zig"};
+    try std.testing.expectError(error.NotFound, findHunkByShaPrefix(&hunks, sha[0..7], &filter));
 }
 
 test "findHunkByShaPrefix file filter matches" {
@@ -281,7 +280,18 @@ test "findHunkByShaPrefix file filter matches" {
     var h = testMakeHunk("a.zig", 1, 1, 1, 1);
     h.sha_hex = sha;
     const hunks = [_]Hunk{h};
-    const found = try findHunkByShaPrefix(&hunks, sha[0..7], "a.zig");
+    const filter = [_][]const u8{"a.zig"};
+    const found = try findHunkByShaPrefix(&hunks, sha[0..7], &filter);
+    try std.testing.expectEqualStrings("a.zig", found.file_path);
+}
+
+test "findHunkByShaPrefix file filter matches any-of" {
+    const sha = computeHunkSha("a.zig", 1, "+line");
+    var h = testMakeHunk("a.zig", 1, 1, 1, 1);
+    h.sha_hex = sha;
+    const hunks = [_]Hunk{h};
+    const filter = [_][]const u8{ "z.zig", "a.zig", "x.zig" };
+    const found = try findHunkByShaPrefix(&hunks, sha[0..7], &filter);
     try std.testing.expectEqualStrings("a.zig", found.file_path);
 }
 

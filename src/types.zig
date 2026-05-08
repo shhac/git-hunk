@@ -60,7 +60,7 @@ pub const Verbosity = enum { quiet, normal, verbose };
 pub const ListOptions = struct {
     mode: DiffMode = .unstaged,
     diff_filter: DiffFilter = .all,
-    file_filter: ?[]const u8 = null,
+    file_filter: []const []const u8 = &.{},
     ref: ?[]const u8 = null,
     output: OutputMode = .human,
     oneline: bool = false,
@@ -72,7 +72,7 @@ pub const ListOptions = struct {
 pub const AddResetOptions = struct {
     sha_args: std.ArrayList(ShaArg),
     diff_filter: DiffFilter = .all,
-    file_filter: ?[]const u8 = null,
+    file_filter: []const []const u8 = &.{},
     ref: ?[]const u8 = null,
     select_all: bool = false,
     verbosity: Verbosity = .normal,
@@ -84,7 +84,7 @@ pub const AddResetOptions = struct {
 pub const DiffOptions = struct {
     sha_args: std.ArrayList(ShaArg),
     diff_filter: DiffFilter = .all,
-    file_filter: ?[]const u8 = null,
+    file_filter: []const []const u8 = &.{},
     ref: ?[]const u8 = null,
     mode: DiffMode = .unstaged,
     output: OutputMode = .human,
@@ -96,7 +96,7 @@ pub const DiffOptions = struct {
 pub const CountOptions = struct {
     mode: DiffMode = .unstaged,
     diff_filter: DiffFilter = .all,
-    file_filter: ?[]const u8 = null,
+    file_filter: []const []const u8 = &.{},
     ref: ?[]const u8 = null,
     context: ?u32 = null,
     verbosity: Verbosity = .normal,
@@ -105,7 +105,7 @@ pub const CountOptions = struct {
 pub const CheckOptions = struct {
     sha_args: std.ArrayList(ShaArg),
     diff_filter: DiffFilter = .all,
-    file_filter: ?[]const u8 = null,
+    file_filter: []const []const u8 = &.{},
     ref: ?[]const u8 = null,
     mode: DiffMode = .unstaged,
     exclusive: bool = false,
@@ -119,7 +119,7 @@ pub const CheckOptions = struct {
 pub const RestoreOptions = struct {
     sha_args: std.ArrayList(ShaArg),
     diff_filter: DiffFilter = .all,
-    file_filter: ?[]const u8 = null,
+    file_filter: []const []const u8 = &.{},
     ref: ?[]const u8 = null,
     select_all: bool = false,
     dry_run: bool = false,
@@ -133,7 +133,7 @@ pub const RestoreOptions = struct {
 pub const StashOptions = struct {
     sha_args: std.ArrayList(ShaArg),
     diff_filter: DiffFilter = .all,
-    file_filter: ?[]const u8 = null,
+    file_filter: []const []const u8 = &.{},
     ref: ?[]const u8 = null,
     select_all: bool = false,
     pop: bool = false,
@@ -152,13 +152,23 @@ pub const CommitOptions = struct {
     dry_run: bool = false,
     select_all: bool = false,
     diff_filter: DiffFilter = .all,
-    file_filter: ?[]const u8 = null,
+    file_filter: []const []const u8 = &.{},
     ref: ?[]const u8 = null,
     verbosity: Verbosity = .normal,
     output: OutputMode = .human,
     no_color: bool = false,
     context: ?u32 = null,
 };
+
+/// Returns true if `file_path` matches the `--file` filter set.
+/// Empty filter slice means "no filter, match everything".
+pub fn matchesFileFilter(file_path: []const u8, filter: []const []const u8) bool {
+    if (filter.len == 0) return true;
+    for (filter) |f| {
+        if (std.mem.eql(u8, file_path, f)) return true;
+    }
+    return false;
+}
 
 /// Check whether two line ranges overlap (treating count=0 as spanning 1 line).
 pub fn rangesOverlap(a_start: u32, a_count: u32, b_start: u32, b_count: u32) bool {

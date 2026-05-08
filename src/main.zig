@@ -58,56 +58,65 @@ fn run() !void {
     const prefix = path_mod.chdirToRepoRoot(arena) catch "";
 
     if (std.mem.eql(u8, subcmd, "list")) {
-        var opts = args_mod.parseListArgs(process_args[2..]) catch |err|
+        var opts = args_mod.parseListArgs(allocator, process_args[2..]) catch |err|
             handleParseError(stdout, err, .list);
-        try resolveFileFilter(arena, prefix, &opts.file_filter);
+        defer args_mod.deinitFileFilter(allocator, opts.file_filter);
+        try resolveFileFilter(arena, prefix, opts.file_filter);
         try commands.cmdList(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "add")) {
         var opts = args_mod.parseAddResetArgs(allocator, process_args[2..]) catch |err|
             handleParseError(stdout, err, .add);
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
-        try resolveFileFilter(arena, prefix, &opts.file_filter);
+        defer args_mod.deinitFileFilter(allocator, opts.file_filter);
+        try resolveFileFilter(arena, prefix, opts.file_filter);
         try commands.cmdAdd(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "reset")) {
         var opts = args_mod.parseAddResetArgs(allocator, process_args[2..]) catch |err|
             handleParseError(stdout, err, .reset);
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
-        try resolveFileFilter(arena, prefix, &opts.file_filter);
+        defer args_mod.deinitFileFilter(allocator, opts.file_filter);
+        try resolveFileFilter(arena, prefix, opts.file_filter);
         try commands.cmdReset(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "count")) {
-        var opts = args_mod.parseCountArgs(process_args[2..]) catch |err|
+        var opts = args_mod.parseCountArgs(allocator, process_args[2..]) catch |err|
             handleParseError(stdout, err, .count);
-        try resolveFileFilter(arena, prefix, &opts.file_filter);
+        defer args_mod.deinitFileFilter(allocator, opts.file_filter);
+        try resolveFileFilter(arena, prefix, opts.file_filter);
         try commands.cmdCount(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "check")) {
         var opts = args_mod.parseCheckArgs(allocator, process_args[2..]) catch |err|
             handleParseError(stdout, err, .check);
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
-        try resolveFileFilter(arena, prefix, &opts.file_filter);
+        defer args_mod.deinitFileFilter(allocator, opts.file_filter);
+        try resolveFileFilter(arena, prefix, opts.file_filter);
         try commands.cmdCheck(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "restore")) {
         var opts = args_mod.parseRestoreArgs(allocator, process_args[2..]) catch |err|
             handleParseError(stdout, err, .restore);
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
-        try resolveFileFilter(arena, prefix, &opts.file_filter);
+        defer args_mod.deinitFileFilter(allocator, opts.file_filter);
+        try resolveFileFilter(arena, prefix, opts.file_filter);
         try commands.cmdRestore(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "diff")) {
         var opts = args_mod.parseDiffArgs(allocator, process_args[2..]) catch |err|
             handleParseError(stdout, err, .diff);
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
-        try resolveFileFilter(arena, prefix, &opts.file_filter);
+        defer args_mod.deinitFileFilter(allocator, opts.file_filter);
+        try resolveFileFilter(arena, prefix, opts.file_filter);
         try commands.cmdDiff(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "stash")) {
         var opts = args_mod.parseStashArgs(allocator, process_args[2..]) catch |err|
             handleParseError(stdout, err, .stash);
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
-        try resolveFileFilter(arena, prefix, &opts.file_filter);
+        defer args_mod.deinitFileFilter(allocator, opts.file_filter);
+        try resolveFileFilter(arena, prefix, opts.file_filter);
         try commands.cmdStash(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "commit")) {
         var opts = args_mod.parseCommitArgs(allocator, process_args[2..]) catch |err|
             handleParseError(stdout, err, .commit);
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
-        try resolveFileFilter(arena, prefix, &opts.file_filter);
+        defer args_mod.deinitFileFilter(allocator, opts.file_filter);
+        try resolveFileFilter(arena, prefix, opts.file_filter);
         try commands.cmdCommit(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "--version") or std.mem.eql(u8, subcmd, "-V")) {
         try stdout.print("git-hunk {s}\n", .{build_options.version});
@@ -133,21 +142,19 @@ fn run() !void {
     try stdout.flush();
 }
 
-/// Resolve --file filter from cwd-relative to repo-relative using the prefix.
-fn resolveFileFilter(arena: std.mem.Allocator, prefix: []const u8, filter: *?[]const u8) !void {
+/// Resolve each --file filter entry from cwd-relative to repo-relative using the prefix.
+/// The slice spine is rewritten in place; new path strings are arena-allocated.
+fn resolveFileFilter(arena: std.mem.Allocator, prefix: []const u8, filter: []const []const u8) !void {
     if (prefix.len == 0) return;
-    if (filter.*) |ff| {
-        filter.* = try path_mod.resolveToRepoRelative(arena, prefix, ff);
+    const spine: [][]const u8 = @constCast(filter);
+    for (spine) |*entry| {
+        entry.* = try path_mod.resolveToRepoRelative(arena, prefix, entry.*);
     }
 }
 
 fn handleParseError(stdout: *std.Io.Writer, err: anyerror, cmd: help.Command) noreturn {
     if (err == error.ConflictingFilter) {
         std.debug.print("error: --tracked-only and --untracked-only are mutually exclusive\n", .{});
-        std.process.exit(1);
-    }
-    if (err == error.DuplicateFileFilter) {
-        std.debug.print("error: --file may only be specified once\n", .{});
         std.process.exit(1);
     }
     if (err == error.HelpRequested) {

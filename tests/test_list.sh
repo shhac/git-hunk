@@ -207,4 +207,18 @@ SHA114_U3="$("$GIT_HUNK" list --porcelain --oneline --unified 3 --file proximity
     || fail "test 114: -U0 and -U3 produced the same SHA '$SHA114_U0'"
 pass "test 114: --unified context value produces different SHAs"
 
+# ============================================================================
+# Test 115: multiple --file flags filter to the union of those files
+# ============================================================================
+new_repo
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed beta./' beta.txt
+sed -i.bak '1s/.*/Changed gamma./' gamma.txt
+
+OUT115="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt --file gamma.txt)"
+echo "$OUT115" | grep -q "alpha.txt" || fail "test 115: alpha.txt missing from multi-file filter"
+echo "$OUT115" | grep -q "gamma.txt" || fail "test 115: gamma.txt missing from multi-file filter"
+echo "$OUT115" | grep -q "beta.txt" && fail "test 115: beta.txt leaked into multi-file filter" || true
+pass "test 115: multiple --file flags select the union of files"
+
 report_results

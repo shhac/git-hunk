@@ -55,6 +55,7 @@ const list_help: []const u8 =
     \\                    Range (e.g. main..HEAD) diffs between two refs.
     \\                    Combines with --staged for ref vs index comparison.
     \\  --file <path>     Restrict output to hunks in the given file
+    \\                    (repeatable: pass multiple --file flags to match any of them)
     \\  --porcelain       Machine-readable output (tab-separated fields)
     \\  --oneline         One hunk per line: hash, file, and line range
     \\  --no-color        Disable colored output
@@ -93,7 +94,7 @@ const diff_help: []const u8 =
     \\                    Single ref (e.g. HEAD, main) diffs ref vs worktree.
     \\                    Range (e.g. main..HEAD) diffs between two refs.
     \\                    Combines with --staged for ref vs index comparison.
-    \\  --file <path>     Restrict to hunks in the given file
+    \\  --file <path>     Restrict to hunks in the given file (repeatable)
     \\  --porcelain       Machine-readable output
     \\  --no-color        Disable colored output
     \\  --tracked-only    Only show hunks from tracked files
@@ -129,7 +130,7 @@ const add_help: []const u8 =
     \\                    Range (e.g. main..HEAD) diffs between two refs.
     \\                    Combines with --staged for ref vs index comparison.
     \\  --all             Stage all unstaged hunks
-    \\  --file <path>     Stage all hunks in the given file
+    \\  --file <path>     Stage all hunks in the given file (repeatable)
     \\  --porcelain       Machine-readable output
     \\  --no-color        Disable colored output
     \\  --tracked-only    Only include hunks from tracked files
@@ -165,7 +166,7 @@ const reset_help: []const u8 =
     \\                    Range (e.g. main..HEAD) diffs between two refs.
     \\                    Combines with --staged for ref vs index comparison.
     \\  --all             Unstage all staged hunks
-    \\  --file <path>     Unstage all hunks in the given file
+    \\  --file <path>     Unstage all hunks in the given file (repeatable)
     \\  --porcelain       Machine-readable output
     \\  --no-color        Disable colored output
     \\  --tracked-only    Only include hunks from tracked files
@@ -198,7 +199,7 @@ const restore_help: []const u8 =
     \\                    Range (e.g. main..HEAD) diffs between two refs.
     \\                    Combines with --staged for ref vs index comparison.
     \\  --all             Restore all unstaged hunks (DESTRUCTIVE)
-    \\  --file <path>     Restore all hunks in the given file
+    \\  --file <path>     Restore all hunks in the given file (repeatable)
     \\  --force           Required to restore untracked files (deletes them permanently)
     \\  --dry-run         Show what would be restored without making changes
     \\  --porcelain       Machine-readable output
@@ -238,7 +239,7 @@ const count_help: []const u8 =
     \\                    Single ref (e.g. HEAD, main) diffs ref vs worktree.
     \\                    Range (e.g. main..HEAD) diffs between two refs.
     \\                    Combines with --staged for ref vs index comparison.
-    \\  --file <path>     Count hunks in the given file only
+    \\  --file <path>     Count hunks in the given file only (repeatable)
     \\  --tracked-only    Only count hunks from tracked files
     \\  --untracked-only  Only count hunks from untracked files
     \\  -U, --unified <n> Lines of diff context (default: git's diff.context or 3)
@@ -269,7 +270,7 @@ const check_help: []const u8 =
     \\                    Combines with --staged for ref vs index comparison.
     \\  --exclusive       Assert these are the ONLY hunks in the diff (exits 1 otherwise)
     \\  --allow-empty     Allow zero SHA arguments (useful with --exclusive to assert no hunks)
-    \\  --file <path>     Restrict check to hunks in the given file
+    \\  --file <path>     Restrict check to hunks in the given file (repeatable)
     \\  --porcelain       Machine-readable output
     \\  --no-color        Disable colored output
     \\  --tracked-only    Only check hunks from tracked files
@@ -311,7 +312,7 @@ const stash_help: []const u8 =
     \\  --all             Stash all unstaged tracked hunks
     \\  --include-untracked, -u
     \\                    Include untracked files (use with --all)
-    \\  --file <path>     Stash all hunks in the given file
+    \\  --file <path>     Stash all hunks in the given file (repeatable)
     \\  -m, --message <msg>
     \\                    Set the stash message
     \\  --porcelain       Machine-readable output
@@ -352,7 +353,7 @@ const commit_help: []const u8 =
     \\  --amend           Amend the previous commit
     \\  --dry-run         Show what would be committed without committing
     \\  --all             Commit all unstaged hunks
-    \\  --file <path>     Commit all hunks in a file
+    \\  --file <path>     Commit all hunks in a file (repeatable)
     \\  --ref <refspec>   Compare against a git ref instead of the default.
     \\                    Single ref (e.g. HEAD, main) diffs ref vs worktree.
     \\                    Range (e.g. main..HEAD) diffs between two refs.
