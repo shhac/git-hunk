@@ -202,7 +202,7 @@ fn buildFilteredHunkPatch(arena: Allocator, h: *const Hunk, line_spec: LineSpec)
     }
 
     // Build the @@ header
-    try result.writer(arena).print("@@ -{d},{d} +{d},{d} @@", .{ h.old_start, new_old_count, h.new_start, new_new_count });
+    try result.print(arena, "@@ -{d},{d} +{d},{d} @@", .{ h.old_start, new_old_count, h.new_start, new_new_count });
     if (h.context.len > 0) {
         try result.append(arena, ' ');
         try result.appendSlice(arena, h.context);

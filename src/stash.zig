@@ -12,7 +12,22 @@ const LineSpec = types.LineSpec;
 const LineRange = types.LineRange;
 const Verbosity = types.Verbosity;
 const StashOptions = types.StashOptions;
+const EnvMap = std.process.Environ.Map;
 const rangesOverlap = types.rangesOverlap;
+
+fn defaultIo() std.Io {
+    return types.getIo();
+}
+
+fn cloneEnvMap(allocator: Allocator, src: *const EnvMap) !EnvMap {
+    var dst: EnvMap = .{ .array_hash_map = .empty, .allocator = allocator };
+    errdefer dst.deinit();
+    var it = src.array_hash_map.iterator();
+    while (it.next()) |entry| {
+        try dst.put(entry.key_ptr.*, entry.value_ptr.*);
+    }
+    return dst;
+}
 
 /// Worktree line range [start, end] inclusive.
 const WorktreeRange = struct {
@@ -309,6 +324,7 @@ pub fn buildTrackedStashTree(
     tracked_matched: []MatchedHunk,
     head_tree: []const u8,
     context: ?u32,
+    parent_env: *const EnvMap,
 ) !TrackedStashResult {
     // Sort and build INDEX_PATCHES (index-relative, for worktree reverse-apply)
     std.mem.sort(MatchedHunk, tracked_matched, {}, patch_mod.matchedHunkPatchOrder);
@@ -347,18 +363,19 @@ pub fn buildTrackedStashTree(
     const head_patches = try patch_mod.buildCombinedPatches(arena, head_matched_sorted);
 
     // Temp index pipeline
+    const io = defaultIo();
     var random_bytes: [8]u8 = undefined;
-    std.crypto.random.bytes(&random_bytes);
+    std.Io.random(io, &random_bytes);
     const random_val = std.mem.readInt(u64, &random_bytes, .little);
     var tmp_path_buf: [64]u8 = undefined;
     const tmp_idx_path = std.fmt.bufPrint(&tmp_path_buf, "/tmp/git-hunk-idx.{x:0>16}", .{random_val}) catch unreachable;
     const tmp_idx_z = try arena.dupeZ(u8, tmp_idx_path);
 
-    var env_map = try std.process.getEnvMap(allocator);
+    var env_map = try cloneEnvMap(allocator, parent_env);
     defer env_map.deinit();
     try env_map.put("GIT_INDEX_FILE", tmp_idx_z);
 
-    defer std.posix.unlink(tmp_idx_z) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, tmp_idx_z) catch {};
 
     try git.runGitReadTreeWithEnv(allocator, head_tree, &env_map);
     for (head_patches) |hp| {
@@ -378,24 +395,28 @@ pub fn buildUntrackedCommit(
     branch_name: []const u8,
     head_msg: []const u8,
     untracked_matched: []const MatchedHunk,
+    parent_env: *const EnvMap,
 ) ![]const u8 {
+    const io = defaultIo();
     var ut_random: [8]u8 = undefined;
-    std.crypto.random.bytes(&ut_random);
+    std.Io.random(io, &ut_random);
     const ut_random_val = std.mem.readInt(u64, &ut_random, .little);
     var ut_path_buf: [80]u8 = undefined;
     const ut_path = std.fmt.bufPrint(&ut_path_buf, "/tmp/git-hunk-ut-idx.{x:0>16}", .{ut_random_val}) catch unreachable;
     const ut_path_z = try arena.dupeZ(u8, ut_path);
 
-    var ut_env = try std.process.getEnvMap(allocator);
+    var ut_env = try cloneEnvMap(allocator, parent_env);
     defer ut_env.deinit();
     try ut_env.put("GIT_INDEX_FILE", ut_path_z);
 
-    defer std.posix.unlink(ut_path_z) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, ut_path_z) catch {};
 
     // Hash each untracked file and add to temp index
+    const cwd_dir = std.Io.Dir.cwd();
     for (untracked_matched) |m| {
-        var link_buf: [std.fs.max_path_bytes]u8 = undefined;
-        const symlink_target = std.fs.cwd().readLink(m.hunk.file_path, &link_buf) catch null;
+        var link_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+        const symlink_n = cwd_dir.readLink(io, m.hunk.file_path, &link_buf) catch null;
+        const symlink_target: ?[]const u8 = if (symlink_n) |n| link_buf[0..n] else null;
 
         const blob_sha = if (symlink_target) |target|
             try git.runGitHashObjectStdin(allocator, target)
@@ -406,8 +427,8 @@ pub fn buildUntrackedCommit(
         const mode: []const u8 = if (symlink_target != null)
             "120000"
         else blk: {
-            const stat = std.fs.cwd().statFile(m.hunk.file_path) catch break :blk "100644";
-            break :blk if (stat.mode & std.posix.S.IXUSR != 0) "100755" else "100644";
+            const stat = cwd_dir.statFile(io, m.hunk.file_path, .{}) catch break :blk "100644";
+            break :blk if (stat.permissions.toMode() & std.posix.S.IXUSR != 0) "100755" else "100644";
         };
         try git.runGitUpdateIndexCacheinfo(allocator, mode, blob_sha, m.hunk.file_path, &ut_env);
     }
@@ -441,8 +462,9 @@ pub fn cleanupWorktree(
         }
     }
     if (has_untracked) {
+        const io = defaultIo();
         for (untracked_matched) |m| {
-            std.fs.cwd().deleteFile(m.hunk.file_path) catch {
+            std.Io.Dir.cwd().deleteFile(io, m.hunk.file_path) catch {
                 std.debug.print("warning: could not delete untracked file '{s}'\n", .{m.hunk.file_path});
             };
         }
@@ -456,19 +478,21 @@ pub fn addBinaryFilesToTree(
     allocator: Allocator,
     current_tree: []const u8,
     binary_paths: []const []const u8,
+    parent_env: *const EnvMap,
 ) ![]const u8 {
+    const io = defaultIo();
     var random_bytes: [8]u8 = undefined;
-    std.crypto.random.bytes(&random_bytes);
+    std.Io.random(io, &random_bytes);
     const random_val = std.mem.readInt(u64, &random_bytes, .little);
     var tmp_path_buf: [64]u8 = undefined;
     const tmp_idx_path = std.fmt.bufPrint(&tmp_path_buf, "/tmp/git-hunk-bin-idx.{x:0>16}", .{random_val}) catch unreachable;
     const tmp_idx_z = try arena.dupeZ(u8, tmp_idx_path);
 
-    var env_map = try std.process.getEnvMap(allocator);
+    var env_map = try cloneEnvMap(allocator, parent_env);
     defer env_map.deinit();
     try env_map.put("GIT_INDEX_FILE", tmp_idx_z);
 
-    defer std.posix.unlink(tmp_idx_z) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, tmp_idx_z) catch {};
 
     try git.runGitReadTreeWithEnv(allocator, current_tree, &env_map);
     try git.runGitAddFilesWithEnv(allocator, binary_paths, &env_map);

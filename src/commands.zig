@@ -25,6 +25,10 @@ const CommitOptions = types.CommitOptions;
 const rangesOverlap = types.rangesOverlap;
 const Verbosity = types.Verbosity;
 
+fn defaultIo() std.Io {
+    return types.getIo();
+}
+
 /// Get diff output including untracked files (unstaged mode only).
 /// Returns the tracked diff output and, separately, the untracked diff output.
 /// Both must remain alive while hunks reference them (hunks contain sub-slices).
@@ -667,7 +671,6 @@ fn resolveMatchedHunks(
                 std.debug.print("error: ambiguous prefix '{s}' — matches multiple hunks\n", .{sha_arg.prefix});
                 std.process.exit(1);
             },
-            else => return err,
         };
         // Reject line-spec on binary hunks
         if (hunk.is_binary and sha_arg.line_spec != null) {
@@ -964,8 +967,9 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
 
     // Binary untracked hunks: delete files
     if (binary_untracked_paths.items.len > 0 and !opts.dry_run) {
+        const io = defaultIo();
         for (binary_untracked_paths.items) |fp| {
-            std.fs.cwd().deleteFile(fp) catch {
+            std.Io.Dir.cwd().deleteFile(io, fp) catch {
                 std.debug.print("warning: could not delete untracked binary file '{s}'\n", .{fp});
             };
         }
@@ -1060,7 +1064,7 @@ pub fn cmdDiff(allocator: Allocator, stdout: *std.Io.Writer, opts: DiffOptions) 
     }
 }
 
-pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions) !void {
+pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions, env_map: *const std.process.Environ.Map) !void {
     if (opts.pop) {
         try stash_mod.stashPop(allocator, opts.verbosity);
         return;
@@ -1132,7 +1136,7 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
     var owns_stash_tree = false;
 
     if (has_tracked) {
-        const result = try stash_mod.buildTrackedStashTree(arena, allocator, tracked_matched.items, head_tree, opts.context);
+        const result = try stash_mod.buildTrackedStashTree(arena, allocator, tracked_matched.items, head_tree, opts.context, env_map);
         index_patches = result.index_patches;
         stash_tree = result.stash_tree;
         owns_stash_tree = true;
@@ -1144,7 +1148,7 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
         for (binary_tracked_matched.items, 0..) |m, i| {
             bin_paths[i] = m.hunk.file_path;
         }
-        const new_tree = try stash_mod.addBinaryFilesToTree(arena, allocator, stash_tree, bin_paths);
+        const new_tree = try stash_mod.addBinaryFilesToTree(arena, allocator, stash_tree, bin_paths, env_map);
         if (owns_stash_tree) allocator.free(stash_tree);
         stash_tree = new_tree;
         owns_stash_tree = true;
@@ -1159,7 +1163,7 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
     // --- Untracked hunks pipeline (parent 3) ---
     var untracked_commit: ?[]const u8 = null;
     if (has_untracked) {
-        untracked_commit = try stash_mod.buildUntrackedCommit(arena, allocator, head_sha, branch_name, head_msg, untracked_matched.items);
+        untracked_commit = try stash_mod.buildUntrackedCommit(arena, allocator, head_sha, branch_name, head_msg, untracked_matched.items, env_map);
     }
     defer if (untracked_commit) |uc| allocator.free(uc);
 
@@ -1211,17 +1215,18 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
     defer allocator.free(git_dir);
     const index_path = try std.fmt.allocPrint(arena, "{s}/index", .{git_dir});
     const backup_path = try std.fmt.allocPrint(arena, "{s}/index.hunk-backup", .{git_dir});
-    const cwd = std.fs.cwd();
+    const io = defaultIo();
+    const cwd = std.Io.Dir.cwd();
 
     // 0a. Crash recovery: if stale backup exists, warn and restore
     check_backup: {
-        _ = cwd.statFile(backup_path) catch break :check_backup;
+        _ = cwd.statFile(io, backup_path, .{}) catch break :check_backup;
         std.debug.print("warning: stale index backup found from interrupted commit -- restoring original index\n", .{});
-        cwd.copyFile(backup_path, cwd, index_path, .{}) catch {
+        std.Io.Dir.copyFile(cwd, backup_path, cwd, index_path, io, .{}) catch {
             std.debug.print("error: failed to restore index backup\n", .{});
             std.process.exit(1);
         };
-        cwd.deleteFile(backup_path) catch {};
+        cwd.deleteFile(io, backup_path) catch {};
     }
 
     // 0b. Resolve hunks (same pattern as cmdApplyHunks/cmdRestore)
@@ -1292,37 +1297,37 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
     // === 7-step commit workflow ===
 
     // 1. Save index
-    cwd.copyFile(index_path, cwd, backup_path, .{}) catch {
+    std.Io.Dir.copyFile(cwd, index_path, cwd, backup_path, io, .{}) catch {
         std.debug.print("error: failed to backup index file\n", .{});
         std.process.exit(1);
     };
 
     const abortCommit = struct {
-        fn abort(c: std.fs.Dir, bp: []const u8, ip: []const u8) noreturn {
-            c.copyFile(bp, c, ip, .{}) catch {};
-            c.deleteFile(bp) catch {};
+        fn abort(c: std.Io.Dir, ioo: std.Io, bp: []const u8, ip: []const u8) noreturn {
+            std.Io.Dir.copyFile(c, bp, c, ip, ioo, .{}) catch {};
+            c.deleteFile(ioo, bp) catch {};
             std.process.exit(1);
         }
     }.abort;
 
     // 2. Reset index to HEAD (or HEAD~1 for amend)
     const read_tree_ref: []const u8 = if (opts.amend) "HEAD~1" else "HEAD";
-    git.runGitReadTree(allocator, read_tree_ref) catch abortCommit(cwd, backup_path, index_path);
+    git.runGitReadTree(allocator, read_tree_ref) catch abortCommit(cwd, io, backup_path, index_path);
 
     // 3. Stage target hunks (text via patch, binary via git add)
     for (patches) |p| {
-        git.runGitApply(allocator, p, false, .index, false, opts.ref) catch abortCommit(cwd, backup_path, index_path);
+        git.runGitApply(allocator, p, false, .index, false, opts.ref) catch abortCommit(cwd, io, backup_path, index_path);
     }
     if (binary_paths.items.len > 0) {
-        git.runGitAddFiles(allocator, binary_paths.items) catch abortCommit(cwd, backup_path, index_path);
+        git.runGitAddFiles(allocator, binary_paths.items) catch abortCommit(cwd, io, backup_path, index_path);
     }
 
     // 4. Commit
-    const commit_output = git.runGitCommit(allocator, .{ .message = message, .amend = opts.amend }) catch abortCommit(cwd, backup_path, index_path);
+    const commit_output = git.runGitCommit(allocator, .{ .message = message, .amend = opts.amend }) catch abortCommit(cwd, io, backup_path, index_path);
     defer allocator.free(commit_output);
 
     // 5. Restore original index
-    cwd.copyFile(backup_path, cwd, index_path, .{}) catch {
+    std.Io.Dir.copyFile(cwd, backup_path, cwd, index_path, io, .{}) catch {
         std.debug.print("warning: commit succeeded but failed to restore original index -- backup at {s}\n", .{backup_path});
     };
 
@@ -1340,7 +1345,7 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
     }
 
     // 7. Cleanup
-    cwd.deleteFile(backup_path) catch {};
+    cwd.deleteFile(io, backup_path) catch {};
 
     // Output: print committed hunks
     const use_color = format.shouldUseColor(opts.output, opts.no_color);

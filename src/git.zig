@@ -2,9 +2,14 @@ const std = @import("std");
 const types = @import("types.zig");
 
 const Allocator = std.mem.Allocator;
-const EnvMap = std.process.EnvMap;
+const Io = std.Io;
+const EnvMap = std.process.Environ.Map;
 const DiffMode = types.DiffMode;
 const fatal = types.fatal;
+
+fn defaultIo() Io {
+    return types.getIo();
+}
 
 const RunOpts = struct {
     stdin_data: ?[]const u8 = null,
@@ -21,51 +26,73 @@ const RunResult = struct {
 /// Core subprocess runner. Spawns a git command, optionally writes stdin,
 /// collects stdout/stderr, and returns the result. Caller owns stdout/stderr.
 fn runCommand(allocator: Allocator, argv: []const []const u8, opts: RunOpts) !RunResult {
-    var child = std.process.Child.init(argv, allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    if (opts.stdin_data != null) child.stdin_behavior = .Pipe;
-    if (opts.env_map) |env| child.env_map = env;
-
-    try child.spawn();
-
-    if (opts.stdin_data) |data| {
-        const stdin_file = child.stdin.?;
-        stdin_file.writeAll(data) catch {};
-        stdin_file.close();
-        child.stdin = null;
+    const io = defaultIo();
+    if (opts.stdin_data == null) {
+        const result = std.process.run(allocator, io, .{
+            .argv = argv,
+            .environ_map = opts.env_map,
+            .stdout_limit = .limited(opts.max_bytes),
+            .stderr_limit = .limited(opts.max_bytes),
+        }) catch |err| {
+            if (err == error.StreamTooLong) {
+                std.debug.print("error: output exceeds {d} MB -- use --file to narrow scope\n", .{opts.max_bytes / (1024 * 1024)});
+                std.process.exit(1);
+            }
+            return err;
+        };
+        const exit_code: u8 = switch (result.term) {
+            .exited => |code| code,
+            else => {
+                allocator.free(result.stdout);
+                allocator.free(result.stderr);
+                return error.AbnormalTermination;
+            },
+        };
+        return .{ .stdout = result.stdout, .exit_code = exit_code, .stderr = result.stderr };
     }
 
-    var child_stdout: std.ArrayList(u8) = .empty;
-    errdefer child_stdout.deinit(allocator);
-    var child_stderr: std.ArrayList(u8) = .empty;
-    errdefer child_stderr.deinit(allocator);
+    // stdin path: spawn manually so we can pipe in stdin_data, then drain stdout/stderr.
+    var child = try std.process.spawn(io, .{
+        .argv = argv,
+        .environ_map = opts.env_map,
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .pipe,
+    });
+    defer child.kill(io);
 
-    child.collectOutput(allocator, &child_stdout, &child_stderr, opts.max_bytes) catch |err| {
-        if (err == error.StreamTooLong) {
-            child_stdout.deinit(allocator);
-            child_stderr.deinit(allocator);
-            std.debug.print("error: output exceeds {d} MB -- use --file to narrow scope\n", .{opts.max_bytes / (1024 * 1024)});
-            std.process.exit(1);
-        }
-        return err;
-    };
-    const term = try child.wait();
+    child.stdin.?.writeStreamingAll(io, opts.stdin_data.?) catch {};
+    child.stdin.?.close(io);
+    child.stdin = null;
+
+    var multi_buf: Io.File.MultiReader.Buffer(2) = undefined;
+    var multi: Io.File.MultiReader = undefined;
+    multi.init(allocator, io, multi_buf.toStreams(), &.{ child.stdout.?, child.stderr.? });
+    defer multi.deinit();
+
+    while (multi.fill(64, .none)) |_| {} else |err| switch (err) {
+        error.EndOfStream => {},
+        else => |e| return e,
+    }
+    try multi.checkAnyError();
+
+    const term = try child.wait(io);
+
+    const stdout_slice = try multi.toOwnedSlice(0);
+    errdefer allocator.free(stdout_slice);
+    const stderr_slice = try multi.toOwnedSlice(1);
+    errdefer allocator.free(stderr_slice);
 
     const exit_code: u8 = switch (term) {
-        .Exited => |code| code,
+        .exited => |code| code,
         else => {
-            allocator.free(try child_stdout.toOwnedSlice(allocator));
-            allocator.free(try child_stderr.toOwnedSlice(allocator));
+            allocator.free(stdout_slice);
+            allocator.free(stderr_slice);
             return error.AbnormalTermination;
         },
     };
 
-    return .{
-        .stdout = try child_stdout.toOwnedSlice(allocator),
-        .exit_code = exit_code,
-        .stderr = try child_stderr.toOwnedSlice(allocator),
-    };
+    return .{ .stdout = stdout_slice, .exit_code = exit_code, .stderr = stderr_slice };
 }
 
 /// Run a git command that returns trimmed stdout. Fatal on non-zero exit.
@@ -80,7 +107,7 @@ fn runGitCapture(allocator: Allocator, argv: []const []const u8, opts: RunOpts, 
     }
 
     // Trim trailing newline and dupe to right-size the allocation
-    const trimmed = std.mem.trimRight(u8, result.stdout, "\n");
+    const trimmed = std.mem.trimEnd(u8, result.stdout, "\n");
     if (trimmed.len == result.stdout.len) return result.stdout;
     const duped = try allocator.dupe(u8, trimmed);
     allocator.free(result.stdout);
@@ -147,40 +174,14 @@ pub fn runGitDiffFiles(allocator: Allocator, mode: DiffMode, ref: ?[]const u8, c
     }
     const argv: []const []const u8 = argv_buf[0..argc];
 
-    var child = std.process.Child.init(argv, allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-
-    try child.spawn();
-
-    var child_stdout: std.ArrayList(u8) = .empty;
-    errdefer child_stdout.deinit(allocator);
-    var child_stderr: std.ArrayList(u8) = .empty;
-    defer child_stderr.deinit(allocator);
-
-    const max_bytes = 10 * 1024 * 1024; // 10 MB
-    child.collectOutput(allocator, &child_stdout, &child_stderr, max_bytes) catch |err| {
-        if (err == error.StreamTooLong) {
-            std.debug.print("error: diff output exceeds 10 MB -- use --file to narrow scope\n", .{});
-            std.process.exit(1);
-        }
-        return err;
-    };
-    const term = try child.wait();
-
-    switch (term) {
-        .Exited => |code| {
-            if (code != 0) {
-                if (child_stderr.items.len > 0) {
-                    std.debug.print("{s}", .{child_stderr.items});
-                }
-                fatal("git diff exited with code {d}", .{code});
-            }
-        },
-        else => fatal("git diff terminated abnormally", .{}),
+    const result = try runCommand(allocator, argv, .{ .max_bytes = 10 * 1024 * 1024 });
+    defer allocator.free(result.stderr);
+    if (result.exit_code != 0) {
+        allocator.free(result.stdout);
+        if (result.stderr.len > 0) std.debug.print("{s}", .{result.stderr});
+        fatal("git diff exited with code {d}", .{result.exit_code});
     }
-
-    return try child_stdout.toOwnedSlice(allocator);
+    return result.stdout;
 }
 
 pub const ApplyTarget = enum { index, worktree };
@@ -208,48 +209,26 @@ pub fn runGitApply(allocator: Allocator, patch: []const u8, reverse: bool, targe
     }
     const argv: []const []const u8 = argv_buf[0..argc];
 
-    var child = std.process.Child.init(argv, allocator);
-    child.stdin_behavior = .Pipe;
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-
-    try child.spawn();
-
-    // Write patch to stdin, then close
-    const stdin_file = child.stdin.?;
-    stdin_file.writeAll(patch) catch {};
-    stdin_file.close();
-    child.stdin = null;
-
-    var child_stdout: std.ArrayList(u8) = .empty;
-    defer child_stdout.deinit(allocator);
-    var child_stderr: std.ArrayList(u8) = .empty;
-    defer child_stderr.deinit(allocator);
-
-    const max_bytes = 1 * 1024 * 1024;
-    try child.collectOutput(allocator, &child_stdout, &child_stderr, max_bytes);
-    const term = try child.wait();
-
-    switch (term) {
-        .Exited => |code| {
-            if (code != 0) {
-                if (child_stderr.items.len > 0) {
-                    std.debug.print("{s}", .{child_stderr.items});
-                }
-                if (ref) |r| {
-                    std.debug.print("error: patch did not apply cleanly — the diff from '{s}' may conflict with the current state\n", .{r});
-                } else if (check_only) {
-                    std.debug.print("error: patch would not apply cleanly — hashes may be stale\n", .{});
-                } else {
-                    std.debug.print("error: patch did not apply cleanly — re-run 'list' and try again\n", .{});
-                }
-                return error.PatchFailed;
-            }
-        },
-        else => {
+    const result = runCommand(allocator, argv, .{ .stdin_data = patch }) catch |err| {
+        if (err == error.AbnormalTermination) {
             std.debug.print("error: git apply terminated abnormally\n", .{});
             return error.PatchFailed;
-        },
+        }
+        return err;
+    };
+    defer allocator.free(result.stdout);
+    defer allocator.free(result.stderr);
+
+    if (result.exit_code != 0) {
+        if (result.stderr.len > 0) std.debug.print("{s}", .{result.stderr});
+        if (ref) |r| {
+            std.debug.print("error: patch did not apply cleanly — the diff from '{s}' may conflict with the current state\n", .{r});
+        } else if (check_only) {
+            std.debug.print("error: patch would not apply cleanly — hashes may be stale\n", .{});
+        } else {
+            std.debug.print("error: patch did not apply cleanly — re-run 'list' and try again\n", .{});
+        }
+        return error.PatchFailed;
     }
 }
 
@@ -295,28 +274,12 @@ pub fn diffUntrackedFiles(allocator: Allocator, file_filter: []const []const u8)
     // Get list of untracked file paths
     const ls_argv: []const []const u8 = &.{ "git", "ls-files", "--others", "--exclude-standard" };
 
-    var ls_child = std.process.Child.init(ls_argv, allocator);
-    ls_child.stdout_behavior = .Pipe;
-    ls_child.stderr_behavior = .Pipe;
-    try ls_child.spawn();
+    const ls_result = try runCommand(allocator, ls_argv, .{});
+    defer allocator.free(ls_result.stdout);
+    defer allocator.free(ls_result.stderr);
+    if (ls_result.exit_code != 0) return try allocator.alloc(u8, 0);
 
-    var ls_stdout: std.ArrayList(u8) = .empty;
-    defer ls_stdout.deinit(allocator);
-    var ls_stderr: std.ArrayList(u8) = .empty;
-    defer ls_stderr.deinit(allocator);
-
-    const ls_max = 1 * 1024 * 1024;
-    try ls_child.collectOutput(allocator, &ls_stdout, &ls_stderr, ls_max);
-    const ls_term = try ls_child.wait();
-
-    switch (ls_term) {
-        .Exited => |code| {
-            if (code != 0) return try allocator.alloc(u8, 0);
-        },
-        else => return try allocator.alloc(u8, 0),
-    }
-
-    const ls_output = std.mem.trimRight(u8, ls_stdout.items, "\n");
+    const ls_output = std.mem.trimEnd(u8, ls_result.stdout, "\n");
     if (ls_output.len == 0) return try allocator.alloc(u8, 0);
 
     // Collect diffs for each untracked file
@@ -350,39 +313,17 @@ fn diffSingleUntrackedFile(allocator: Allocator, file_path: []const u8) ![]u8 {
         "--",              "/dev/null",       file_path,
     };
 
-    var child = std.process.Child.init(argv, allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-
-    try child.spawn();
-
-    var child_stdout: std.ArrayList(u8) = .empty;
-    errdefer child_stdout.deinit(allocator);
-    var child_stderr: std.ArrayList(u8) = .empty;
-    defer child_stderr.deinit(allocator);
-
-    const max_bytes = 10 * 1024 * 1024; // 10 MB
-    child.collectOutput(allocator, &child_stdout, &child_stderr, max_bytes) catch |err| {
-        if (err == error.StreamTooLong) return error.StreamTooLong;
+    const result = runCommand(allocator, argv, .{ .max_bytes = 10 * 1024 * 1024 }) catch |err| {
+        if (err == error.AbnormalTermination) return try allocator.alloc(u8, 0);
         return err;
     };
-    const term = try child.wait();
-
-    switch (term) {
-        .Exited => |code| {
-            // Exit code 1 means "differences found" — this is expected for --no-index
-            if (code != 0 and code != 1) {
-                child_stdout.deinit(allocator);
-                return try allocator.alloc(u8, 0);
-            }
-        },
-        else => {
-            child_stdout.deinit(allocator);
-            return try allocator.alloc(u8, 0);
-        },
+    defer allocator.free(result.stderr);
+    // Exit code 1 means "differences found" — this is expected for --no-index
+    if (result.exit_code != 0 and result.exit_code != 1) {
+        allocator.free(result.stdout);
+        return try allocator.alloc(u8, 0);
     }
-
-    return try child_stdout.toOwnedSlice(allocator);
+    return result.stdout;
 }
 
 // ─── Stash plumbing helpers ───────────────────────────────────────────
@@ -406,7 +347,7 @@ pub fn runGitSymbolicRef(allocator: Allocator) !?[]u8 {
         allocator.free(result.stdout);
         return null;
     }
-    const trimmed = std.mem.trimRight(u8, result.stdout, "\n");
+    const trimmed = std.mem.trimEnd(u8, result.stdout, "\n");
     if (trimmed.len == result.stdout.len) return result.stdout;
     const duped = try allocator.dupe(u8, trimmed);
     allocator.free(result.stdout);
@@ -541,39 +482,14 @@ pub fn runGitDiffHead(allocator: Allocator, context: ?u32, file_paths: []const [
     }
     const argv: []const []const u8 = argv_buf[0..argc];
 
-    var child = std.process.Child.init(argv, allocator);
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    try child.spawn();
-
-    var child_stdout: std.ArrayList(u8) = .empty;
-    errdefer child_stdout.deinit(allocator);
-    var child_stderr: std.ArrayList(u8) = .empty;
-    defer child_stderr.deinit(allocator);
-
-    const max_bytes = 10 * 1024 * 1024; // 10 MB
-    child.collectOutput(allocator, &child_stdout, &child_stderr, max_bytes) catch |err| {
-        if (err == error.StreamTooLong) {
-            std.debug.print("error: diff output exceeds 10 MB -- use --file to narrow scope\n", .{});
-            std.process.exit(1);
-        }
-        return err;
-    };
-    const term = try child.wait();
-
-    switch (term) {
-        .Exited => |code| {
-            if (code != 0) {
-                if (child_stderr.items.len > 0) {
-                    std.debug.print("{s}", .{child_stderr.items});
-                }
-                fatal("git diff exited with code {d}", .{code});
-            }
-        },
-        else => fatal("git diff terminated abnormally", .{}),
+    const result = try runCommand(allocator, argv, .{ .max_bytes = 10 * 1024 * 1024 });
+    defer allocator.free(result.stderr);
+    if (result.exit_code != 0) {
+        allocator.free(result.stdout);
+        if (result.stderr.len > 0) std.debug.print("{s}", .{result.stderr});
+        fatal("git diff exited with code {d}", .{result.exit_code});
     }
-
-    return try child_stdout.toOwnedSlice(allocator);
+    return result.stdout;
 }
 
 /// Run `git rev-parse --show-toplevel` and return the trimmed repo root path.
@@ -584,7 +500,7 @@ pub fn runGitToplevel(allocator: Allocator) ![]u8 {
         allocator.free(result.stdout);
         return error.NotAGitRepo;
     }
-    const trimmed = std.mem.trimRight(u8, result.stdout, "\n");
+    const trimmed = std.mem.trimEnd(u8, result.stdout, "\n");
     if (trimmed.len == result.stdout.len) return result.stdout;
     const duped = try allocator.dupe(u8, trimmed);
     allocator.free(result.stdout);
@@ -629,14 +545,14 @@ pub fn runGitCommit(allocator: Allocator, args: struct { message: []const u8, am
     // git writes the commit summary to stderr; return that if stdout is empty
     if (result.stderr.len > 0) {
         allocator.free(result.stdout);
-        const trimmed = std.mem.trimRight(u8, result.stderr, "\n");
+        const trimmed = std.mem.trimEnd(u8, result.stderr, "\n");
         if (trimmed.len == result.stderr.len) return result.stderr;
         const duped = try allocator.dupe(u8, trimmed);
         allocator.free(result.stderr);
         return duped;
     }
     allocator.free(result.stderr);
-    const trimmed = std.mem.trimRight(u8, result.stdout, "\n");
+    const trimmed = std.mem.trimEnd(u8, result.stdout, "\n");
     if (trimmed.len == result.stdout.len) return result.stdout;
     const duped = try allocator.dupe(u8, trimmed);
     allocator.free(result.stdout);

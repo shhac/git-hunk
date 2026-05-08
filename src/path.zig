@@ -1,8 +1,13 @@
 const std = @import("std");
-const posix = std.posix;
+const Io = std.Io;
 const git = @import("git.zig");
+const types = @import("types.zig");
 
 const Allocator = std.mem.Allocator;
+
+fn defaultIo() Io {
+    return types.getIo();
+}
 
 /// Resolve a path relative to the original cwd into a repo-relative path.
 /// prefix: path components from repo root to original cwd (e.g., "bar/sub")
@@ -41,12 +46,19 @@ pub fn chdirToRepoRoot(allocator: Allocator) ![]const u8 {
     const toplevel_raw = git.runGitToplevel(allocator) catch return try allocator.dupe(u8, "");
     defer allocator.free(toplevel_raw);
 
-    // Resolve symlinks (e.g., /tmp → /private/tmp on macOS)
-    var toplevel_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const toplevel = posix.realpath(toplevel_raw, &toplevel_buf) catch toplevel_raw;
+    const io = defaultIo();
+    const cwd_dir = Io.Dir.cwd();
 
-    var cwd_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const cwd = posix.realpath(".", &cwd_buf) catch return try allocator.dupe(u8, "");
+    // Resolve symlinks (e.g., /tmp → /private/tmp on macOS)
+    var toplevel_buf: [Io.Dir.max_path_bytes]u8 = undefined;
+    const toplevel: []const u8 = blk: {
+        const n = cwd_dir.realPathFile(io, toplevel_raw, &toplevel_buf) catch break :blk toplevel_raw;
+        break :blk toplevel_buf[0..n];
+    };
+
+    var cwd_buf: [Io.Dir.max_path_bytes]u8 = undefined;
+    const cwd_n = std.process.currentPath(io, &cwd_buf) catch return try allocator.dupe(u8, "");
+    const cwd = cwd_buf[0..cwd_n];
 
     if (std.mem.eql(u8, cwd, toplevel)) {
         return try allocator.dupe(u8, "");
@@ -54,7 +66,7 @@ pub fn chdirToRepoRoot(allocator: Allocator) ![]const u8 {
 
     if (cwd.len > toplevel.len and cwd[toplevel.len] == '/' and std.mem.startsWith(u8, cwd, toplevel)) {
         const prefix = try allocator.dupe(u8, cwd[toplevel.len + 1 ..]);
-        try posix.chdir(toplevel);
+        try std.Io.Threaded.chdir(toplevel);
         return prefix;
     }
 

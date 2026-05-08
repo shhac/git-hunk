@@ -42,7 +42,7 @@ mv git-hunk ~/.local/bin/
 
 ### Build from source
 
-Requires [Zig](https://ziglang.org/) 0.15.2 or later.
+Requires [Zig](https://ziglang.org/) 0.16.0 or later.
 
 ```
 git clone https://github.com/shhac/git-hunk.git

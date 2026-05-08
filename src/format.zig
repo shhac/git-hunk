@@ -6,6 +6,15 @@ const Hunk = types.Hunk;
 const DiffMode = types.DiffMode;
 const LineSpec = types.LineSpec;
 
+fn getEnv(name: [*:0]const u8) ?[]const u8 {
+    if (std.c.getenv(name)) |val| return std.mem.sliceTo(val, 0);
+    return null;
+}
+
+fn defaultIo() std.Io {
+    return types.getIo();
+}
+
 /// Write the file path with a trailing '@' suffix for symlinks (like ls -F).
 pub fn writeFilePath(stdout: *std.Io.Writer, h: anytype) !void {
     try stdout.writeAll(h.file_path);
@@ -16,11 +25,12 @@ pub fn writeFilePath(stdout: *std.Io.Writer, h: anytype) !void {
 /// stdout is a TTY (or git pager is active), and NO_COLOR env var is unset.
 pub fn shouldUseColor(output: types.OutputMode, no_color: bool) bool {
     if (output != .human or no_color) return false;
-    if (posix.getenv("NO_COLOR") != null) return false;
+    if (getEnv("NO_COLOR") != null) return false;
     // When git pipes through a pager, stdout is not a TTY but colors are still wanted.
     // Git sets GIT_PAGER_IN_USE=true when the pager is active.
-    if (std.fs.File.stdout().isTty()) return true;
-    if (posix.getenv("GIT_PAGER_IN_USE")) |_| return true;
+    const io = defaultIo();
+    if (std.Io.File.stdout().isTty(io) catch false) return true;
+    if (getEnv("GIT_PAGER_IN_USE") != null) return true;
     return false;
 }
 
@@ -359,15 +369,16 @@ fn formatLineRange(buf: []u8, h: Hunk, mode: DiffMode) []const u8 {
 pub fn getTerminalWidth() u16 {
     const min_width: u16 = 40;
 
-    const stdout_file = std.fs.File.stdout();
-    if (stdout_file.isTty()) {
+    const io = defaultIo();
+    const stdout_file = std.Io.File.stdout();
+    if (stdout_file.isTty(io) catch false) {
         var wsz: posix.winsize = .{ .row = 0, .col = 0, .xpixel = 0, .ypixel = 0 };
         const err = posix.system.ioctl(stdout_file.handle, posix.T.IOCGWINSZ, @intFromPtr(&wsz));
         if (posix.errno(err) == .SUCCESS and wsz.col > 0) return @max(wsz.col, min_width);
     }
 
     // Fallback: check COLUMNS env var (useful in CI/agent contexts where stdout isn't a TTY)
-    if (posix.getenv("COLUMNS")) |cols_str| {
+    if (getEnv("COLUMNS")) |cols_str| {
         if (std.fmt.parseInt(u16, cols_str, 10)) |cols| {
             if (cols > 0) return @max(cols, min_width);
         } else |_| {}

@@ -1,5 +1,19 @@
 const std = @import("std");
 
+var g_io: ?std.Io = null;
+
+/// Set the process-wide Io implementation. Must be called once at startup
+/// before any subprocess or filesystem call. Callable across all modules
+/// to avoid threading `io: Io` through every helper signature.
+pub fn setIo(io: std.Io) void {
+    g_io = io;
+}
+
+/// Returns the process-wide Io implementation set by `setIo`.
+pub fn getIo() std.Io {
+    return g_io.?;
+}
+
 pub const Hunk = struct {
     file_path: []const u8,
     old_start: u32,

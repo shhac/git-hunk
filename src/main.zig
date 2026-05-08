@@ -19,8 +19,8 @@ comptime {
 
 const fatal = types.fatal;
 
-pub fn main() void {
-    run() catch |err| {
+pub fn main(init: std.process.Init) !void {
+    run(init) catch |err| {
         if (err == error.PatchFailed) {
             // Descriptive message already printed by runGitApply
             std.process.exit(1);
@@ -29,17 +29,16 @@ pub fn main() void {
     };
 }
 
-fn run() !void {
-    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+fn run(init: std.process.Init) !void {
+    const allocator = init.gpa;
+    const io = init.io;
+    types.setIo(io);
 
     var stdout_buffer: [64 * 1024]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buffer);
     const stdout = &stdout_writer.interface;
 
-    const process_args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, process_args);
+    const process_args = try init.minimal.args.toSlice(init.arena.allocator());
 
     if (process_args.len < 2) {
         try printUsage(stdout);
@@ -58,7 +57,7 @@ fn run() !void {
     const prefix = path_mod.chdirToRepoRoot(arena) catch "";
 
     if (std.mem.eql(u8, subcmd, "list")) {
-        var opts = args_mod.parseListArgs(allocator, process_args[2..]) catch |err|
+        const opts = args_mod.parseListArgs(allocator, process_args[2..]) catch |err|
             handleParseError(stdout, err, .list);
         defer args_mod.deinitFileFilter(allocator, opts.file_filter);
         try resolveFileFilter(arena, prefix, opts.file_filter);
@@ -78,7 +77,7 @@ fn run() !void {
         try resolveFileFilter(arena, prefix, opts.file_filter);
         try commands.cmdReset(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "count")) {
-        var opts = args_mod.parseCountArgs(allocator, process_args[2..]) catch |err|
+        const opts = args_mod.parseCountArgs(allocator, process_args[2..]) catch |err|
             handleParseError(stdout, err, .count);
         defer args_mod.deinitFileFilter(allocator, opts.file_filter);
         try resolveFileFilter(arena, prefix, opts.file_filter);
@@ -110,7 +109,7 @@ fn run() !void {
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
         defer args_mod.deinitFileFilter(allocator, opts.file_filter);
         try resolveFileFilter(arena, prefix, opts.file_filter);
-        try commands.cmdStash(allocator, stdout, opts);
+        try commands.cmdStash(allocator, stdout, opts, init.environ_map);
     } else if (std.mem.eql(u8, subcmd, "commit")) {
         var opts = args_mod.parseCommitArgs(allocator, process_args[2..]) catch |err|
             handleParseError(stdout, err, .commit);
