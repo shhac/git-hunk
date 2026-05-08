@@ -6,12 +6,8 @@ const Hunk = types.Hunk;
 const DiffMode = types.DiffMode;
 const LineSpec = types.LineSpec;
 
-fn getEnv(name: [*:0]const u8) ?[]const u8 {
-    if (std.c.getenv(name)) |val| return std.mem.sliceTo(val, 0);
-    return null;
-}
-
 const defaultIo = types.getIo;
+const getEnv = types.getEnv;
 
 /// Write the file path with a trailing '@' suffix for symlinks (like ls -F).
 pub fn writeFilePath(stdout: *std.Io.Writer, h: anytype) !void {

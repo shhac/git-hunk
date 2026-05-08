@@ -33,6 +33,7 @@ fn run(init: std.process.Init) !void {
     const allocator = init.gpa;
     const io = init.io;
     types.setIo(io);
+    types.setEnvMap(init.environ_map);
 
     var stdout_buffer: [64 * 1024]u8 = undefined;
     var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buffer);
