@@ -163,67 +163,32 @@ pub fn cmdCount(allocator: Allocator, stdout: *std.Io.Writer, opts: CountOptions
     }
 }
 
-pub fn cmdCheck(allocator: Allocator, stdout: *std.Io.Writer, opts: CheckOptions) !void {
-    var arena_state = std.heap.ArenaAllocator.init(allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+const CheckStatus = enum { ok, stale, ambiguous };
 
-    var hunks: std.ArrayList(Hunk) = .empty;
-    defer hunks.deinit(arena);
+const CheckResult = struct {
+    prefix: []const u8,
+    status: CheckStatus,
+    resolved_sha7: []const u8,
+    file_path: []const u8,
+};
 
-    const diffs = try getDiffWithUntracked(allocator, arena, opts.mode, opts.ref, opts.context, opts.file_filter, opts.diff_filter, &hunks);
-    defer allocator.free(diffs.tracked);
-    defer allocator.free(diffs.untracked);
+const CheckSummary = struct {
+    results: []const CheckResult,
+    unexpected: []const *const Hunk,
+    has_failure: bool,
+};
 
-    // Handle --allow-empty with no SHAs: early exit path
-    if (opts.allow_empty and opts.sha_args.items.len == 0) {
-        if (opts.exclusive) {
-            // Count hunks matching the file filter
-            var hunk_count: usize = 0;
-            for (hunks.items) |*h| {
-                if (!types.matchesFileFilter(h.file_path, opts.file_filter)) continue;
-                hunk_count += 1;
-            }
-            if (hunk_count > 0) {
-                if (opts.verbosity != .quiet) {
-                    const color = format.shouldUseColor(opts.output, opts.no_color);
-                    if (opts.output == .porcelain) {
-                        for (hunks.items) |*h| {
-                            if (!types.matchesFileFilter(h.file_path, opts.file_filter)) continue;
-                            try stdout.print("unexpected\t{s}\t", .{h.sha_hex[0..7]});
-                            try format.writeFilePath(stdout, h.*);
-                            try stdout.writeByte('\n');
-                        }
-                    } else {
-                        for (hunks.items) |*h| {
-                            if (!types.matchesFileFilter(h.file_path, opts.file_filter)) continue;
-                            if (color) {
-                                try stdout.print("unexpected {s}{s}{s}  ", .{ format.COLOR_YELLOW, h.sha_hex[0..7], format.COLOR_RESET });
-                            } else {
-                                try stdout.print("unexpected {s}  ", .{h.sha_hex[0..7]});
-                            }
-                            try format.writeFilePath(stdout, h.*);
-                            try stdout.writeByte('\n');
-                        }
-                        std.debug.print("exclusive check failed: {d} unexpected hunk{s}\n", .{
-                            hunk_count,
-                            @as([]const u8, if (hunk_count == 1) "" else "s"),
-                        });
-                    }
-                }
-                try stdout.flush();
-                std.process.exit(1);
-            }
-        }
-        // No SHAs, allow_empty: success (exclusive with 0 hunks, or non-exclusive no-op)
-        return;
-    }
-
-    const use_color = format.shouldUseColor(opts.output, opts.no_color);
-
-    // Deduplicate input SHA prefixes
+/// Resolve each unique SHA prefix against `hunks` and (if `exclusive`) collect
+/// hunks that no provided prefix matched. Returns a pure data summary.
+fn runChecks(
+    arena: Allocator,
+    hunks: []const Hunk,
+    sha_args: []const types.ShaArg,
+    file_filter: []const []const u8,
+    exclusive: bool,
+) !CheckSummary {
     var unique_prefixes: std.ArrayList([]const u8) = .empty;
-    for (opts.sha_args.items) |sha_arg| {
+    for (sha_args) |sha_arg| {
         var already = false;
         for (unique_prefixes.items) |p| {
             if (std.mem.eql(u8, p, sha_arg.prefix)) {
@@ -234,21 +199,12 @@ pub fn cmdCheck(allocator: Allocator, stdout: *std.Io.Writer, opts: CheckOptions
         if (!already) try unique_prefixes.append(arena, sha_arg.prefix);
     }
 
-    // Check each prefix
-    const Status = enum { ok, stale, ambiguous };
-    const CheckResult = struct {
-        prefix: []const u8,
-        status: Status,
-        resolved_sha7: []const u8,
-        file_path: []const u8,
-    };
-
     var results: std.ArrayList(CheckResult) = .empty;
     var matched_sha_hexes: std.ArrayList(*const [40]u8) = .empty;
     var has_failure = false;
 
     for (unique_prefixes.items) |prefix| {
-        if (patch_mod.findHunkByShaPrefix(hunks.items, prefix, opts.file_filter)) |hunk| {
+        if (patch_mod.findHunkByShaPrefix(hunks, prefix, file_filter)) |hunk| {
             try results.append(arena, .{
                 .prefix = prefix,
                 .status = .ok,
@@ -257,7 +213,7 @@ pub fn cmdCheck(allocator: Allocator, stdout: *std.Io.Writer, opts: CheckOptions
             });
             try matched_sha_hexes.append(arena, &hunk.sha_hex);
         } else |err| {
-            const status: Status = switch (err) {
+            const status: CheckStatus = switch (err) {
                 error.NotFound => .stale,
                 error.AmbiguousPrefix => .ambiguous,
             };
@@ -271,11 +227,10 @@ pub fn cmdCheck(allocator: Allocator, stdout: *std.Io.Writer, opts: CheckOptions
         }
     }
 
-    // Exclusive check: find hunks NOT matched by any provided hash
-    var unexpected_hunks: std.ArrayList(*const Hunk) = .empty;
-    if (opts.exclusive) {
-        for (hunks.items) |*h| {
-            if (!types.matchesFileFilter(h.file_path, opts.file_filter)) continue;
+    var unexpected: std.ArrayList(*const Hunk) = .empty;
+    if (exclusive) {
+        for (hunks) |*h| {
+            if (!types.matchesFileFilter(h.file_path, file_filter)) continue;
             var was_matched = false;
             for (matched_sha_hexes.items) |sha_ptr| {
                 if (std.mem.eql(u8, &h.sha_hex, sha_ptr)) {
@@ -284,83 +239,113 @@ pub fn cmdCheck(allocator: Allocator, stdout: *std.Io.Writer, opts: CheckOptions
                 }
             }
             if (!was_matched) {
-                try unexpected_hunks.append(arena, h);
+                try unexpected.append(arena, h);
                 has_failure = true;
             }
         }
     }
 
-    // Output
+    return .{ .results = results.items, .unexpected = unexpected.items, .has_failure = has_failure };
+}
+
+/// Render a check summary in tab-separated porcelain form (every entry, success or failure).
+fn renderCheckPorcelain(stdout: *std.Io.Writer, summary: CheckSummary) !void {
+    for (summary.results) |r| {
+        switch (r.status) {
+            .ok => try stdout.print("ok\t{s}\t{s}\t{s}\n", .{ r.prefix, r.resolved_sha7, r.file_path }),
+            .stale => try stdout.print("stale\t{s}\n", .{r.prefix}),
+            .ambiguous => try stdout.print("ambiguous\t{s}\n", .{r.prefix}),
+        }
+    }
+    for (summary.unexpected) |h| {
+        try stdout.print("unexpected\t{s}\t", .{h.sha_hex[0..7]});
+        try format.writeFilePath(stdout, h.*);
+        try stdout.writeByte('\n');
+    }
+}
+
+/// Render a check summary in human form (failures only, with stderr summary line).
+fn renderCheckHuman(stdout: *std.Io.Writer, summary: CheckSummary, use_color: bool) !void {
+    if (!summary.has_failure) return;
+    for (summary.results) |r| {
+        switch (r.status) {
+            .ok => {},
+            .stale => {
+                if (use_color) {
+                    try stdout.print("stale {s}{s}{s}\n", .{ format.COLOR_YELLOW, r.prefix, format.COLOR_RESET });
+                } else {
+                    try stdout.print("stale {s}\n", .{r.prefix});
+                }
+            },
+            .ambiguous => {
+                if (use_color) {
+                    try stdout.print("ambiguous {s}{s}{s}\n", .{ format.COLOR_YELLOW, r.prefix, format.COLOR_RESET });
+                } else {
+                    try stdout.print("ambiguous {s}\n", .{r.prefix});
+                }
+            },
+        }
+    }
+    for (summary.unexpected) |h| {
+        if (use_color) {
+            try stdout.print("unexpected {s}{s}{s}  ", .{ format.COLOR_YELLOW, h.sha_hex[0..7], format.COLOR_RESET });
+        } else {
+            try stdout.print("unexpected {s}  ", .{h.sha_hex[0..7]});
+        }
+        try format.writeFilePath(stdout, h.*);
+        try stdout.writeByte('\n');
+    }
+
+    var fail_count: usize = 0;
+    for (summary.results) |r| {
+        if (r.status != .ok) fail_count += 1;
+    }
+    const unexpected_count = summary.unexpected.len;
+    if (fail_count > 0 and unexpected_count > 0) {
+        std.debug.print("{d} of {d} hashes failed, {d} unexpected hunk{s}\n", .{
+            fail_count,
+            summary.results.len,
+            unexpected_count,
+            @as([]const u8, if (unexpected_count == 1) "" else "s"),
+        });
+    } else if (fail_count > 0) {
+        std.debug.print("{d} of {d} hashes failed\n", .{ fail_count, summary.results.len });
+    } else if (unexpected_count > 0) {
+        std.debug.print("exclusive check failed: {d} unexpected hunk{s}\n", .{
+            unexpected_count,
+            @as([]const u8, if (unexpected_count == 1) "" else "s"),
+        });
+    }
+}
+
+pub fn cmdCheck(allocator: Allocator, stdout: *std.Io.Writer, opts: CheckOptions) !void {
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var hunks: std.ArrayList(Hunk) = .empty;
+    defer hunks.deinit(arena);
+
+    const diffs = try getDiffWithUntracked(allocator, arena, opts.mode, opts.ref, opts.context, opts.file_filter, opts.diff_filter, &hunks);
+    defer allocator.free(diffs.tracked);
+    defer allocator.free(diffs.untracked);
+
+    const summary = try runChecks(arena, hunks.items, opts.sha_args.items, opts.file_filter, opts.exclusive);
+
+    // --allow-empty with no SHAs: skip rendering "ok" entries (there are none) — only
+    // unexpected hunks can fail. If there are none, exit successfully.
+    if (opts.allow_empty and opts.sha_args.items.len == 0 and !summary.has_failure) return;
+
     if (opts.verbosity != .quiet) {
         if (opts.output == .porcelain) {
-            // Porcelain: report ALL entries
-            for (results.items) |r| {
-                switch (r.status) {
-                    .ok => try stdout.print("ok\t{s}\t{s}\t{s}\n", .{ r.prefix, r.resolved_sha7, r.file_path }),
-                    .stale => try stdout.print("stale\t{s}\n", .{r.prefix}),
-                    .ambiguous => try stdout.print("ambiguous\t{s}\n", .{r.prefix}),
-                }
-            }
-            for (unexpected_hunks.items) |h| {
-                try stdout.print("unexpected\t{s}\t", .{h.sha_hex[0..7]});
-                try format.writeFilePath(stdout, h.*);
-                try stdout.writeByte('\n');
-            }
-        } else if (has_failure) {
-            // Human mode: output only on failure. Stale/ambiguous first, then unexpected.
-            for (results.items) |r| {
-                switch (r.status) {
-                    .ok => {},
-                    .stale => {
-                        if (use_color) {
-                            try stdout.print("stale {s}{s}{s}\n", .{ format.COLOR_YELLOW, r.prefix, format.COLOR_RESET });
-                        } else {
-                            try stdout.print("stale {s}\n", .{r.prefix});
-                        }
-                    },
-                    .ambiguous => {
-                        if (use_color) {
-                            try stdout.print("ambiguous {s}{s}{s}\n", .{ format.COLOR_YELLOW, r.prefix, format.COLOR_RESET });
-                        } else {
-                            try stdout.print("ambiguous {s}\n", .{r.prefix});
-                        }
-                    },
-                }
-            }
-            for (unexpected_hunks.items) |h| {
-                if (use_color) {
-                    try stdout.print("unexpected {s}{s}{s}  ", .{ format.COLOR_YELLOW, h.sha_hex[0..7], format.COLOR_RESET });
-                } else {
-                    try stdout.print("unexpected {s}  ", .{h.sha_hex[0..7]});
-                }
-                try format.writeFilePath(stdout, h.*);
-                try stdout.writeByte('\n');
-            }
-
-            // stderr summary (human mode only)
-            var fail_count: usize = 0;
-            for (results.items) |r| {
-                if (r.status != .ok) fail_count += 1;
-            }
-            if (fail_count > 0 and unexpected_hunks.items.len > 0) {
-                std.debug.print("{d} of {d} hashes failed, {d} unexpected hunk{s}\n", .{
-                    fail_count,
-                    results.items.len,
-                    unexpected_hunks.items.len,
-                    @as([]const u8, if (unexpected_hunks.items.len == 1) "" else "s"),
-                });
-            } else if (fail_count > 0) {
-                std.debug.print("{d} of {d} hashes failed\n", .{ fail_count, results.items.len });
-            } else if (unexpected_hunks.items.len > 0) {
-                std.debug.print("exclusive check failed: {d} unexpected hunk{s}\n", .{
-                    unexpected_hunks.items.len,
-                    @as([]const u8, if (unexpected_hunks.items.len == 1) "" else "s"),
-                });
-            }
+            try renderCheckPorcelain(stdout, summary);
+        } else {
+            const use_color = format.shouldUseColor(opts.output, opts.no_color);
+            try renderCheckHuman(stdout, summary, use_color);
         }
     }
 
-    if (has_failure) {
+    if (summary.has_failure) {
         try stdout.flush();
         std.process.exit(1);
     }
@@ -399,24 +384,9 @@ const ResultGroup = struct {
     is_symlink: bool,
 };
 
-/// Build result groups by comparing old vs new target-side hunks and matching
-/// applied/consumed inputs to created results.
-///
-/// Algorithm:
-///   1. Consumed = old target hunks whose sha is absent from new target
-///   2. Created  = new target hunks whose sha is absent from old target
-///   3. For each created hunk, find contributing applied hunks (by content
-///      match, then new-side line overlap) and consumed hunks (by old-side
-///      line overlap)
-///   4. Unmatched applied hunks get their own group with no result hash
-fn buildResultGroups(
-    arena: Allocator,
-    matched: []const MatchedHunk,
-    old_target: []const Hunk,
-    new_target: []const Hunk,
-) ![]const ResultGroup {
-    // Step 1: Consumed = old target hunks not surviving in new target
-    var consumed_list: std.ArrayList(*const Hunk) = .empty;
+/// Pre-existing target-side hunks absorbed into the result (sha not in new_target).
+fn findConsumed(arena: Allocator, old_target: []const Hunk, new_target: []const Hunk) ![]*const Hunk {
+    var list: std.ArrayList(*const Hunk) = .empty;
     for (old_target) |*oh| {
         var survived = false;
         for (new_target) |*nh| {
@@ -425,11 +395,14 @@ fn buildResultGroups(
                 break;
             }
         }
-        if (!survived) try consumed_list.append(arena, oh);
+        if (!survived) try list.append(arena, oh);
     }
+    return list.items;
+}
 
-    // Step 2: Created = new target hunks that didn't exist before
-    var created_list: std.ArrayList(*const Hunk) = .empty;
+/// New target-side hunks that didn't exist before (sha not in old_target).
+fn findCreated(arena: Allocator, old_target: []const Hunk, new_target: []const Hunk) ![]*const Hunk {
+    var list: std.ArrayList(*const Hunk) = .empty;
     for (new_target) |*nh| {
         var existed = false;
         for (old_target) |*oh| {
@@ -438,31 +411,37 @@ fn buildResultGroups(
                 break;
             }
         }
-        if (!existed) try created_list.append(arena, nh);
+        if (!existed) try list.append(arena, nh);
     }
+    return list.items;
+}
 
-    // Step 3: Match applied and consumed hunks to created results
-    const applied_used = try arena.alloc(bool, matched.len);
-    @memset(applied_used, false);
-    const consumed_used = try arena.alloc(bool, consumed_list.items.len);
-    @memset(consumed_used, false);
-
+/// For each created hunk, attribute contributing applied inputs (by content or
+/// new-side line overlap) and consumed hunks (by old-side line overlap). Marks
+/// `applied_used` / `consumed_used` flags as it goes.
+fn assignAppliedAndConsumed(
+    arena: Allocator,
+    matched: []const MatchedHunk,
+    consumed: []const *const Hunk,
+    created: []const *const Hunk,
+    applied_used: []bool,
+    consumed_used: []bool,
+) ![]ResultGroup {
     var groups: std.ArrayList(ResultGroup) = .empty;
 
-    for (created_list.items) |created| {
+    for (created) |c| {
         var app_buf: std.ArrayList(AppliedInput) = .empty;
         var con_buf: std.ArrayList([]const u8) = .empty;
 
-        // Match applied hunks: content match first (simple case), then new-side line overlap
         for (matched, 0..) |m, i| {
             if (applied_used[i]) continue;
-            if (!std.mem.eql(u8, m.hunk.file_path, created.file_path)) continue;
+            if (!std.mem.eql(u8, m.hunk.file_path, c.file_path)) continue;
 
             const content_match = m.line_spec == null and
-                std.mem.eql(u8, m.hunk.diff_lines, created.diff_lines);
+                std.mem.eql(u8, m.hunk.diff_lines, c.diff_lines);
             const line_match = !content_match and rangesOverlap(
                 m.hunk.new_start, m.hunk.new_count,
-                created.new_start, created.new_count,
+                c.new_start, c.new_count,
             );
 
             if (content_match or line_match) {
@@ -474,33 +453,37 @@ fn buildResultGroups(
             }
         }
 
-        // Match consumed hunks by file + old-side (HEAD/stable) line overlap
-        for (consumed_list.items, 0..) |con, i| {
+        for (consumed, 0..) |con, i| {
             if (consumed_used[i]) continue;
-            if (!std.mem.eql(u8, con.file_path, created.file_path)) continue;
+            if (!std.mem.eql(u8, con.file_path, c.file_path)) continue;
 
-            if (rangesOverlap(
-                con.old_start, con.old_count,
-                created.old_start, created.old_count,
-            )) {
+            if (rangesOverlap(con.old_start, con.old_count, c.old_start, c.old_count)) {
                 try con_buf.append(arena, con.sha_hex[0..7]);
                 consumed_used[i] = true;
             }
         }
 
         const result_sha = try arena.alloc([]const u8, 1);
-        result_sha[0] = created.sha_hex[0..7];
+        result_sha[0] = c.sha_hex[0..7];
 
         try groups.append(arena, .{
             .result_shas = result_sha,
             .applied = try app_buf.toOwnedSlice(arena),
             .consumed = try con_buf.toOwnedSlice(arena),
-            .file_path = created.file_path,
-            .is_symlink = created.is_symlink,
+            .file_path = c.file_path,
+            .is_symlink = c.is_symlink,
         });
     }
+    return groups.items;
+}
 
-    // Step 4: Unmatched applied hunks get their own group (no result hash)
+/// Append unmatched applied hunks as standalone groups with no result_shas.
+fn appendOrphanedApplied(
+    arena: Allocator,
+    groups: *std.ArrayList(ResultGroup),
+    matched: []const MatchedHunk,
+    applied_used: []const bool,
+) !void {
     for (matched, 0..) |m, i| {
         if (applied_used[i]) continue;
         const app = try arena.alloc(AppliedInput, 1);
@@ -513,20 +496,18 @@ fn buildResultGroups(
             .is_symlink = m.hunk.is_symlink,
         });
     }
+}
 
-    // Step 5: Merge orphan groups into sibling groups for the same file.
-    // A line-spec operation (e.g. `aaaa:1,10`) can produce multiple result
-    // hunks. The applied hunk matches the first created hunk exclusively
-    // (applied_used is set), so subsequent created hunks get empty `applied`.
-    // Merge these orphans back: append their result_shas and consumed to the
-    // sibling group that holds the applied input for the same file.
+/// A line-spec operation (e.g. `aaaa:1,10`) can produce multiple result hunks.
+/// The applied input matches the first created hunk exclusively, so later
+/// created hunks have empty `applied`. Merge these orphans into the sibling
+/// group that holds the applied input for the same file.
+fn mergeOrphansIntoSiblings(arena: Allocator, groups: []ResultGroup) ![]const ResultGroup {
     var final_groups: std.ArrayList(ResultGroup) = .empty;
-    for (groups.items) |rg| {
-        if (rg.applied.len > 0) {
-            try final_groups.append(arena, rg);
-        }
+    for (groups) |rg| {
+        if (rg.applied.len > 0) try final_groups.append(arena, rg);
     }
-    for (groups.items) |orphan| {
+    for (groups) |orphan| {
         if (orphan.applied.len > 0) continue;
         if (orphan.result_shas.len == 0) continue;
 
@@ -534,30 +515,56 @@ fn buildResultGroups(
         for (final_groups.items) |*target| {
             if (!std.mem.eql(u8, target.file_path, orphan.file_path)) continue;
 
-            // Append orphan's result_shas to the sibling group
             const combined_res = try arena.alloc([]const u8, target.result_shas.len + orphan.result_shas.len);
             @memcpy(combined_res[0..target.result_shas.len], target.result_shas);
             @memcpy(combined_res[target.result_shas.len..], orphan.result_shas);
             target.result_shas = combined_res;
 
-            // Append orphan's consumed hashes if any
             if (orphan.consumed.len > 0) {
                 const combined_con = try arena.alloc([]const u8, target.consumed.len + orphan.consumed.len);
                 @memcpy(combined_con[0..target.consumed.len], target.consumed);
                 @memcpy(combined_con[target.consumed.len..], orphan.consumed);
                 target.consumed = combined_con;
             }
-
             merged = true;
             break;
         }
-        if (!merged) {
-            // No sibling found — keep as standalone group (shouldn't happen normally)
-            try final_groups.append(arena, orphan);
-        }
+        // No sibling found — keep as standalone group (shouldn't happen in practice).
+        if (!merged) try final_groups.append(arena, orphan);
     }
+    return final_groups.items;
+}
 
-    return try final_groups.toOwnedSlice(arena);
+/// Build result groups by comparing old vs new target-side hunks and matching
+/// applied/consumed inputs to created results.
+///
+/// Algorithm:
+///   1. Consumed = old target hunks whose sha is absent from new target
+///   2. Created  = new target hunks whose sha is absent from old target
+///   3. For each created hunk, attribute contributing applied + consumed
+///   4. Unmatched applied hunks get their own group with no result hash
+///   5. Merge orphan result-only groups (from line-spec splits) into sibling
+///      groups that share a file with an applied input
+fn buildResultGroups(
+    arena: Allocator,
+    matched: []const MatchedHunk,
+    old_target: []const Hunk,
+    new_target: []const Hunk,
+) ![]const ResultGroup {
+    const consumed = try findConsumed(arena, old_target, new_target);
+    const created = try findCreated(arena, old_target, new_target);
+
+    const applied_used = try arena.alloc(bool, matched.len);
+    @memset(applied_used, false);
+    const consumed_used = try arena.alloc(bool, consumed.len);
+    @memset(consumed_used, false);
+
+    var groups: std.ArrayList(ResultGroup) = .empty;
+    const initial = try assignAppliedAndConsumed(arena, matched, consumed, created, applied_used, consumed_used);
+    try groups.appendSlice(arena, initial);
+    try appendOrphanedApplied(arena, &groups, matched, applied_used);
+
+    return try mergeOrphansIntoSiblings(arena, groups.items);
 }
 
 /// Print one result group in human-readable format:
@@ -736,6 +743,107 @@ fn exitIfNoMatches(matched_len: usize, file_filter: []const []const u8) void {
     std.process.exit(1);
 }
 
+/// Diff against `target_mode` scoped to `file_paths` and parse into `hunks`.
+/// Soft-fails: any error leaves `hunks` empty.
+fn captureTargetHunks(
+    arena: Allocator,
+    target_mode: DiffMode,
+    context: ?u32,
+    file_paths: []const []const u8,
+    hunks: *std.ArrayList(Hunk),
+) !void {
+    if (file_paths.len == 0) return;
+    const diff = git.runGitDiffFiles(arena, target_mode, null, context, file_paths) catch return;
+    if (diff.len > 0) {
+        diff_mod.parseDiff(arena, diff, target_mode, hunks) catch {};
+    }
+}
+
+/// Apply text patches in order (forward) or reverse order (unstage), then run
+/// git add/reset on `binary_paths`.
+fn applyTextAndBinary(
+    allocator: Allocator,
+    arena: Allocator,
+    action: ApplyAction,
+    text_matched: []MatchedHunk,
+    binary_paths: []const []const u8,
+    ref: ?[]const u8,
+) !void {
+    if (text_matched.len > 0) {
+        std.mem.sort(MatchedHunk, text_matched, {}, patch_mod.matchedHunkPatchOrder);
+        const patches = try patch_mod.buildCombinedPatches(arena, text_matched);
+        const reverse = action == .unstage;
+        if (reverse) {
+            var i: usize = patches.len;
+            while (i > 0) {
+                i -= 1;
+                try git.runGitApply(allocator, patches[i], reverse, .index, false, ref);
+            }
+        } else {
+            for (patches) |patch| {
+                try git.runGitApply(allocator, patch, reverse, .index, false, ref);
+            }
+        }
+    }
+    if (binary_paths.len > 0) {
+        switch (action) {
+            .stage => try git.runGitAddFiles(allocator, binary_paths),
+            .unstage => try git.runGitResetFiles(allocator, binary_paths),
+        }
+    }
+}
+
+/// Print result groups for text hunks (with merge tracking) and per-hunk lines
+/// for binary hunks (no merge tracking). Returns the totals for the summary.
+fn renderApplyResults(
+    stdout: *std.Io.Writer,
+    opts: AddResetOptions,
+    action: ApplyAction,
+    result_groups: []const ResultGroup,
+    binary_matched: []const MatchedHunk,
+) !struct { count: usize, merged_count: usize } {
+    const use_color = format.shouldUseColor(opts.output, opts.no_color);
+    const verb: []const u8 = switch (action) {
+        .stage => "staged",
+        .unstage => "unstaged",
+    };
+    var count: usize = 0;
+    var merged_count: usize = 0;
+
+    for (result_groups) |rg| {
+        count += rg.applied.len;
+        merged_count += rg.consumed.len;
+        if (opts.verbosity != .quiet) {
+            switch (opts.output) {
+                .human => try printResultGroupHuman(stdout, verb, rg, use_color),
+                .porcelain => try printResultGroupPorcelain(stdout, verb, rg),
+            }
+        }
+    }
+    for (binary_matched) |m| {
+        count += 1;
+        if (opts.verbosity != .quiet) {
+            try format.printMatchedHunkLine(stdout, verb, verb, m, use_color, opts.output);
+        }
+    }
+
+    if (opts.verbosity == .verbose and opts.output == .human) {
+        if (count == 1 and merged_count == 0) {
+            std.debug.print("1 hunk {s}\n", .{verb});
+        } else if (count == 1 and merged_count > 0) {
+            std.debug.print("1 hunk {s} ({d} merged)\n", .{ verb, merged_count });
+        } else if (merged_count == 0) {
+            std.debug.print("{d} hunks {s}\n", .{ count, verb });
+        } else {
+            std.debug.print("{d} hunks {s} ({d} merged)\n", .{ count, verb, merged_count });
+        }
+    }
+    if (action == .stage and opts.verbosity == .verbose and opts.output == .human) {
+        std.debug.print("hint: staged hashes differ from unstaged -- use 'git hunk list --staged' to see them\n", .{});
+    }
+    return .{ .count = count, .merged_count = merged_count };
+}
+
 fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOptions, action: ApplyAction) !void {
     // For staging: diff unstaged hunks (index vs worktree)
     // For unstaging: diff staged hunks (HEAD vs index)
@@ -783,111 +891,25 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
         break :blk combined.items;
     };
 
-    // Collect unique file paths from all matched hunks for scoped diff queries
+    // Capture target-side hunks BEFORE and AFTER applying so buildResultGroups
+    // can detect merges and map applied hunks to their post-apply hashes.
     const file_paths = try patch_mod.collectUniqueFilePaths(arena, matched.items);
     const target_mode: DiffMode = switch (action) {
         .stage => .staged,
         .unstage => .unstaged,
     };
-
-    // Capture target-side hunks BEFORE applying, so we can detect merges
     var old_target_hunks: std.ArrayList(Hunk) = .empty;
     defer old_target_hunks.deinit(arena);
-    if (text_matched.len > 0) {
-        if (git.runGitDiffFiles(arena, target_mode, null, opts.context, file_paths)) |target_diff| {
-            if (target_diff.len > 0) {
-                diff_mod.parseDiff(arena, target_diff, target_mode, &old_target_hunks) catch {};
-            }
-        } else |_| {}
-    }
+    if (text_matched.len > 0) try captureTargetHunks(arena, target_mode, opts.context, file_paths, &old_target_hunks);
 
-    // --- Text hunks: existing patch pipeline ---
-    if (text_matched.len > 0) {
-        std.mem.sort(MatchedHunk, text_matched, {}, patch_mod.matchedHunkPatchOrder);
-        const patches = try patch_mod.buildCombinedPatches(arena, text_matched);
-        const reverse = action == .unstage;
+    try applyTextAndBinary(allocator, arena, action, text_matched, binary_paths, opts.ref);
 
-        if (reverse) {
-            var i: usize = patches.len;
-            while (i > 0) {
-                i -= 1;
-                try git.runGitApply(allocator, patches[i], reverse, .index, false, opts.ref);
-            }
-        } else {
-            for (patches) |patch| {
-                try git.runGitApply(allocator, patch, reverse, .index, false, opts.ref);
-            }
-        }
-    }
-
-    // --- Binary hunks: direct git add/reset ---
-    if (binary_paths.len > 0) {
-        switch (action) {
-            .stage => try git.runGitAddFiles(allocator, binary_paths),
-            .unstage => try git.runGitResetFiles(allocator, binary_paths),
-        }
-    }
-
-    // Capture target-side hunks AFTER applying for result hash mapping
     var new_hunks: std.ArrayList(Hunk) = .empty;
     defer new_hunks.deinit(arena);
-    if (text_matched.len > 0) {
-        if (git.runGitDiffFiles(arena, target_mode, null, opts.context, file_paths)) |new_diff| {
-            if (new_diff.len > 0) {
-                diff_mod.parseDiff(arena, new_diff, target_mode, &new_hunks) catch {};
-            }
-        } else |_| {}
-    }
+    if (text_matched.len > 0) try captureTargetHunks(arena, target_mode, opts.context, file_paths, &new_hunks);
 
-    // Build result groups for text hunks
     const result_groups = try buildResultGroups(arena, text_matched, old_target_hunks.items, new_hunks.items);
-
-    // Report results
-    const use_color = format.shouldUseColor(opts.output, opts.no_color);
-    const verb: []const u8 = switch (action) {
-        .stage => "staged",
-        .unstage => "unstaged",
-    };
-    var count: usize = 0;
-    var merged_count: usize = 0;
-
-    // Text hunk results (with merge tracking)
-    for (result_groups) |rg| {
-        count += rg.applied.len;
-        merged_count += rg.consumed.len;
-        if (opts.verbosity != .quiet) {
-            switch (opts.output) {
-                .human => try printResultGroupHuman(stdout, verb, rg, use_color),
-                .porcelain => try printResultGroupPorcelain(stdout, verb, rg),
-            }
-        }
-    }
-
-    // Binary hunk results (simple output, no merge tracking)
-    for (binary_matched) |m| {
-        count += 1;
-        if (opts.verbosity != .quiet) {
-            try format.printMatchedHunkLine(stdout, verb, verb, m, use_color, opts.output);
-        }
-    }
-
-    // Summary count on stderr (verbose + human mode only)
-    if (opts.verbosity == .verbose and opts.output == .human) {
-        if (count == 1 and merged_count == 0) {
-            std.debug.print("1 hunk {s}\n", .{verb});
-        } else if (count == 1 and merged_count > 0) {
-            std.debug.print("1 hunk {s} ({d} merged)\n", .{ verb, merged_count });
-        } else if (merged_count == 0) {
-            std.debug.print("{d} hunks {s}\n", .{ count, verb });
-        } else {
-            std.debug.print("{d} hunks {s} ({d} merged)\n", .{ count, verb, merged_count });
-        }
-    }
-
-    // Hint about hash changes when staging (only with --verbose)
-    if (action == .stage and opts.verbosity == .verbose and opts.output == .human) {
-        std.debug.print("hint: staged hashes differ from unstaged -- use 'git hunk list --staged' to see them\n", .{});
-    }
+    _ = try renderApplyResults(stdout, opts, action, result_groups, binary_matched);
 }
 
 pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOptions) !void {
@@ -1044,6 +1066,89 @@ pub fn cmdDiff(allocator: Allocator, stdout: *std.Io.Writer, opts: DiffOptions) 
     }
 }
 
+/// Bundles HEAD-side metadata used by cmdStash. All slices are gpa-owned.
+const HeadInfo = struct {
+    tree: []u8,
+    sha: []u8,
+    branch: ?[]u8,
+    msg: []u8,
+    branch_name: []const u8,
+
+    fn deinit(self: *HeadInfo, allocator: Allocator) void {
+        allocator.free(self.tree);
+        allocator.free(self.sha);
+        if (self.branch) |b| allocator.free(b);
+        allocator.free(self.msg);
+    }
+};
+
+/// Look up HEAD tree, HEAD sha, branch name, and HEAD commit summary in one
+/// place. Caller must call `deinit` on the returned struct.
+fn gatherHeadInfo(allocator: Allocator) !HeadInfo {
+    const tree = try git.runGitRevParseTree(allocator);
+    errdefer allocator.free(tree);
+    const sha = try git.runGitRevParse(allocator, "HEAD");
+    errdefer allocator.free(sha);
+    const branch = try git.runGitSymbolicRef(allocator);
+    errdefer if (branch) |b| allocator.free(b);
+    const msg = try git.runGitLogOneline(allocator);
+    return .{ .tree = tree, .sha = sha, .branch = branch, .msg = msg, .branch_name = branch orelse "HEAD" };
+}
+
+/// Result of running both the tracked-text and tracked-binary tree pipelines.
+const StashTreeBuild = struct {
+    tree: []const u8,
+    /// Patches reverse-applied to worktree at cleanup. Empty if no tracked text hunks.
+    index_patches: []const []const u8,
+    /// True iff `tree` was allocated by stash_mod and must be freed by the caller.
+    owns_tree: bool,
+};
+
+/// Construct the stash tree by layering tracked-binary blobs onto a tree built
+/// from tracked-text patches. Falls back to `head_tree` when there are neither.
+fn buildStashTree(
+    arena: Allocator,
+    allocator: Allocator,
+    partition: patch_mod.HunkPartition,
+    head_tree: []const u8,
+    context: ?u32,
+    env_map: *const std.process.Environ.Map,
+) !StashTreeBuild {
+    var tree: []const u8 = head_tree;
+    var index_patches: []const []const u8 = &.{};
+    var owns = false;
+    errdefer if (owns) allocator.free(tree);
+
+    if (partition.tracked_text.len > 0) {
+        const tracked_mut = try arena.dupe(MatchedHunk, partition.tracked_text);
+        const result = try stash_mod.buildTrackedStashTree(arena, allocator, tracked_mut, head_tree, context, env_map);
+        index_patches = result.index_patches;
+        tree = result.stash_tree;
+        owns = true;
+    }
+    if (partition.tracked_binary_paths.len > 0) {
+        const new_tree = try stash_mod.addBinaryFilesToTree(arena, allocator, tree, partition.tracked_binary_paths, env_map);
+        if (owns) allocator.free(tree);
+        tree = new_tree;
+        owns = true;
+    }
+    return .{ .tree = tree, .index_patches = index_patches, .owns_tree = owns };
+}
+
+/// Build the stash message: user-provided `-m <msg>` or auto-generated from
+/// the file paths involved.
+fn buildStashMessage(arena: Allocator, opts: StashOptions, matched: []const MatchedHunk) ![]const u8 {
+    if (opts.message) |m| return m;
+    const all_file_paths = try patch_mod.collectUniqueFilePaths(arena, matched);
+    var msg_buf: std.ArrayList(u8) = .empty;
+    try msg_buf.appendSlice(arena, "git-hunk stash: ");
+    for (all_file_paths, 0..) |fp, i| {
+        if (i > 0) try msg_buf.appendSlice(arena, ", ");
+        try msg_buf.appendSlice(arena, fp);
+    }
+    return msg_buf.items;
+}
+
 pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions, env_map: *const std.process.Environ.Map) !void {
     if (opts.pop) {
         try stash_mod.stashPop(allocator, opts.verbosity);
@@ -1080,99 +1185,158 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
     exitIfNoMatches(matched.items.len, opts.file_filter);
 
     const partition = try patch_mod.partitionByKind(arena, matched.items);
-    const tracked_matched = partition.tracked_text;
-    const binary_tracked_matched = partition.tracked_binary;
     var untracked_matched: std.ArrayList(MatchedHunk) = .empty;
     try untracked_matched.appendSlice(arena, partition.untracked_text);
     try untracked_matched.appendSlice(arena, partition.untracked_binary);
-    const has_tracked = tracked_matched.len > 0;
-    const has_binary_tracked = binary_tracked_matched.len > 0;
+    const has_tracked = partition.tracked_text.len > 0;
+    const has_binary_tracked = partition.tracked_binary.len > 0;
     const has_untracked = untracked_matched.items.len > 0;
 
-    // Get HEAD info needed by both pipelines
-    const head_tree = try git.runGitRevParseTree(allocator);
-    defer allocator.free(head_tree);
+    var head = try gatherHeadInfo(allocator);
+    defer head.deinit(allocator);
 
-    const head_sha = try git.runGitRevParse(allocator, "HEAD");
-    defer allocator.free(head_sha);
-
-    const branch = try git.runGitSymbolicRef(allocator);
-    defer if (branch) |b| allocator.free(b);
-    const branch_name = branch orelse "HEAD";
-
-    const head_msg = try git.runGitLogOneline(allocator);
-    defer allocator.free(head_msg);
-
-    // --- Tracked text hunks pipeline ---
-    var index_patches: []const []const u8 = &.{};
-    var stash_tree: []const u8 = head_tree;
-    var owns_stash_tree = false;
-
-    if (has_tracked) {
-        const tracked_mut = try arena.dupe(MatchedHunk, tracked_matched);
-        const result = try stash_mod.buildTrackedStashTree(arena, allocator, tracked_mut, head_tree, opts.context, env_map);
-        index_patches = result.index_patches;
-        stash_tree = result.stash_tree;
-        owns_stash_tree = true;
-    }
-
-    // --- Binary tracked hunks: add to stash tree via temp index ---
-    if (has_binary_tracked) {
-        const bin_paths = try arena.alloc([]const u8, binary_tracked_matched.len);
-        for (binary_tracked_matched, 0..) |m, i| {
-            bin_paths[i] = m.hunk.file_path;
-        }
-        const new_tree = try stash_mod.addBinaryFilesToTree(arena, allocator, stash_tree, bin_paths, env_map);
-        if (owns_stash_tree) allocator.free(stash_tree);
-        stash_tree = new_tree;
-        owns_stash_tree = true;
-    }
-    defer if (owns_stash_tree) allocator.free(stash_tree);
+    const stash_build = try buildStashTree(arena, allocator, partition, head.tree, opts.context, env_map);
+    defer if (stash_build.owns_tree) allocator.free(stash_build.tree);
 
     // Index commit (parent 2): captures tracked changes tree
-    const idx_msg = try std.fmt.allocPrint(arena, "index on {s}: {s}", .{ branch_name, head_msg });
-    const idx_commit = try git.runGitCommitTree(allocator, stash_tree, &.{head_sha}, idx_msg);
+    const idx_msg = try std.fmt.allocPrint(arena, "index on {s}: {s}", .{ head.branch_name, head.msg });
+    const idx_commit = try git.runGitCommitTree(allocator, stash_build.tree, &.{head.sha}, idx_msg);
     defer allocator.free(idx_commit);
 
-    // --- Untracked hunks pipeline (parent 3) ---
+    // Untracked hunks pipeline (parent 3)
     var untracked_commit: ?[]const u8 = null;
     if (has_untracked) {
-        untracked_commit = try stash_mod.buildUntrackedCommit(arena, allocator, head_sha, branch_name, head_msg, untracked_matched.items, env_map);
+        untracked_commit = try stash_mod.buildUntrackedCommit(arena, allocator, head.sha, head.branch_name, head.msg, untracked_matched.items, env_map);
     }
     defer if (untracked_commit) |uc| allocator.free(uc);
 
-    // Collect ALL file paths for stash message
-    const all_file_paths = try patch_mod.collectUniqueFilePaths(arena, matched.items);
+    const stash_msg = try buildStashMessage(arena, opts, matched.items);
 
-    // Build stash message
-    const stash_msg = if (opts.message) |m| m else blk: {
-        var msg_buf: std.ArrayList(u8) = .empty;
-        try msg_buf.appendSlice(arena, "git-hunk stash: ");
-        for (all_file_paths, 0..) |fp, i| {
-            if (i > 0) try msg_buf.appendSlice(arena, ", ");
-            try msg_buf.appendSlice(arena, fp);
-        }
-        break :blk msg_buf.items;
-    };
-
-    // Create WIP commit with correct number of parents
     const wip_commit = if (untracked_commit) |uc|
-        try git.runGitCommitTree(allocator, stash_tree, &.{ head_sha, idx_commit, uc }, stash_msg)
+        try git.runGitCommitTree(allocator, stash_build.tree, &.{ head.sha, idx_commit, uc }, stash_msg)
     else
-        try git.runGitCommitTree(allocator, stash_tree, &.{ head_sha, idx_commit }, stash_msg);
+        try git.runGitCommitTree(allocator, stash_build.tree, &.{ head.sha, idx_commit }, stash_msg);
     defer allocator.free(wip_commit);
 
     try git.runGitStashStore(allocator, stash_msg, wip_commit);
 
-    // Cleanup: restore binary tracked files from index, then text + untracked
+    // Cleanup: restore binary tracked files from index, reverse-apply text patches,
+    // delete untracked files.
     if (has_binary_tracked) {
         git.runGitCheckoutFiles(allocator, partition.tracked_binary_paths) catch {
             std.debug.print("warning: stash created but could not restore binary files from index\n", .{});
         };
     }
-    stash_mod.cleanupWorktree(allocator, has_tracked, has_untracked, index_patches, untracked_matched.items);
+    stash_mod.cleanupWorktree(allocator, has_tracked, has_untracked, stash_build.index_patches, untracked_matched.items);
 
     try stash_mod.reportStashResults(stdout, opts, matched.items);
+}
+
+/// Restore the index from the backup (best-effort) and exit. Used when the
+/// transactional commit hits a fatal mid-transaction error.
+fn abortCommitAndExit(cwd: std.Io.Dir, io: std.Io, backup_path: []const u8, index_path: []const u8) noreturn {
+    std.Io.Dir.copyFile(cwd, backup_path, cwd, index_path, io, .{}) catch {};
+    cwd.deleteFile(io, backup_path) catch {};
+    std.process.exit(1);
+}
+
+/// If a stale `index.hunk-backup` exists from a previously-interrupted commit,
+/// restore it over `index` and remove it. Exits on restore failure.
+fn recoverStaleIndexBackup(cwd: std.Io.Dir, io: std.Io, backup_path: []const u8, index_path: []const u8) void {
+    _ = cwd.statFile(io, backup_path, .{}) catch return;
+    std.debug.print("warning: stale index backup found from interrupted commit -- restoring original index\n", .{});
+    std.Io.Dir.copyFile(cwd, backup_path, cwd, index_path, io, .{}) catch {
+        std.debug.print("error: failed to restore index backup\n", .{});
+        std.process.exit(1);
+    };
+    cwd.deleteFile(io, backup_path) catch {};
+}
+
+const CommitContext = struct {
+    allocator: Allocator,
+    patches: []const []const u8,
+    binary_paths: []const []const u8,
+    message: []const u8,
+    amend: bool,
+    ref: ?[]const u8,
+    cwd: std.Io.Dir,
+    io: std.Io,
+    backup_path: []const u8,
+    index_path: []const u8,
+};
+
+/// Run the 7-step transactional commit (backup → reset → apply → commit →
+/// restore → resync → cleanup) and return the captured commit output. Aborts
+/// the process on a fatal mid-transaction error after restoring the backup.
+fn runTransactionalCommit(ctx: CommitContext) ![]const u8 {
+    // 1. Save index
+    std.Io.Dir.copyFile(ctx.cwd, ctx.index_path, ctx.cwd, ctx.backup_path, ctx.io, .{}) catch {
+        std.debug.print("error: failed to backup index file\n", .{});
+        std.process.exit(1);
+    };
+
+    // 2. Reset index to HEAD (or HEAD~1 for amend)
+    const read_tree_ref: []const u8 = if (ctx.amend) "HEAD~1" else "HEAD";
+    git.runGitReadTree(ctx.allocator, read_tree_ref) catch abortCommitAndExit(ctx.cwd, ctx.io, ctx.backup_path, ctx.index_path);
+
+    // 3. Stage target hunks (text via patch, binary via git add)
+    for (ctx.patches) |p| {
+        git.runGitApply(ctx.allocator, p, false, .index, false, ctx.ref) catch abortCommitAndExit(ctx.cwd, ctx.io, ctx.backup_path, ctx.index_path);
+    }
+    if (ctx.binary_paths.len > 0) {
+        git.runGitAddFiles(ctx.allocator, ctx.binary_paths) catch abortCommitAndExit(ctx.cwd, ctx.io, ctx.backup_path, ctx.index_path);
+    }
+
+    // 4. Commit
+    const commit_output = git.runGitCommit(ctx.allocator, .{ .message = ctx.message, .amend = ctx.amend }) catch
+        abortCommitAndExit(ctx.cwd, ctx.io, ctx.backup_path, ctx.index_path);
+    errdefer ctx.allocator.free(commit_output);
+
+    // 5. Restore original index
+    std.Io.Dir.copyFile(ctx.cwd, ctx.backup_path, ctx.cwd, ctx.index_path, ctx.io, .{}) catch {
+        std.debug.print("warning: commit succeeded but failed to restore original index -- backup at {s}\n", .{ctx.backup_path});
+    };
+
+    // 6. Sync index with new HEAD (text via patch, binary via git add)
+    for (ctx.patches) |p| {
+        git.runGitApply(ctx.allocator, p, false, .index, false, ctx.ref) catch {
+            std.debug.print("warning: commit succeeded but index sync failed -- run 'git hunk add' to re-sync\n", .{});
+            break;
+        };
+    }
+    if (ctx.binary_paths.len > 0) {
+        git.runGitAddFiles(ctx.allocator, ctx.binary_paths) catch {
+            std.debug.print("warning: commit succeeded but binary file index sync failed -- run 'git add' to re-sync\n", .{});
+        };
+    }
+
+    // 7. Cleanup
+    ctx.cwd.deleteFile(ctx.io, ctx.backup_path) catch {};
+
+    return commit_output;
+}
+
+fn printCommitResults(stdout: *std.Io.Writer, opts: CommitOptions, matched: []const MatchedHunk, commit_output: []const u8) !void {
+    const use_color = format.shouldUseColor(opts.output, opts.no_color);
+    var count: usize = 0;
+    for (matched) |m| {
+        count += 1;
+        if (opts.verbosity != .quiet) {
+            try format.printMatchedHunkLine(stdout, "committed", "committed", m, use_color, opts.output);
+        }
+    }
+
+    if (opts.verbosity != .quiet and commit_output.len > 0) {
+        std.debug.print("{s}\n", .{commit_output});
+    }
+
+    if (opts.verbosity == .verbose and opts.output == .human) {
+        if (count == 1) {
+            std.debug.print("1 hunk committed\n", .{});
+        } else {
+            std.debug.print("{d} hunks committed\n", .{count});
+        }
+    }
 }
 
 pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptions) !void {
@@ -1180,7 +1344,7 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    // 0. Find git dir and construct paths
+    // Locate git dir and construct backup paths.
     const git_dir = try git.runGitRevParseGitDir(allocator);
     defer allocator.free(git_dir);
     const index_path = try std.fmt.allocPrint(arena, "{s}/index", .{git_dir});
@@ -1188,18 +1352,9 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
     const io = defaultIo();
     const cwd = std.Io.Dir.cwd();
 
-    // 0a. Crash recovery: if stale backup exists, warn and restore
-    check_backup: {
-        _ = cwd.statFile(io, backup_path, .{}) catch break :check_backup;
-        std.debug.print("warning: stale index backup found from interrupted commit -- restoring original index\n", .{});
-        std.Io.Dir.copyFile(cwd, backup_path, cwd, index_path, io, .{}) catch {
-            std.debug.print("error: failed to restore index backup\n", .{});
-            std.process.exit(1);
-        };
-        cwd.deleteFile(io, backup_path) catch {};
-    }
+    recoverStaleIndexBackup(cwd, io, backup_path, index_path);
 
-    // 0b. Resolve hunks (same pattern as cmdApplyHunks/cmdRestore)
+    // Resolve hunks (same pattern as cmdApplyHunks/cmdRestore).
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
@@ -1235,13 +1390,12 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
         std.process.exit(1);
     }
 
-    // Validate message is present
     const message = opts.message orelse {
         std.debug.print("error: -m <message> is required\n", .{});
         std.process.exit(1);
     };
 
-    // 0c. Dry-run: validate patch and show what would be committed
+    // Dry-run: validate patches against the index (without modifying it) and show what would be committed.
     if (opts.dry_run) {
         for (patches) |p| {
             try git.runGitApply(allocator, p, false, .index, true, opts.ref);
@@ -1255,82 +1409,21 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
         return;
     }
 
-    // === 7-step commit workflow ===
-
-    // 1. Save index
-    std.Io.Dir.copyFile(cwd, index_path, cwd, backup_path, io, .{}) catch {
-        std.debug.print("error: failed to backup index file\n", .{});
-        std.process.exit(1);
-    };
-
-    const abortCommit = struct {
-        fn abort(c: std.Io.Dir, ioo: std.Io, bp: []const u8, ip: []const u8) noreturn {
-            std.Io.Dir.copyFile(c, bp, c, ip, ioo, .{}) catch {};
-            c.deleteFile(ioo, bp) catch {};
-            std.process.exit(1);
-        }
-    }.abort;
-
-    // 2. Reset index to HEAD (or HEAD~1 for amend)
-    const read_tree_ref: []const u8 = if (opts.amend) "HEAD~1" else "HEAD";
-    git.runGitReadTree(allocator, read_tree_ref) catch abortCommit(cwd, io, backup_path, index_path);
-
-    // 3. Stage target hunks (text via patch, binary via git add)
-    for (patches) |p| {
-        git.runGitApply(allocator, p, false, .index, false, opts.ref) catch abortCommit(cwd, io, backup_path, index_path);
-    }
-    if (binary_paths.len > 0) {
-        git.runGitAddFiles(allocator, binary_paths) catch abortCommit(cwd, io, backup_path, index_path);
-    }
-
-    // 4. Commit
-    const commit_output = git.runGitCommit(allocator, .{ .message = message, .amend = opts.amend }) catch abortCommit(cwd, io, backup_path, index_path);
+    const commit_output = try runTransactionalCommit(.{
+        .allocator = allocator,
+        .patches = patches,
+        .binary_paths = binary_paths,
+        .message = message,
+        .amend = opts.amend,
+        .ref = opts.ref,
+        .cwd = cwd,
+        .io = io,
+        .backup_path = backup_path,
+        .index_path = index_path,
+    });
     defer allocator.free(commit_output);
 
-    // 5. Restore original index
-    std.Io.Dir.copyFile(cwd, backup_path, cwd, index_path, io, .{}) catch {
-        std.debug.print("warning: commit succeeded but failed to restore original index -- backup at {s}\n", .{backup_path});
-    };
-
-    // 6. Sync index with new HEAD (text via patch, binary via git add)
-    for (patches) |p| {
-        git.runGitApply(allocator, p, false, .index, false, opts.ref) catch {
-            std.debug.print("warning: commit succeeded but index sync failed -- run 'git hunk add' to re-sync\n", .{});
-            break;
-        };
-    }
-    if (binary_paths.len > 0) {
-        git.runGitAddFiles(allocator, binary_paths) catch {
-            std.debug.print("warning: commit succeeded but binary file index sync failed -- run 'git add' to re-sync\n", .{});
-        };
-    }
-
-    // 7. Cleanup
-    cwd.deleteFile(io, backup_path) catch {};
-
-    // Output: print committed hunks
-    const use_color = format.shouldUseColor(opts.output, opts.no_color);
-    var count: usize = 0;
-    for (matched.items) |m| {
-        count += 1;
-        if (opts.verbosity != .quiet) {
-            try format.printMatchedHunkLine(stdout, "committed", "committed", m, use_color, opts.output);
-        }
-    }
-
-    // Print git's commit output
-    if (opts.verbosity != .quiet and commit_output.len > 0) {
-        std.debug.print("{s}\n", .{commit_output});
-    }
-
-    // Summary on stderr (verbose + human mode only)
-    if (opts.verbosity == .verbose and opts.output == .human) {
-        if (count == 1) {
-            std.debug.print("1 hunk committed\n", .{});
-        } else {
-            std.debug.print("{d} hunks committed\n", .{count});
-        }
-    }
+    try printCommitResults(stdout, opts, matched.items, commit_output);
 }
 
 // ============================================================================
