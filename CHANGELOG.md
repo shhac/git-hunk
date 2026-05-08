@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.13.0] - 2026-05-09
+
+### Added
+- `--file` flag is now repeatable: `git hunk add --file a.zig --file b.zig` matches hunks in either file (an any-of filter). Help text and man page updated accordingly.
+
+### Changed
+- Migrated from Zig 0.15.2 to Zig 0.16.0. The minimum required Zig version is now 0.16.0; CI and the README reflect this. Subprocess, allocator, filesystem, env, and args APIs were all rewritten against the new standard library.
+- Internal refactoring: 5 duplicate `defaultIo()` helpers consolidated into one alias; the trim-and-shrink, argv-builder, and temp-index pipeline patterns each centralized; `computeHunkSha` moved to its natural home in `types.zig`. The four big command bodies (`cmdCommit`, `cmdStash`, `cmdCheck`, `cmdApplyHunks`) and the shared `buildResultGroups` helper are now ~30-line orchestrators over named, individually-readable phases.
+- `patch.partitionByKind` replaces four open-coded text/binary partition loops across the apply, restore, stash, and commit pipelines.
+
+### Fixed
+- Previously, `git hunk add --file a.zig --file b.zig` silently kept only the last `--file` (last-wins overwrite) and produced confusing "no hunk matching" errors when SHAs lived in the dropped file. Now multiple `--file` flags accumulate as expected.
+
 ## [0.12.0] - 2026-04-11
 
 ### Added
