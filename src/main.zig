@@ -146,6 +146,10 @@ fn handleParseError(stdout: *std.Io.Writer, err: anyerror, cmd: help.Command) no
         std.debug.print("error: --tracked-only and --untracked-only are mutually exclusive\n", .{});
         std.process.exit(1);
     }
+    if (err == error.DuplicateFileFilter) {
+        std.debug.print("error: --file may only be specified once\n", .{});
+        std.process.exit(1);
+    }
     if (err == error.HelpRequested) {
         help.printCommandHelp(stdout, cmd) catch {};
         stdout.flush() catch {};

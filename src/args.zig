@@ -49,6 +49,7 @@ fn parseCommonFlag(arg: []const u8, i: *usize, args: []const [:0]u8, c: *CommonF
     } else if (std.mem.eql(u8, arg, "--file")) {
         i.* += 1;
         if (i.* >= args.len) return error.MissingArgument;
+        if (c.file_filter != null) return error.DuplicateFileFilter;
         c.file_filter = args[i.*];
         return true;
     } else if (std.mem.eql(u8, arg, "--ref")) {
@@ -583,6 +584,23 @@ test "parseListArgs file filter" {
 test "parseListArgs file missing arg" {
     const args_arr = [_][:0]u8{@constCast("--file")};
     try std.testing.expectError(error.MissingArgument, parseListArgs(&args_arr));
+}
+
+test "parseListArgs duplicate --file rejected" {
+    const args_arr = [_][:0]u8{
+        @constCast("--file"), @constCast("foo.txt"),
+        @constCast("--file"), @constCast("bar.txt"),
+    };
+    try std.testing.expectError(error.DuplicateFileFilter, parseListArgs(&args_arr));
+}
+
+test "parseAddResetArgs duplicate --file rejected" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]u8{
+        @constCast("--file"), @constCast("foo.txt"),
+        @constCast("--file"), @constCast("bar.txt"),
+    };
+    try std.testing.expectError(error.DuplicateFileFilter, parseAddResetArgs(allocator, &args_arr));
 }
 
 test "parseListArgs unknown flag" {
