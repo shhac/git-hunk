@@ -581,6 +581,18 @@ test "printNumberedBodyLine color: + line gets green" {
     try std.testing.expect(std.mem.indexOf(u8, out, COLOR_RED) == null);
 }
 
+test "printNumberedBodyLine empty line + selected + color: bold marker, no line-color" {
+    var buf: [128]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    try printNumberedBodyLine(&w, "", "1", true, true);
+    const out = w.buffered();
+    // Empty line is treated as context (no +/-): no green/red, but bold prefix.
+    try std.testing.expect(std.mem.indexOf(u8, out, COLOR_BOLD) != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, COLOR_GREEN) == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, COLOR_RED) == null);
+    try std.testing.expect(std.mem.endsWith(u8, out, "\n"));
+}
+
 test "printNumberedBodyLine color + selected: bold + green" {
     var buf: [128]u8 = undefined;
     var w = std.Io.Writer.fixed(&buf);

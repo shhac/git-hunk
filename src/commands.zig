@@ -1918,3 +1918,160 @@ test "mergeOrphansIntoSiblings: orphan without sibling kept as-is (fallback path
     try std.testing.expectEqual(@as(usize, 1), final.len);
     try std.testing.expectEqualStrings("lonely.txt", final[0].file_path);
 }
+
+test "printResultGroupHuman: simple 1->1 case (no consumed, no line_spec)" {
+    var buf: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    const applied = [_]AppliedInput{.{ .sha7 = "abcdef0", .line_spec = null }};
+    const result_shas = [_][]const u8{"1234567"};
+    const rg = ResultGroup{
+        .result_shas = &result_shas,
+        .applied = &applied,
+        .consumed = &.{},
+        .file_path = "foo.txt",
+        .is_symlink = false,
+    };
+    try printResultGroupHuman(&w, "staged", rg, false);
+    try std.testing.expectEqualStrings("staged abcdef0 \xe2\x86\x92 1234567  foo.txt\n", w.buffered());
+}
+
+test "printResultGroupHuman: with consumed shows + prefix and `?` when no result" {
+    var buf: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    const applied = [_]AppliedInput{.{ .sha7 = "abcdef0", .line_spec = null }};
+    const consumed = [_][]const u8{"deadbef"};
+    const rg = ResultGroup{
+        .result_shas = &.{},
+        .applied = &applied,
+        .consumed = &consumed,
+        .file_path = "foo.txt",
+        .is_symlink = false,
+    };
+    try printResultGroupHuman(&w, "staged", rg, false);
+    try std.testing.expect(std.mem.indexOf(u8, w.buffered(), "+deadbef") != null);
+    try std.testing.expect(std.mem.indexOf(u8, w.buffered(), "?") != null);
+}
+
+test "printResultGroupHuman: symlink suffix" {
+    var buf: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    const applied = [_]AppliedInput{.{ .sha7 = "abcdef0", .line_spec = null }};
+    const result_shas = [_][]const u8{"1234567"};
+    const rg = ResultGroup{
+        .result_shas = &result_shas,
+        .applied = &applied,
+        .consumed = &.{},
+        .file_path = "link",
+        .is_symlink = true,
+    };
+    try printResultGroupHuman(&w, "staged", rg, false);
+    try std.testing.expect(std.mem.endsWith(u8, w.buffered(), "link@\n"));
+}
+
+test "printResultGroupHuman: line_spec on applied input" {
+    var buf: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    const ranges = [_]types.LineRange{.{ .start = 3, .end = 5 }};
+    const applied = [_]AppliedInput{.{ .sha7 = "abcdef0", .line_spec = .{ .ranges = &ranges } }};
+    const result_shas = [_][]const u8{"1234567"};
+    const rg = ResultGroup{
+        .result_shas = &result_shas,
+        .applied = &applied,
+        .consumed = &.{},
+        .file_path = "foo.txt",
+        .is_symlink = false,
+    };
+    try printResultGroupHuman(&w, "staged", rg, false);
+    try std.testing.expect(std.mem.indexOf(u8, w.buffered(), "abcdef0:3-5") != null);
+}
+
+test "printResultGroupHuman: multi-applied + multi-result joined correctly" {
+    var buf: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    const applied = [_]AppliedInput{
+        .{ .sha7 = "aaaa000", .line_spec = null },
+        .{ .sha7 = "bbbb000", .line_spec = null },
+    };
+    const result_shas = [_][]const u8{ "rrrr000", "ssss000" };
+    const rg = ResultGroup{
+        .result_shas = &result_shas,
+        .applied = &applied,
+        .consumed = &.{},
+        .file_path = "foo.txt",
+        .is_symlink = false,
+    };
+    try printResultGroupHuman(&w, "staged", rg, false);
+    const out = w.buffered();
+    try std.testing.expect(std.mem.indexOf(u8, out, "aaaa000 bbbb000") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "rrrr000,ssss000") != null);
+}
+
+test "printResultGroupPorcelain: tab-separated layout" {
+    var buf: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    const applied = [_]AppliedInput{.{ .sha7 = "abcdef0", .line_spec = null }};
+    const result_shas = [_][]const u8{"1234567"};
+    const rg = ResultGroup{
+        .result_shas = &result_shas,
+        .applied = &applied,
+        .consumed = &.{},
+        .file_path = "foo.txt",
+        .is_symlink = false,
+    };
+    try printResultGroupPorcelain(&w, "staged", rg);
+    try std.testing.expectEqualStrings("staged\tabcdef0\t1234567\tfoo.txt\n", w.buffered());
+}
+
+test "printResultGroupPorcelain: omits consumed field when empty" {
+    var buf: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    const applied = [_]AppliedInput{.{ .sha7 = "abcdef0", .line_spec = null }};
+    const result_shas = [_][]const u8{"1234567"};
+    const rg = ResultGroup{
+        .result_shas = &result_shas,
+        .applied = &applied,
+        .consumed = &.{},
+        .file_path = "foo.txt",
+        .is_symlink = false,
+    };
+    try printResultGroupPorcelain(&w, "staged", rg);
+    // Only 4 fields when consumed is empty: verb, applied, result, file.
+    var tab_count: usize = 0;
+    for (w.buffered()) |c| if (c == '\t') {
+        tab_count += 1;
+    };
+    try std.testing.expectEqual(@as(usize, 3), tab_count);
+}
+
+test "printResultGroupPorcelain: appends consumed field when present" {
+    var buf: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    const applied = [_]AppliedInput{.{ .sha7 = "abcdef0", .line_spec = null }};
+    const result_shas = [_][]const u8{"1234567"};
+    const consumed = [_][]const u8{ "deadbef", "feedabc" };
+    const rg = ResultGroup{
+        .result_shas = &result_shas,
+        .applied = &applied,
+        .consumed = &consumed,
+        .file_path = "foo.txt",
+        .is_symlink = false,
+    };
+    try printResultGroupPorcelain(&w, "staged", rg);
+    try std.testing.expect(std.mem.endsWith(u8, w.buffered(), "\tdeadbef,feedabc\n"));
+}
+
+test "printResultGroupPorcelain: symlink @ suffix on file path" {
+    var buf: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    const applied = [_]AppliedInput{.{ .sha7 = "abcdef0", .line_spec = null }};
+    const result_shas = [_][]const u8{"1234567"};
+    const rg = ResultGroup{
+        .result_shas = &result_shas,
+        .applied = &applied,
+        .consumed = &.{},
+        .file_path = "link",
+        .is_symlink = true,
+    };
+    try printResultGroupPorcelain(&w, "staged", rg);
+    try std.testing.expect(std.mem.endsWith(u8, w.buffered(), "\tlink@\n"));
+}

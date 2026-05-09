@@ -1278,3 +1278,91 @@ test "extractPathFromDiffGitLine escaped quote in path" {
     const result = try extractPathFromDiffGitLine(arena.allocator(), "diff --git \"a/file\\\"name.txt\" \"b/file\\\"name.txt\"");
     try std.testing.expectEqualStrings("file\"name.txt", result.?);
 }
+
+test "parseExtendedHeaders: new file mode 100644" {
+    const lines = "new file mode 100644\nindex 0000000..abc1234\n--- /dev/null";
+    var cursor = DiffCursor.init(lines);
+    const state = parseExtendedHeaders(&cursor);
+    try std.testing.expect(state.is_new_file);
+    try std.testing.expect(!state.is_deleted_file);
+    try std.testing.expect(!state.is_symlink);
+    try std.testing.expectEqualStrings("100644", state.file_mode);
+    // Stops at the --- line without consuming it.
+    try std.testing.expect(std.mem.startsWith(u8, cursor.peek().?, "--- "));
+}
+
+test "parseExtendedHeaders: new file mode 120000 sets is_symlink" {
+    const lines = "new file mode 120000\nindex 0000000..abc1234";
+    var cursor = DiffCursor.init(lines);
+    const state = parseExtendedHeaders(&cursor);
+    try std.testing.expect(state.is_new_file);
+    try std.testing.expect(state.is_symlink);
+}
+
+test "parseExtendedHeaders: deleted file mode 100644" {
+    const lines = "deleted file mode 100644\nindex abc1234..0000000";
+    var cursor = DiffCursor.init(lines);
+    const state = parseExtendedHeaders(&cursor);
+    try std.testing.expect(state.is_deleted_file);
+    try std.testing.expect(!state.is_new_file);
+}
+
+test "parseExtendedHeaders: deleted file mode 120000 sets is_symlink" {
+    const lines = "deleted file mode 120000";
+    var cursor = DiffCursor.init(lines);
+    const state = parseExtendedHeaders(&cursor);
+    try std.testing.expect(state.is_deleted_file);
+    try std.testing.expect(state.is_symlink);
+}
+
+test "parseExtendedHeaders: index ... 160000 sets is_submodule" {
+    const lines = "index abc1234..def5678 160000";
+    var cursor = DiffCursor.init(lines);
+    const state = parseExtendedHeaders(&cursor);
+    try std.testing.expect(state.is_submodule);
+}
+
+test "parseExtendedHeaders: index ... 120000 sets is_symlink" {
+    const lines = "index abc1234..def5678 120000";
+    var cursor = DiffCursor.init(lines);
+    const state = parseExtendedHeaders(&cursor);
+    try std.testing.expect(state.is_symlink);
+    try std.testing.expect(!state.is_submodule);
+}
+
+test "parseExtendedHeaders: Binary files marker sets is_binary" {
+    const lines = "Binary files a/img.png and b/img.png differ";
+    var cursor = DiffCursor.init(lines);
+    const state = parseExtendedHeaders(&cursor);
+    try std.testing.expect(state.is_binary);
+}
+
+test "parseExtendedHeaders: rename from/to captures both" {
+    const lines = "rename from old.txt\nrename to new.txt\n--- a/old.txt";
+    var cursor = DiffCursor.init(lines);
+    const state = parseExtendedHeaders(&cursor);
+    try std.testing.expectEqualStrings("old.txt", state.rename_from.?);
+    try std.testing.expectEqualStrings("new.txt", state.rename_to.?);
+}
+
+test "parseExtendedHeaders: stops at first non-header line" {
+    const lines = "@@ -1 +1 @@\nbody";
+    var cursor = DiffCursor.init(lines);
+    const state = parseExtendedHeaders(&cursor);
+    try std.testing.expect(!state.is_new_file);
+    try std.testing.expect(!state.is_binary);
+    // @@ line was not consumed.
+    try std.testing.expect(std.mem.startsWith(u8, cursor.peek().?, "@@ "));
+}
+
+test "parseExtendedHeaders: noop arms (old mode/new mode/similarity/copy)" {
+    const lines = "old mode 100644\nnew mode 100755\nsimilarity index 95%\ncopy from x\ncopy to y\n--- /dev/null";
+    var cursor = DiffCursor.init(lines);
+    const state = parseExtendedHeaders(&cursor);
+    // None of these affect state (just keep the loop going)
+    try std.testing.expect(!state.is_new_file);
+    try std.testing.expect(!state.is_deleted_file);
+    try std.testing.expect(state.rename_from == null);
+    // Stops at the --- line.
+    try std.testing.expect(std.mem.startsWith(u8, cursor.peek().?, "--- "));
+}
