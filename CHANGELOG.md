@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.13.1] - 2026-05-09
+
+### Changed
+- Internal quality work: 4 iterations of structured refactoring and test coverage. No user-visible behavior changes.
+- `parseDiff` decomposed into focused helpers: `parseExtendedHeaders`, `buildPatchHeader`, `synthesizeWholeFileHunk`, `parseHunkBody`, etc. The 320-LOC state-machine body is now a 70-line orchestrator.
+- `cmdCheck` decomposed: `runChecks` + `renderCheckPorcelain` + `renderCheckHuman` replace a 200-LOC inline pipeline.
+- `assignAppliedAndConsumed` split into `collectAppliedFor` + `collectConsumedFor` helpers.
+- `printRawLinesWithLineNumbers` body printer flattened into `countBodyLines` + `digitWidth` + `printNumberedBodyLine` — output is identical.
+- New helpers: `format.printMatchedHunks`, `format.printHunkCountSummary`, `format.printRawLines`, `commands.exitNoChanges`, `patch.partitionByKind`, `patch.HunkPartition.combinedText/combinedBinary`, `commands.shaSetDifference`, `git.trimAndShrink`, `args.unknownFlag`, `args.validateRefStagedCombo`, `stash.createTempIndex` + `TempIndex` struct. Each replaces 2-7 inline duplicates.
+- `runGitDiffHead` removed (folded into `runGitDiffFiles`); argv-builder pattern in `git.zig` switched to `std.ArrayList` (no more manual `argc` counters).
+- `applyCommonFlags` hardened: the `common.file_filter` list is always freed on error, removing a class of leaks if a parser forgets the pre-call errdefer.
+
+### Added
+- ~150 new unit tests across `format.zig`, `patch.zig`, `types.zig`, `git.zig`, `args.zig`, `stash.zig`, `commands.zig`, and `diff.zig`. Coverage now spans every newly-extracted helper, the 5 phases of `buildResultGroups` directly, all parser leak-detection paths, every `parseExtendedHeaders` state branch, and the human/porcelain renderer outputs.
+- Integration tests for multi-`--file` filter across all 8 commands (was previously only `list`), `chdirToRepoRoot` regression for macOS-symlinked toplevel, mixed binary+text stash round-trip, and "no [un]staged changes" stderr messages.
+
 ## [0.13.0] - 2026-05-09
 
 ### Added
