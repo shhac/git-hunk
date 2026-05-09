@@ -146,35 +146,11 @@ pub fn printRawLinesHuman(stdout: *std.Io.Writer, raw_lines: []const u8, use_col
 pub fn printRawLinesWithLineNumbers(stdout: *std.Io.Writer, raw_lines: []const u8, line_spec: LineSpec, use_color: bool) !void {
     if (raw_lines.len == 0) return;
 
-    // First pass: count body lines to determine line number width
-    var total_body_lines: u32 = 0;
-    {
-        var count_iter = std.mem.splitScalar(u8, raw_lines, '\n');
-        _ = count_iter.next(); // skip @@ header
-        while (count_iter.next()) |line| {
-            if (line.len == 0) {
-                total_body_lines += 1;
-            } else if (line[0] == ' ' or line[0] == '+' or line[0] == '-') {
-                total_body_lines += 1;
-            }
-        }
-    }
+    const total_body_lines = countBodyLines(raw_lines);
+    const num_width = digitWidth(total_body_lines);
 
-    // Determine digit width for line numbers
-    var num_width: usize = 1;
-    {
-        var n = total_body_lines;
-        while (n >= 10) {
-            num_width += 1;
-            n /= 10;
-        }
-    }
-
-    const COLOR_BOLD = "\x1b[1m";
-
-    // Second pass: print with line numbers
     var iter = std.mem.splitScalar(u8, raw_lines, '\n');
-    // Print the @@ header without line number
+    // Print the @@ header without line number.
     if (iter.next()) |header_line| {
         if (use_color) {
             try stdout.print("\x1b[36m{s}{s}\n", .{ header_line, COLOR_RESET });
@@ -186,39 +162,20 @@ pub fn printRawLinesWithLineNumbers(stdout: *std.Io.Writer, raw_lines: []const u
     var num_buf: [16]u8 = undefined;
     var line_num: u32 = 1;
     while (iter.next()) |line| {
-        if (line.len == 0) {
-            // Empty context line
-            const selected = line_spec.containsLine(line_num);
-            const marker: u8 = if (selected) '>' else ' ';
-            const num_str = formatNumPadded(&num_buf, line_num, num_width);
-            try stdout.print("{c}{s}:\n", .{ marker, num_str });
-            line_num += 1;
-            continue;
+        const first: ?u8 = if (line.len == 0) ' ' else line[0];
+        if (first) |f| {
+            if (f == ' ' or f == '+' or f == '-') {
+                const selected = line_spec.containsLine(line_num);
+                const num_str = formatNumPadded(&num_buf, line_num, num_width);
+                try printNumberedBodyLine(stdout, line, num_str, selected, use_color);
+                line_num += 1;
+                continue;
+            }
         }
 
-        const first = line[0];
-        if (first == ' ' or first == '+' or first == '-') {
-            const selected = line_spec.containsLine(line_num);
-            const marker: u8 = if (selected) '>' else ' ';
-            const num_str = formatNumPadded(&num_buf, line_num, num_width);
-            if (use_color and (first == '+' or first == '-')) {
-                const color: []const u8 = if (first == '+') COLOR_GREEN else COLOR_RED;
-                if (selected) {
-                    try stdout.print("{s}{c}{s}:{s}{s}{s}\n", .{ COLOR_BOLD, marker, num_str, color, line, COLOR_RESET });
-                } else {
-                    try stdout.print("{c}{s}:{s}{s}{s}\n", .{ marker, num_str, color, line, COLOR_RESET });
-                }
-            } else {
-                if (selected and use_color) {
-                    try stdout.print("{s}{c}{s}:{s}{s}\n", .{ COLOR_BOLD, marker, num_str, line, COLOR_RESET });
-                } else {
-                    try stdout.print("{c}{s}:{s}\n", .{ marker, num_str, line });
-                }
-            }
-            line_num += 1;
-        } else if (first == '\\') {
-            // \ marker — no line number, print with padding
-            const pad = num_width + 2; // marker + num_width + ':'
+        if (line.len > 0 and line[0] == '\\') {
+            // "\ No newline" marker — pad to align with line numbers.
+            const pad = num_width + 2;
             var p: usize = 0;
             while (p < pad) : (p += 1) try stdout.writeByte(' ');
             try stdout.print("{s}\n", .{line});
@@ -226,6 +183,48 @@ pub fn printRawLinesWithLineNumbers(stdout: *std.Io.Writer, raw_lines: []const u
             try stdout.print("{s}\n", .{line});
         }
     }
+}
+
+const COLOR_BOLD = "\x1b[1m";
+
+/// Count body lines (context, +, - lines after the @@ header) in a raw hunk.
+fn countBodyLines(raw_lines: []const u8) u32 {
+    var total: u32 = 0;
+    var iter = std.mem.splitScalar(u8, raw_lines, '\n');
+    _ = iter.next(); // skip @@ header
+    while (iter.next()) |line| {
+        if (line.len == 0) {
+            total += 1;
+        } else if (line[0] == ' ' or line[0] == '+' or line[0] == '-') {
+            total += 1;
+        }
+    }
+    return total;
+}
+
+/// Number of decimal digits needed to display `n`. Returns 1 for 0..=9.
+fn digitWidth(n: u32) usize {
+    var width: usize = 1;
+    var v = n;
+    while (v >= 10) : (v /= 10) width += 1;
+    return width;
+}
+
+/// Print a single numbered body line: `>num: line` (selected) or ` num: line`,
+/// with +/- line content colored when `use_color` is true and the prefix made
+/// bold when selected.
+fn printNumberedBodyLine(stdout: *std.Io.Writer, line: []const u8, num_str: []const u8, selected: bool, use_color: bool) !void {
+    const marker: u8 = if (selected) '>' else ' ';
+    const first: u8 = if (line.len == 0) ' ' else line[0];
+    const line_color: []const u8 = if (use_color and first == '+')
+        COLOR_GREEN
+    else if (use_color and first == '-')
+        COLOR_RED
+    else
+        "";
+    const prefix_color: []const u8 = if (use_color and selected) COLOR_BOLD else "";
+    const reset: []const u8 = if (line_color.len > 0 or prefix_color.len > 0) COLOR_RESET else "";
+    try stdout.print("{s}{c}{s}:{s}{s}{s}\n", .{ prefix_color, marker, num_str, line_color, line, reset });
 }
 
 /// Format a number right-aligned in a fixed-width field.
@@ -418,6 +417,223 @@ pub fn getTerminalWidth() u16 {
 // ============================================================================
 
 const testMakeHunk = types.testMakeHunk;
+
+test "printRawLines plain context line, no color, no indent" {
+    var buf: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    try printRawLines(&w, "@@ -1 +1 @@\n+added", "", false);
+    try std.testing.expectEqualStrings("@@ -1 +1 @@\n+added\n", w.buffered());
+}
+
+test "printRawLines colors +/- when use_color is true" {
+    var buf: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    try printRawLines(&w, "+plus\n-minus\n context", "", true);
+    const out = w.buffered();
+    try std.testing.expect(std.mem.indexOf(u8, out, COLOR_GREEN) != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, COLOR_RED) != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, COLOR_RESET) != null);
+}
+
+test "printRawLines applies indent prefix to every line" {
+    var buf: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    try printRawLines(&w, "a\nb\nc", "  >> ", false);
+    try std.testing.expectEqualStrings("  >> a\n  >> b\n  >> c\n", w.buffered());
+}
+
+test "printDiffHuman binary file emits placeholder" {
+    var buf: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    var h = testMakeHunk("img.png", 1, 1, 1, 1);
+    h.is_binary = true;
+    try printDiffHuman(&w, h, false);
+    try std.testing.expectEqualStrings("    Binary file changed\n\n", w.buffered());
+}
+
+test "printDiffHuman empty raw_lines emits blank line" {
+    var buf: [16]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    const h = testMakeHunk("a.txt", 1, 0, 1, 0);
+    try printDiffHuman(&w, h, false);
+    try std.testing.expectEqualStrings("\n", w.buffered());
+}
+
+test "printRawLinesHuman empty input writes nothing" {
+    var buf: [16]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    try printRawLinesHuman(&w, "", false);
+    try std.testing.expectEqual(@as(usize, 0), w.buffered().len);
+}
+
+test "printMatchedHunkLine human format includes verb and 7-char SHA" {
+    var buf: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    var h = testMakeHunk("foo.txt", 1, 1, 1, 1);
+    @memcpy(h.sha_hex[0..7], "abcdef0");
+    @memset(h.sha_hex[7..], '0');
+    const m = MatchedHunk{ .hunk = &h, .line_spec = null };
+    try printMatchedHunkLine(&w, "staged", "staged", m, false, .human);
+    try std.testing.expectEqualStrings("staged abcdef0  foo.txt\n", w.buffered());
+}
+
+test "printMatchedHunkLine porcelain format uses tabs" {
+    var buf: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    var h = testMakeHunk("foo.txt", 1, 1, 1, 1);
+    @memcpy(h.sha_hex[0..7], "abcdef0");
+    @memset(h.sha_hex[7..], '0');
+    const m = MatchedHunk{ .hunk = &h, .line_spec = null };
+    try printMatchedHunkLine(&w, "staged", "staged", m, false, .porcelain);
+    try std.testing.expectEqualStrings("staged\tabcdef0\tfoo.txt\n", w.buffered());
+}
+
+test "printMatchedHunkLine porcelain format includes line_spec" {
+    var buf: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    var h = testMakeHunk("foo.txt", 1, 1, 1, 1);
+    @memcpy(h.sha_hex[0..7], "abcdef0");
+    @memset(h.sha_hex[7..], '0');
+    const ranges = [_]types.LineRange{.{ .start = 3, .end = 5 }};
+    const m = MatchedHunk{ .hunk = &h, .line_spec = .{ .ranges = &ranges } };
+    try printMatchedHunkLine(&w, "staged", "staged", m, false, .porcelain);
+    try std.testing.expect(std.mem.indexOf(u8, w.buffered(), "abcdef0:3-5") != null);
+}
+
+test "printMatchedHunkLine adds @ suffix for symlinks" {
+    var buf: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    var h = testMakeHunk("link", 1, 1, 1, 1);
+    @memcpy(h.sha_hex[0..7], "abcdef0");
+    @memset(h.sha_hex[7..], '0');
+    h.is_symlink = true;
+    const m = MatchedHunk{ .hunk = &h, .line_spec = null };
+    try printMatchedHunkLine(&w, "staged", "staged", m, false, .human);
+    try std.testing.expect(std.mem.endsWith(u8, w.buffered(), "link@\n"));
+}
+
+test "printMatchedHunks empty input returns 0" {
+    var buf: [16]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    const count = try printMatchedHunks(&w, &.{}, "v", "v", false, .human, .normal);
+    try std.testing.expectEqual(@as(usize, 0), count);
+    try std.testing.expectEqual(@as(usize, 0), w.buffered().len);
+}
+
+test "printMatchedHunks counts and prints one line per hunk" {
+    var buf: [512]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    var h1 = testMakeHunk("a.txt", 1, 1, 1, 1);
+    @memset(h1.sha_hex[0..], '1');
+    var h2 = testMakeHunk("b.txt", 1, 1, 1, 1);
+    @memset(h2.sha_hex[0..], '2');
+    const matched = [_]MatchedHunk{
+        .{ .hunk = &h1, .line_spec = null },
+        .{ .hunk = &h2, .line_spec = null },
+    };
+    const count = try printMatchedHunks(&w, &matched, "v", "v", false, .human, .normal);
+    try std.testing.expectEqual(@as(usize, 2), count);
+    const out = w.buffered();
+    try std.testing.expect(std.mem.indexOf(u8, out, "a.txt") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "b.txt") != null);
+}
+
+test "countBodyLines counts context, +, - lines" {
+    try std.testing.expectEqual(@as(u32, 0), countBodyLines("@@ -1 +1 @@"));
+    try std.testing.expectEqual(@as(u32, 1), countBodyLines("@@ -1 +1 @@\n+a"));
+    try std.testing.expectEqual(@as(u32, 3), countBodyLines("@@ -1 +1 @@\n a\n+b\n-c"));
+    // Empty line counts as a body line (empty context).
+    try std.testing.expectEqual(@as(u32, 2), countBodyLines("@@ -1 +1 @@\n\n a"));
+    // Lines starting with `\` (no-newline marker) don't count.
+    try std.testing.expectEqual(@as(u32, 1), countBodyLines("@@ -1 +1 @@\n+a\n\\ No newline"));
+}
+
+test "digitWidth basic cases" {
+    try std.testing.expectEqual(@as(usize, 1), digitWidth(0));
+    try std.testing.expectEqual(@as(usize, 1), digitWidth(9));
+    try std.testing.expectEqual(@as(usize, 2), digitWidth(10));
+    try std.testing.expectEqual(@as(usize, 2), digitWidth(99));
+    try std.testing.expectEqual(@as(usize, 3), digitWidth(100));
+    try std.testing.expectEqual(@as(usize, 4), digitWidth(9999));
+}
+
+test "printNumberedBodyLine non-selected non-color" {
+    var buf: [64]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    try printNumberedBodyLine(&w, "+added", "3", false, false);
+    try std.testing.expectEqualStrings(" 3:+added\n", w.buffered());
+}
+
+test "printNumberedBodyLine selected gets > marker" {
+    var buf: [64]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    try printNumberedBodyLine(&w, " context", "5", true, false);
+    try std.testing.expectEqualStrings(">5: context\n", w.buffered());
+}
+
+test "printNumberedBodyLine color: + line gets green" {
+    var buf: [128]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    try printNumberedBodyLine(&w, "+added", "1", false, true);
+    const out = w.buffered();
+    try std.testing.expect(std.mem.indexOf(u8, out, COLOR_GREEN) != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, COLOR_RESET) != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, COLOR_RED) == null);
+}
+
+test "printNumberedBodyLine color + selected: bold + green" {
+    var buf: [128]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    try printNumberedBodyLine(&w, "+added", "1", true, true);
+    const out = w.buffered();
+    try std.testing.expect(std.mem.indexOf(u8, out, COLOR_BOLD) != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, COLOR_GREEN) != null);
+}
+
+test "printRawLinesWithLineNumbers emits header + numbered body" {
+    var buf: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    const ranges = [_]types.LineRange{};
+    const spec = types.LineSpec{ .ranges = &ranges };
+    try printRawLinesWithLineNumbers(&w, "@@ -1 +1 @@\n+a\n b", spec, false);
+    const out = w.buffered();
+    try std.testing.expect(std.mem.indexOf(u8, out, "@@ -1 +1 @@") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, " 1:+a") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, " 2: b") != null);
+}
+
+test "printRawLinesWithLineNumbers selected lines get > marker" {
+    var buf: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    const ranges = [_]types.LineRange{.{ .start = 2, .end = 2 }};
+    const spec = types.LineSpec{ .ranges = &ranges };
+    try printRawLinesWithLineNumbers(&w, "@@ -1 +1 @@\n a\n+b\n c", spec, false);
+    const out = w.buffered();
+    try std.testing.expect(std.mem.indexOf(u8, out, " 1: a") != null); // not selected
+    try std.testing.expect(std.mem.indexOf(u8, out, ">2:+b") != null); // selected
+    try std.testing.expect(std.mem.indexOf(u8, out, " 3: c") != null); // not selected
+}
+
+test "printRawLinesWithLineNumbers no-newline marker is padded" {
+    var buf: [256]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    const ranges = [_]types.LineRange{};
+    const spec = types.LineSpec{ .ranges = &ranges };
+    try printRawLinesWithLineNumbers(&w, "@@ -1 +1 @@\n+a\n\\ No newline at end of file", spec, false);
+    const out = w.buffered();
+    // The "\\ No newline" line should be indented to align with line numbers (3 chars: " 1:")
+    try std.testing.expect(std.mem.indexOf(u8, out, "   \\ No newline") != null);
+}
+
+test "printMatchedHunks quiet verbosity counts but prints nothing" {
+    var buf: [16]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    var h = testMakeHunk("a.txt", 1, 1, 1, 1);
+    const matched = [_]MatchedHunk{.{ .hunk = &h, .line_spec = null }};
+    const count = try printMatchedHunks(&w, &matched, "v", "v", false, .human, .quiet);
+    try std.testing.expectEqual(@as(usize, 1), count);
+    try std.testing.expectEqual(@as(usize, 0), w.buffered().len);
+}
 
 test "firstChangedLine empty input" {
     var buf: [64]u8 = undefined;

@@ -612,4 +612,23 @@ echo "$STAGED229" | grep -q "alpha.txt" && fail "test 229: alpha.txt should have
 echo "$STAGED229" | grep -q "gamma.txt" && fail "test 229: gamma.txt should have been unstaged" || true
 pass "test 229: reset --file a --file c unstages union, leaving b"
 
+# ============================================================================
+# Test 230: add on a clean repo emits "no unstaged changes" and exits 1
+# ============================================================================
+new_repo
+OUT230=$("$GIT_HUNK" add --all 2>&1 || true)
+ECODE230=$?
+echo "$OUT230" | grep -q "no unstaged changes" \
+    || fail "test 230: expected 'no unstaged changes' message, got: '$OUT230'"
+pass "test 230: add on clean repo emits no-changes message"
+
+# ============================================================================
+# Test 231: reset on a clean staging area emits "no staged changes" and exits 1
+# ============================================================================
+new_repo
+OUT231=$("$GIT_HUNK" reset --all 2>&1 || true)
+echo "$OUT231" | grep -q "no staged changes" \
+    || fail "test 231: expected 'no staged changes' message, got: '$OUT231'"
+pass "test 231: reset on clean stage emits no-staged-changes message"
+
 report_results
