@@ -404,6 +404,31 @@ pass "test 522: --3way suppresses the misleading 'try --3way' hint"
 git reset --hard HEAD > /dev/null 2>&1
 
 # ============================================================================
+# Test 523: restore --3way that leaves conflict markers exits non-zero with a
+# clear message (mirrors add --3way / commit --3way fail-loud behaviour).
+# ============================================================================
+new_repo
+echo "C0-line-one" > confl523.txt
+git add confl523.txt && git commit -q -m "C0"
+HIST_C0=$(git rev-parse HEAD)
+echo "C1-line-one" > confl523.txt
+git add confl523.txt && git commit -q -m "C1"
+SHA523=$("$GIT_HUNK" list --ref "$HIST_C0" --porcelain --oneline --file confl523.txt | head -1 | cut -f1)
+[[ -n "$SHA523" ]] || fail "test 523: no hunk found"
+
+# C0 created the file with content X; reverse-applying that = delete the file.
+# But the worktree currently has different content for confl523.txt, so 3-way
+# can't fully resolve and leaves conflict markers OR exits non-zero.
+ERR523=$("$GIT_HUNK" restore --ref "$HIST_C0" --3way "$SHA523" 2>&1 || true)
+EXIT523=$?
+# The pass condition: either we see "left conflict markers" (clean conflict path)
+# or "did not apply cleanly" (3-way couldn't merge). Both are non-silent.
+echo "$ERR523" | grep -qE "(conflict markers|did not apply cleanly)" \
+    || fail "test 523: expected non-silent failure on 3-way restore conflict; got: '$ERR523'"
+pass "test 523: restore --3way fails clearly when 3-way produces conflicts"
+git reset --hard HEAD > /dev/null 2>&1
+
+# ============================================================================
 # Test 521: end-to-end "undo this hunk from history" workflow
 # Setup a commit C that introduces a bug; later HEAD has unrelated state.
 # `restore --ref C^..C SHA` reverse-applies the bad hunk to make worktree

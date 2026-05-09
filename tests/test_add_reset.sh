@@ -695,6 +695,14 @@ SHA234=$("$GIT_HUNK" list --ref "$HIST_C1_234" --porcelain --oneline --file conf
 ERR234=$("$GIT_HUNK" add --ref "$HIST_C1_234" --3way "$SHA234" 2>&1 || true)
 echo "$ERR234" | grep -qE "(unmerged index entries|did not apply cleanly)" \
     || fail "test 234: expected conflict-mode message; got: '$ERR234'"
+# Post-condition: if --3way landed unmerged entries, `git ls-files -u` shows them
+# (the user's resolution path). When --3way fails outright, the index is clean.
+# Either is acceptable, but if there's any hint of "unmerged" in stderr, the
+# index must reflect that.
+if echo "$ERR234" | grep -q "unmerged index entries"; then
+    git ls-files -u | grep -q "confl234.txt" \
+        || fail "test 234: 'unmerged index entries' message should imply ls-files -u shows them"
+fi
 pass "test 234: add --3way fails with clear message when 3-way produces conflicts"
 
 report_results

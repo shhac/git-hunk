@@ -823,7 +823,7 @@ fn renderApplyResults(
     action: ApplyAction,
     result_groups: []const ResultGroup,
     binary_matched: []const MatchedHunk,
-) !struct { count: usize, merged_count: usize } {
+) !void {
     const use_color = format.shouldUseColor(opts.output, opts.no_color);
     const verb: []const u8 = switch (action) {
         .stage => "staged",
@@ -863,7 +863,6 @@ fn renderApplyResults(
     if (action == .stage and opts.verbosity == .verbose and opts.output == .human) {
         std.debug.print("hint: staged hashes differ from unstaged -- use 'git hunk list --staged' to see them\n", .{});
     }
-    return .{ .count = count, .merged_count = merged_count };
 }
 
 fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOptions, action: ApplyAction) !void {
@@ -914,7 +913,7 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
     if (text_matched.len > 0) try captureTargetHunks(arena, target_mode, opts.context, file_paths, &new_hunks);
 
     const result_groups = try buildResultGroups(arena, text_matched, old_target_hunks.items, new_hunks.items);
-    _ = try renderApplyResults(stdout, opts, action, result_groups, binary_matched);
+    try renderApplyResults(stdout, opts, action, result_groups, binary_matched);
 
     if (had_conflicts) {
         // Mirror `git apply --3way --cached` semantics: leave unmerged index entries
@@ -960,6 +959,7 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
     const text_matched = try partition.combinedText(arena);
 
     // Text hunks: reverse-apply patches to worktree
+    var any_restore_conflicts = false;
     if (text_matched.len > 0) {
         std.mem.sort(MatchedHunk, text_matched, {}, patch_mod.matchedHunkPatchOrder);
         const patches = try patch_mod.buildCombinedPatches(arena, text_matched);
@@ -967,13 +967,14 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
         while (i > 0) {
             i -= 1;
             // git apply rejects --3way + --check; for dry-run we drop --3way.
-            _ = try git.runGitApply(allocator, patches[i], .{
+            const result = try git.runGitApply(allocator, patches[i], .{
                 .reverse = true,
                 .target = .worktree,
                 .check_only = opts.dry_run,
                 .three_way = opts.three_way and !opts.dry_run,
                 .ref = opts.ref,
             });
+            if (result == .applied_with_conflicts) any_restore_conflicts = true;
         }
     }
 
@@ -1001,6 +1002,12 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
 
     const count = try format.printMatchedHunks(stdout, matched.items, verb, porcelain_verb, use_color, opts.output, opts.verbosity);
     format.printHunkCountSummary(opts.verbosity, opts.output, count, summary_verb);
+
+    if (any_restore_conflicts) {
+        std.debug.print("error: --3way left conflict markers in the worktree — resolve before continuing\n", .{});
+        try stdout.flush();
+        std.process.exit(1);
+    }
 }
 
 pub fn cmdDiff(allocator: Allocator, stdout: *std.Io.Writer, opts: DiffOptions) !void {
