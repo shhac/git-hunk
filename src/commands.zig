@@ -823,6 +823,7 @@ fn renderApplyResults(
     action: ApplyAction,
     result_groups: []const ResultGroup,
     binary_matched: []const MatchedHunk,
+    had_conflicts: bool,
 ) !void {
     const use_color = format.shouldUseColor(opts.output, opts.no_color);
     const verb: []const u8 = switch (action) {
@@ -848,6 +849,11 @@ fn renderApplyResults(
             try format.printMatchedHunkLine(stdout, verb, verb, m, use_color, opts.output);
         }
     }
+
+    // Suppress the success summary and the "hashes differ" hint when --3way
+    // landed unmerged entries: the caller will print an error + exit non-zero.
+    // Mixing "N hunks staged" with that error would be self-contradictory.
+    if (had_conflicts) return;
 
     if (opts.verbosity == .verbose and opts.output == .human) {
         if (count == 1 and merged_count == 0) {
@@ -913,7 +919,7 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
     if (text_matched.len > 0) try captureTargetHunks(arena, target_mode, opts.context, file_paths, &new_hunks);
 
     const result_groups = try buildResultGroups(arena, text_matched, old_target_hunks.items, new_hunks.items);
-    try renderApplyResults(stdout, opts, action, result_groups, binary_matched);
+    try renderApplyResults(stdout, opts, action, result_groups, binary_matched, had_conflicts);
 
     if (had_conflicts) {
         // Mirror `git apply --3way --cached` semantics: leave unmerged index entries
@@ -1001,7 +1007,12 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
     const summary_verb: []const u8 = if (opts.dry_run) "would be restored" else "restored";
 
     const count = try format.printMatchedHunks(stdout, matched.items, verb, porcelain_verb, use_color, opts.output, opts.verbosity);
-    format.printHunkCountSummary(opts.verbosity, opts.output, count, summary_verb);
+    // Skip the "N hunks restored" summary when --3way left conflict markers:
+    // the caller will exit non-zero with a clear error, and "N hunks restored"
+    // would contradict that. The per-hunk lines above still show what was touched.
+    if (!any_restore_conflicts) {
+        format.printHunkCountSummary(opts.verbosity, opts.output, count, summary_verb);
+    }
 
     if (any_restore_conflicts) {
         std.debug.print("error: --3way left conflict markers in the worktree — resolve before continuing\n", .{});

@@ -418,13 +418,21 @@ SHA523=$("$GIT_HUNK" list --ref "$HIST_C0" --porcelain --oneline --file confl523
 
 # C0 created the file with content X; reverse-applying that = delete the file.
 # But the worktree currently has different content for confl523.txt, so 3-way
-# can't fully resolve and leaves conflict markers OR exits non-zero.
+# can't fully resolve. Two acceptable outcomes:
+#   (a) "left conflict markers" — markers MUST exist in the worktree file
+#       (this is the resolution path the user is told to follow)
+#   (b) "did not apply cleanly" — worktree MUST be unchanged from pre-attempt
 ERR523=$("$GIT_HUNK" restore --ref "$HIST_C0" --3way "$SHA523" 2>&1 || true)
-EXIT523=$?
-# The pass condition: either we see "left conflict markers" (clean conflict path)
-# or "did not apply cleanly" (3-way couldn't merge). Both are non-silent.
-echo "$ERR523" | grep -qE "(conflict markers|did not apply cleanly)" \
-    || fail "test 523: expected non-silent failure on 3-way restore conflict; got: '$ERR523'"
+PRE523=$(cat confl523.txt)
+if echo "$ERR523" | grep -q "left conflict markers"; then
+    grep -q "<<<<<<<" confl523.txt \
+        || fail "test 523: 'left conflict markers' message but no <<<<<<< in confl523.txt"
+elif echo "$ERR523" | grep -q "did not apply cleanly"; then
+    [[ "$PRE523" == "C1-line-one" ]] \
+        || fail "test 523: 'did not apply cleanly' should leave worktree untouched; got: '$PRE523'"
+else
+    fail "test 523: expected 'left conflict markers' or 'did not apply cleanly'; got: '$ERR523'"
+fi
 pass "test 523: restore --3way fails clearly when 3-way produces conflicts"
 git reset --hard HEAD > /dev/null 2>&1
 
