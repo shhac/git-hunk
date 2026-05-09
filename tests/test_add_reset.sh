@@ -705,4 +705,10 @@ if echo "$ERR234" | grep -q "unmerged index entries"; then
 fi
 pass "test 234: add --3way fails with clear message when 3-way produces conflicts"
 
+# Test 235 (reset --3way conflict) deliberately not added: reset matches
+# hunks-by-SHA against the current index, so any pre-condition that diverges
+# the index from the captured SHA also invalidates the SHA before --3way runs.
+# The action-aware error message is a single `switch (action)` in cmdApplyHunks
+# — covered by inspection plus test 234's stage-side path.
+
 report_results

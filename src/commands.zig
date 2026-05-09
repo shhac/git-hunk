@@ -924,8 +924,14 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
     if (had_conflicts) {
         // Mirror `git apply --3way --cached` semantics: leave unmerged index entries
         // and exit non-zero so scripts (and the user) know to resolve before committing.
-        std.debug.print("error: --3way landed unmerged index entries — use `git status` to inspect, then `git add` once resolved\n", .{});
+        // Flush buffered stdout (per-hunk lines) before writing to stderr so the
+        // user sees them in source order on a TTY.
         try stdout.flush();
+        const resolution_hint: []const u8 = switch (action) {
+            .stage => "use `git status` to inspect, then `git add` once resolved",
+            .unstage => "use `git status` to inspect, then resolve with `git checkout --` or re-stage the resolved version",
+        };
+        std.debug.print("error: --3way landed unmerged index entries — {s}\n", .{resolution_hint});
         std.process.exit(1);
     }
 }
@@ -1015,8 +1021,9 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
     }
 
     if (any_restore_conflicts) {
-        std.debug.print("error: --3way left conflict markers in the worktree — resolve before continuing\n", .{});
+        // Flush buffered stdout first so per-hunk lines appear before the stderr error.
         try stdout.flush();
+        std.debug.print("error: --3way left conflict markers in the worktree — resolve before continuing\n", .{});
         std.process.exit(1);
     }
 }
@@ -1235,6 +1242,17 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
 }
 
 /// Restore the index from the backup (best-effort) and exit. Used when the
+/// Extract the first file path from a patch's leading `diff --git a/<path> b/<path>`
+/// line, for warning-message diagnostics. Returns null if the patch doesn't start
+/// with the expected header.
+fn firstPatchPath(patch: []const u8) ?[]const u8 {
+    const prefix = "diff --git a/";
+    if (!std.mem.startsWith(u8, patch, prefix)) return null;
+    const after = patch[prefix.len..];
+    const sp = std.mem.indexOf(u8, after, " ") orelse return null;
+    return after[0..sp];
+}
+
 /// transactional commit hits a fatal mid-transaction error. If `msg` is given,
 /// it's printed to stderr before exit.
 fn abortCommitAndExit(cwd: std.Io.Dir, io: std.Io, backup_path: []const u8, index_path: []const u8, msg: ?[]const u8) noreturn {
@@ -1314,11 +1332,18 @@ fn runTransactionalCommit(ctx: CommitContext) ![]const u8 {
     // Don't pass --3way here: the patch already landed in step 3, and re-applying
     // with 3-way against the post-commit index would risk producing conflict
     // markers in the real index.
+    // Continue past failures so the user's index reflects as much progress as
+    // possible, and report which patch(es) failed by extracting the leading
+    // `diff --git a/<path>` so the user has a starting point.
+    var failed_paths: std.ArrayList([]const u8) = .empty;
+    defer failed_paths.deinit(ctx.allocator);
     for (ctx.patches) |p| {
         _ = git.runGitApply(ctx.allocator, p, .{ .target = .index, .ref = ctx.ref }) catch {
-            std.debug.print("warning: commit succeeded but index sync failed -- run 'git hunk add' to re-sync\n", .{});
-            break;
+            failed_paths.append(ctx.allocator, firstPatchPath(p) orelse "<unknown>") catch {};
         };
+    }
+    if (failed_paths.items.len > 0) {
+        std.debug.print("warning: commit succeeded but index sync failed for {d} patch(es) -- run 'git hunk add' to re-sync. First failure: {s}\n", .{ failed_paths.items.len, failed_paths.items[0] });
     }
     if (ctx.binary_paths.len > 0) {
         git.runGitAddFiles(ctx.allocator, ctx.binary_paths) catch {
