@@ -135,6 +135,7 @@ pub fn runGitDiffFiles(allocator: Allocator, mode: DiffMode, ref: ?[]const u8, c
             try argv.append(allocator, r[0..dot_pos]);
             try argv.append(allocator, r[dot_pos + 2 ..]);
         } else {
+            // Single ref: ref vs worktree.
             try argv.append(allocator, r);
         }
     }

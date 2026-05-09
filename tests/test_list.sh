@@ -221,4 +221,45 @@ echo "$OUT115" | grep -q "gamma.txt" || fail "test 115: gamma.txt missing from m
 echo "$OUT115" | grep -q "beta.txt" && fail "test 115: beta.txt leaked into multi-file filter" || true
 pass "test 115: multiple --file flags select the union of files"
 
+# ============================================================================
+# Test 116: --ref <commit> shorthand shows that commit's hunks (== <ref>^..<ref>)
+# This is `git show <commit>` semantics for hunks: ref alone means "the diff
+# this commit introduced", not "ref vs worktree".
+# ============================================================================
+new_repo
+echo "history line one" > history.txt
+git add history.txt && git commit -q -m "history: initial"
+echo "history line two added" >> history.txt
+git add history.txt && git commit -q -m "history: append"
+HIST_HEAD=$(git rev-parse HEAD)
+HIST_PARENT=$(git rev-parse HEAD^)
+
+# Sanity: the explicit-range form has worked since v0.13 — capture its output.
+RANGE116=$("$GIT_HUNK" list --ref "${HIST_PARENT}..${HIST_HEAD}" --porcelain --oneline)
+[[ -n "$RANGE116" ]] || fail "test 116a: explicit ${HIST_PARENT}..${HIST_HEAD} produced no hunks"
+
+# Single-ref shorthand should produce identical output to the explicit range.
+SHORT116=$("$GIT_HUNK" list --ref "$HIST_HEAD" --porcelain --oneline)
+[[ "$SHORT116" == "$RANGE116" ]] \
+    || fail "test 116: --ref <commit> should equal --ref <commit>^..<commit>; range='$RANGE116', short='$SHORT116'"
+pass "test 116: --ref <commit> shorthand emits the commit's diff (git show semantics)"
+
+# ============================================================================
+# Test 117: --ref HEAD~1 shows penultimate commit's hunks
+# ============================================================================
+SHORT117=$("$GIT_HUNK" list --ref "HEAD~1" --porcelain --oneline)
+echo "$SHORT117" | grep -q "history.txt" \
+    || fail "test 117: HEAD~1 shorthand should include history.txt, got: '$SHORT117'"
+pass "test 117: --ref HEAD~1 shorthand shows penultimate commit hunks"
+
+# ============================================================================
+# Test 118: --ref <commit> shorthand is unaffected by worktree state
+# (it shows commit content, not a diff against the worktree)
+# ============================================================================
+echo "DIRTY WORKTREE EDIT" > history.txt
+DIRTY118=$("$GIT_HUNK" list --ref "$HIST_HEAD" --porcelain --oneline)
+[[ "$DIRTY118" == "$RANGE116" ]] \
+    || fail "test 118: --ref shorthand should ignore worktree state; before='$RANGE116', after='$DIRTY118'"
+pass "test 118: --ref <commit> shorthand ignores worktree state"
+
 report_results

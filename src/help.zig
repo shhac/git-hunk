@@ -51,8 +51,8 @@ const list_help: []const u8 =
     \\OPTIONS
     \\  --staged          List hunks from the staged (index) diff instead of worktree
     \\  --ref <refspec>   Compare against a git ref instead of the default.
-    \\                    Single ref (e.g. HEAD, main) diffs ref vs worktree.
-    \\                    Range (e.g. main..HEAD) diffs between two refs.
+    \\                    Single ref (e.g. HEAD~1, abc123) is shorthand for `<ref>^..<ref>`,
+    \\                    i.e. that commit's diff. Use a range (e.g. main..HEAD) to diff between two refs.
     \\                    Combines with --staged for ref vs index comparison.
     \\  --file <path>     Restrict output to hunks in the given file
     \\                    (repeatable: pass multiple --file flags to match any of them)
@@ -73,8 +73,8 @@ const list_help: []const u8 =
     \\  git-hunk list --file src/main.zig      List hunks for a specific file
     \\  git-hunk list --porcelain --oneline    Machine-readable compact output
     \\  git-hunk list --unified 0              List hunks with no surrounding context
-    \\  git-hunk list --ref main               List all changes vs main
-    \\  git-hunk list --ref HEAD~1..HEAD       List hunks from the last commit
+    \\  git-hunk list --ref HEAD~1             List hunks from the last commit
+    \\  git-hunk list --ref main..HEAD         List all changes vs main
     \\
 ;
 
@@ -91,8 +91,8 @@ const diff_help: []const u8 =
     \\OPTIONS
     \\  --staged          Show hunks from the staged diff instead of worktree
     \\  --ref <refspec>   Compare against a git ref instead of the default.
-    \\                    Single ref (e.g. HEAD, main) diffs ref vs worktree.
-    \\                    Range (e.g. main..HEAD) diffs between two refs.
+    \\                    Single ref (e.g. HEAD~1, abc123) is shorthand for `<ref>^..<ref>`,
+    \\                    i.e. that commit's diff. Use a range (e.g. main..HEAD) to diff between two refs.
     \\                    Combines with --staged for ref vs index comparison.
     \\  --file <path>     Restrict to hunks in the given file (repeatable)
     \\  --porcelain       Machine-readable output
@@ -109,7 +109,7 @@ const diff_help: []const u8 =
     \\  git-hunk diff a3f7 b82e                Show multiple hunks by prefix
     \\  git-hunk diff a3f7c21 --staged         Show a staged hunk
     \\  git-hunk diff a3f7:3-5,8               Show specific lines of a hunk
-    \\  git-hunk diff --ref main a3f7          Show a hunk from diff vs main
+    \\  git-hunk diff --ref HEAD~1 a3f7        Show a hunk from the last commit
     \\
 ;
 
@@ -126,8 +126,8 @@ const add_help: []const u8 =
     \\
     \\OPTIONS
     \\  --ref <refspec>   Compare against a git ref instead of the default.
-    \\                    Single ref (e.g. HEAD, main) diffs ref vs worktree.
-    \\                    Range (e.g. main..HEAD) diffs between two refs.
+    \\                    Single ref (e.g. HEAD~1, abc123) is shorthand for `<ref>^..<ref>`,
+    \\                    i.e. that commit's diff. Use a range (e.g. main..HEAD) to diff between two refs.
     \\                    Combines with --staged for ref vs index comparison.
     \\  --all             Stage all unstaged hunks
     \\  --file <path>     Stage all hunks in the given file (repeatable)
@@ -162,8 +162,8 @@ const reset_help: []const u8 =
     \\
     \\OPTIONS
     \\  --ref <refspec>   Compare against a git ref instead of the default.
-    \\                    Single ref (e.g. HEAD, main) diffs ref vs worktree.
-    \\                    Range (e.g. main..HEAD) diffs between two refs.
+    \\                    Single ref (e.g. HEAD~1, abc123) is shorthand for `<ref>^..<ref>`,
+    \\                    i.e. that commit's diff. Use a range (e.g. main..HEAD) to diff between two refs.
     \\                    Combines with --staged for ref vs index comparison.
     \\  --all             Unstage all staged hunks
     \\  --file <path>     Unstage all hunks in the given file (repeatable)
@@ -195,8 +195,8 @@ const restore_help: []const u8 =
     \\
     \\OPTIONS
     \\  --ref <refspec>   Compare against a git ref instead of the default.
-    \\                    Single ref (e.g. HEAD, main) diffs ref vs worktree.
-    \\                    Range (e.g. main..HEAD) diffs between two refs.
+    \\                    Single ref (e.g. HEAD~1, abc123) is shorthand for `<ref>^..<ref>`,
+    \\                    i.e. that commit's diff. Use a range (e.g. main..HEAD) to diff between two refs.
     \\                    Combines with --staged for ref vs index comparison.
     \\  --all             Restore all unstaged hunks (DESTRUCTIVE)
     \\  --file <path>     Restore all hunks in the given file (repeatable)
@@ -236,8 +236,8 @@ const count_help: []const u8 =
     \\OPTIONS
     \\  --staged          Count staged hunks instead of unstaged
     \\  --ref <refspec>   Compare against a git ref instead of the default.
-    \\                    Single ref (e.g. HEAD, main) diffs ref vs worktree.
-    \\                    Range (e.g. main..HEAD) diffs between two refs.
+    \\                    Single ref (e.g. HEAD~1, abc123) is shorthand for `<ref>^..<ref>`,
+    \\                    i.e. that commit's diff. Use a range (e.g. main..HEAD) to diff between two refs.
     \\                    Combines with --staged for ref vs index comparison.
     \\  --file <path>     Count hunks in the given file only (repeatable)
     \\  --tracked-only    Only count hunks from tracked files
@@ -265,8 +265,8 @@ const check_help: []const u8 =
     \\OPTIONS
     \\  --staged          Check against staged diff instead of worktree
     \\  --ref <refspec>   Compare against a git ref instead of the default.
-    \\                    Single ref (e.g. HEAD, main) diffs ref vs worktree.
-    \\                    Range (e.g. main..HEAD) diffs between two refs.
+    \\                    Single ref (e.g. HEAD~1, abc123) is shorthand for `<ref>^..<ref>`,
+    \\                    i.e. that commit's diff. Use a range (e.g. main..HEAD) to diff between two refs.
     \\                    Combines with --staged for ref vs index comparison.
     \\  --exclusive       Assert these are the ONLY hunks in the diff (exits 1 otherwise)
     \\  --allow-empty     Allow zero SHA arguments (useful with --exclusive to assert no hunks)
@@ -355,8 +355,8 @@ const commit_help: []const u8 =
     \\  --all             Commit all unstaged hunks
     \\  --file <path>     Commit all hunks in a file (repeatable)
     \\  --ref <refspec>   Compare against a git ref instead of the default.
-    \\                    Single ref (e.g. HEAD, main) diffs ref vs worktree.
-    \\                    Range (e.g. main..HEAD) diffs between two refs.
+    \\                    Single ref (e.g. HEAD~1, abc123) is shorthand for `<ref>^..<ref>`,
+    \\                    i.e. that commit's diff. Use a range (e.g. main..HEAD) to diff between two refs.
     \\  -U, --unified <n> Lines of diff context (default: git's diff.context or 3)
     \\  --tracked-only    Only include hunks from tracked files
     \\  --untracked-only  Only include hunks from untracked files

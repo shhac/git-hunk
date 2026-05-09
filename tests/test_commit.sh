@@ -245,20 +245,29 @@ fi
 pass "test 1013: missing -m is rejected"
 
 # ============================================================================
-# Test 1014: commit --ref
+# Test 1014: commit --ref <commit> uses that commit's diff (shorthand for
+# <commit>^..<commit>) — cherry-pick-by-hunk semantic.
 # ============================================================================
 new_repo
-sed -i.bak '1s/.*/Changed alpha./' alpha.txt
-
-SHA1014="$("$GIT_HUNK" list --ref HEAD --porcelain --oneline | head -1 | cut -f1)"
-[[ -n "$SHA1014" ]] || fail "test 1014: no hunk found with --ref HEAD"
-"$GIT_HUNK" commit --ref HEAD "$SHA1014" -m "ref commit" > /dev/null 2>/dev/null
-git log --oneline -1 | grep -q "ref commit" \
+# Make a commit C1 we'll later "cherry-pick" by hunk.
+echo "history-c1" > history.txt
+git add history.txt && git commit -q -m "C1: add history.txt"
+HIST_SHA1014=$(git rev-parse HEAD)
+# Wipe the file from the worktree (HEAD still has it).
+rm history.txt
+# `commit --ref C1` finds C1's hunk and re-applies it forward into a new commit.
+SHA1014="$("$GIT_HUNK" list --ref "$HIST_SHA1014" --porcelain --oneline --file history.txt | head -1 | cut -f1)"
+[[ -n "$SHA1014" ]] || fail "test 1014: no hunk found with --ref <commit>"
+# Stage worktree first so commit has a clean state to start from
+git checkout HEAD -- history.txt
+git rm history.txt > /dev/null 2>&1
+git commit -q -m "remove history.txt"
+# Now apply C1's hunk forward via commit --ref
+"$GIT_HUNK" commit --ref "$HIST_SHA1014" "$SHA1014" -m "cherry-pick history hunk" > /dev/null 2>/dev/null \
+    || fail "test 1014: commit --ref <commit> failed"
+git log --oneline -1 | grep -q "cherry-pick history hunk" \
     || fail "test 1014: commit message not found"
-REMAINING1014="$("$GIT_HUNK" count)"
-[[ "$REMAINING1014" == "0" ]] \
-    || fail "test 1014: hunks still present after commit with --ref"
-pass "test 1014: commit --ref"
+pass "test 1014: commit --ref <commit> cherry-picks that commit's hunk"
 
 # ============================================================================
 # Test 1015: commit --dry-run --porcelain uses would-commit verb
