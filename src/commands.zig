@@ -778,6 +778,7 @@ fn captureTargetHunks(
 
 /// Apply text patches in order (forward) or reverse order (unstage), then run
 /// git add/reset on `binary_paths`.
+/// Returns true if any of the patches landed with `--3way` conflicts.
 fn applyTextAndBinary(
     allocator: Allocator,
     arena: Allocator,
@@ -786,7 +787,8 @@ fn applyTextAndBinary(
     binary_paths: []const []const u8,
     ref: ?[]const u8,
     three_way: bool,
-) !void {
+) !bool {
+    var any_conflicts = false;
     if (text_matched.len > 0) {
         std.mem.sort(MatchedHunk, text_matched, {}, patch_mod.matchedHunkPatchOrder);
         const patches = try patch_mod.buildCombinedPatches(arena, text_matched);
@@ -796,11 +798,11 @@ fn applyTextAndBinary(
             var i: usize = patches.len;
             while (i > 0) {
                 i -= 1;
-                _ = try git.runGitApply(allocator, patches[i], apply_opts);
+                if (try git.runGitApply(allocator, patches[i], apply_opts) == .applied_with_conflicts) any_conflicts = true;
             }
         } else {
             for (patches) |patch| {
-                _ = try git.runGitApply(allocator, patch, apply_opts);
+                if (try git.runGitApply(allocator, patch, apply_opts) == .applied_with_conflicts) any_conflicts = true;
             }
         }
     }
@@ -810,6 +812,7 @@ fn applyTextAndBinary(
             .unstage => try git.runGitResetFiles(allocator, binary_paths),
         }
     }
+    return any_conflicts;
 }
 
 /// Print result groups for text hunks (with merge tracking) and per-hunk lines
@@ -904,7 +907,7 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
     defer old_target_hunks.deinit(arena);
     if (text_matched.len > 0) try captureTargetHunks(arena, target_mode, opts.context, file_paths, &old_target_hunks);
 
-    try applyTextAndBinary(allocator, arena, action, text_matched, binary_paths, opts.ref, opts.three_way);
+    const had_conflicts = try applyTextAndBinary(allocator, arena, action, text_matched, binary_paths, opts.ref, opts.three_way);
 
     var new_hunks: std.ArrayList(Hunk) = .empty;
     defer new_hunks.deinit(arena);
@@ -912,6 +915,14 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
 
     const result_groups = try buildResultGroups(arena, text_matched, old_target_hunks.items, new_hunks.items);
     _ = try renderApplyResults(stdout, opts, action, result_groups, binary_matched);
+
+    if (had_conflicts) {
+        // Mirror `git apply --3way --cached` semantics: leave unmerged index entries
+        // and exit non-zero so scripts (and the user) know to resolve before committing.
+        std.debug.print("error: --3way landed unmerged index entries — use `git status` to inspect, then `git add` once resolved\n", .{});
+        try stdout.flush();
+        std.process.exit(1);
+    }
 }
 
 pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOptions) !void {
@@ -1206,10 +1217,12 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
 }
 
 /// Restore the index from the backup (best-effort) and exit. Used when the
-/// transactional commit hits a fatal mid-transaction error.
-fn abortCommitAndExit(cwd: std.Io.Dir, io: std.Io, backup_path: []const u8, index_path: []const u8) noreturn {
+/// transactional commit hits a fatal mid-transaction error. If `msg` is given,
+/// it's printed to stderr before exit.
+fn abortCommitAndExit(cwd: std.Io.Dir, io: std.Io, backup_path: []const u8, index_path: []const u8, msg: ?[]const u8) noreturn {
     std.Io.Dir.copyFile(cwd, backup_path, cwd, index_path, io, .{}) catch {};
     cwd.deleteFile(io, backup_path) catch {};
+    if (msg) |m| std.debug.print("{s}", .{m});
     std.process.exit(1);
 }
 
@@ -1251,7 +1264,7 @@ fn runTransactionalCommit(ctx: CommitContext) ![]const u8 {
 
     // 2. Reset index to HEAD (or HEAD~1 for amend)
     const read_tree_ref: []const u8 = if (ctx.amend) "HEAD~1" else "HEAD";
-    git.runGitReadTree(ctx.allocator, read_tree_ref) catch abortCommitAndExit(ctx.cwd, ctx.io, ctx.backup_path, ctx.index_path);
+    git.runGitReadTree(ctx.allocator, read_tree_ref) catch abortCommitAndExit(ctx.cwd, ctx.io, ctx.backup_path, ctx.index_path, null);
 
     // 3. Stage target hunks (text via patch, binary via git add).
     // If --3way produces unmerged index entries, the subsequent `git commit`
@@ -1259,22 +1272,19 @@ fn runTransactionalCommit(ctx: CommitContext) ![]const u8 {
     // Detect and abort early with a clear instruction.
     for (ctx.patches) |p| {
         const result = git.runGitApply(ctx.allocator, p, .{ .target = .index, .three_way = ctx.three_way, .ref = ctx.ref }) catch
-            abortCommitAndExit(ctx.cwd, ctx.io, ctx.backup_path, ctx.index_path);
+            abortCommitAndExit(ctx.cwd, ctx.io, ctx.backup_path, ctx.index_path, null);
         if (result == .applied_with_conflicts) {
-            // Restore index and exit with a clear "use restore + commit normally" hint.
-            std.Io.Dir.copyFile(ctx.cwd, ctx.backup_path, ctx.cwd, ctx.index_path, ctx.io, .{}) catch {};
-            ctx.cwd.deleteFile(ctx.io, ctx.backup_path) catch {};
-            std.debug.print("error: --3way produced conflicts; cannot commit. Use `git hunk restore --ref <X> --3way <sha>` then resolve and `git commit` normally.\n", .{});
-            std.process.exit(1);
+            abortCommitAndExit(ctx.cwd, ctx.io, ctx.backup_path, ctx.index_path,
+                "error: --3way produced conflicts; cannot commit. Use `git hunk restore --ref <X> --3way <sha>` then resolve and `git commit` normally.\n");
         }
     }
     if (ctx.binary_paths.len > 0) {
-        git.runGitAddFiles(ctx.allocator, ctx.binary_paths) catch abortCommitAndExit(ctx.cwd, ctx.io, ctx.backup_path, ctx.index_path);
+        git.runGitAddFiles(ctx.allocator, ctx.binary_paths) catch abortCommitAndExit(ctx.cwd, ctx.io, ctx.backup_path, ctx.index_path, null);
     }
 
     // 4. Commit
     const commit_output = git.runGitCommit(ctx.allocator, .{ .message = ctx.message, .amend = ctx.amend }) catch
-        abortCommitAndExit(ctx.cwd, ctx.io, ctx.backup_path, ctx.index_path);
+        abortCommitAndExit(ctx.cwd, ctx.io, ctx.backup_path, ctx.index_path, null);
     errdefer ctx.allocator.free(commit_output);
 
     // 5. Restore original index

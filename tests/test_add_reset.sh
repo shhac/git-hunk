@@ -677,14 +677,24 @@ git diff --cached -- revived233.txt | grep -q "feature line" \
 pass "test 233: add --3way is a valid flag; clean applies stage the patch"
 
 # ============================================================================
-# Test 234: --3way is rejected with --dry-run (git apply rejects --3way + --check).
-# Our cmdRestore dry-run path drops --3way so this should not error.
+# Test 234: add --3way that lands unmerged index entries fails with a clear
+# message (mirrors `git apply --3way --cached` semantics: don't silently
+# claim "staged" while leaving conflicts).
 # ============================================================================
 new_repo
-sed -i.bak '1s/.*/Changed alpha for 234./' alpha.txt
-SHA234=$("$GIT_HUNK" list --porcelain --oneline | head -1 | cut -f1)
-# add doesn't have --dry-run, but commit does — verified separately in test_commit.sh.
-"$GIT_HUNK" add "$SHA234" > /dev/null 2>&1 || fail "test 234: setup add failed"
-pass "test 234: setup baseline (real --dry-run + --3way coverage in test_commit.sh)"
+echo "first" > confl234.txt
+git add confl234.txt && git commit -q -m "C0: first"
+echo "second" >> confl234.txt
+git add confl234.txt && git commit -q -m "C1: append"
+HIST_C1_234=$(git rev-parse HEAD)
+git revert --no-edit HEAD > /dev/null 2>&1
+echo "DIFFERENT-content-where-C1-added" >> confl234.txt
+git add confl234.txt && git commit -q -m "C2: diff content"
+SHA234=$("$GIT_HUNK" list --ref "$HIST_C1_234" --porcelain --oneline --file confl234.txt | head -1 | cut -f1)
+[[ -n "$SHA234" ]] || fail "test 234: no hunk found"
+ERR234=$("$GIT_HUNK" add --ref "$HIST_C1_234" --3way "$SHA234" 2>&1 || true)
+echo "$ERR234" | grep -qE "(unmerged index entries|did not apply cleanly)" \
+    || fail "test 234: expected conflict-mode message; got: '$ERR234'"
+pass "test 234: add --3way fails with clear message when 3-way produces conflicts"
 
 report_results
