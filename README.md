@@ -438,6 +438,8 @@ accepted by all commands.
 - Worktree restore via `restore` with `--dry-run` preview and `--force` for untracked
 - Hunk stashing via `stash` with native 3-parent format for untracked files
 - Executable bit preservation in stash
+- Cherry-pick / revert by hunk from any past commit via `--ref <commit>` (shorthand for `<commit>^..<commit>`); see [docs/history-workflow.md](docs/history-workflow.md)
+- 3-way merge fallback for context drift via `--3way` on `add` / `reset` / `restore` / `commit`
 
 ## Testing
 

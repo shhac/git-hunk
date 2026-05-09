@@ -204,7 +204,8 @@ git-hunk commit [<sha[:lines]>...] -m <message> [--file <path>] [--all] [--amend
 | `--dry-run` | Show what would be committed without committing. `-m` not required. |
 | `--all` | Commit all unstaged hunks. No SHA arguments required. |
 | `--file <path>` | Restrict hash matching to hunks in this file. When used without SHAs, commits all hunks in the file. May be repeated to match any of several files. |
-| `--ref <refspec>` | Diff against a git ref instead of the index. |
+| `--ref <refspec>` | Source the diff from a git ref. **Single ref** (e.g. `HEAD~1`, `abc1234`) is shorthand for `<ref>^..<ref>` — that commit's diff (`git show` semantics). **Range** (e.g. `main..HEAD`) is the literal diff between two refs. Initial commits (no parent) diff against the empty tree. |
+| `--3way` | When applying a patch fails because surrounding context has drifted, fall back to a 3-way merge instead of erroring. Either succeeds cleanly or leaves `<<<<<<<` conflict markers. Useful with `--ref <past-commit>`. |
 | `--tracked-only` | Only include hunks from tracked files. |
 | `--untracked-only` | Only include hunks from untracked files. |
 | `--porcelain` | Tab-separated machine-readable output. |
