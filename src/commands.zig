@@ -1323,41 +1323,49 @@ fn runTransactionalCommit(ctx: CommitContext) ![]const u8 {
         abortCommitAndExit(ctx.cwd, ctx.io, ctx.backup_path, ctx.index_path, null);
     errdefer ctx.allocator.free(commit_output);
 
-    // 5. Restore original index
+    // 5. Restore original index. If this fails, the backup is the user's only
+    // recovery path — DON'T run step 6 (would scribble onto an unrestored index)
+    // and DON'T run step 7 cleanup (would delete the backup we just told the
+    // user about).
+    var restored = true;
     std.Io.Dir.copyFile(ctx.cwd, ctx.backup_path, ctx.cwd, ctx.index_path, ctx.io, .{}) catch {
-        std.debug.print("warning: commit succeeded but failed to restore original index -- backup at {s}\n", .{ctx.backup_path});
+        restored = false;
+        std.debug.print("warning: commit succeeded but failed to restore original index -- backup preserved at {s} (recover with: cp {s} {s})\n", .{ ctx.backup_path, ctx.backup_path, ctx.index_path });
     };
 
-    // 6. Sync index with new HEAD (text via patch, binary via git add).
-    // Mirror step 3's --3way mode: if the commit was made via 3-way merging
-    // (drift between patch pre-image and current state), the post-commit
-    // content reflects the merged result. Re-applying the literal patch
-    // without --3way would put divergent content in the index — index ≠ HEAD.
-    // Continue past failures and report a per-patch summary.
-    var failed_paths: std.ArrayList([]const u8) = .empty;
-    defer failed_paths.deinit(ctx.allocator);
-    for (ctx.patches) |p| {
-        const r = git.runGitApply(ctx.allocator, p, .{ .target = .index, .three_way = ctx.three_way, .ref = ctx.ref }) catch {
-            failed_paths.append(ctx.allocator, firstPatchPath(p) orelse "<unknown>") catch {};
-            continue;
-        };
-        if (r == .applied_with_conflicts) {
-            // 3-way left unmerged entries in the user's restored index. Capture
-            // the path so the user knows what to resolve.
-            failed_paths.append(ctx.allocator, firstPatchPath(p) orelse "<unknown>") catch {};
+    if (restored) {
+        // 6. Sync index with new HEAD (text via patch, binary via git add).
+        // Mirror step 3's --3way mode: if the commit was made via 3-way merging
+        // (drift between patch pre-image and current state), the post-commit
+        // content reflects the merged result. Re-applying the literal patch
+        // without --3way would put divergent content in the index — index ≠ HEAD.
+        // Continue past failures and report a per-patch summary.
+        var failed_paths: std.ArrayList([]const u8) = .empty;
+        defer failed_paths.deinit(ctx.allocator);
+        for (ctx.patches) |p| {
+            const r = git.runGitApply(ctx.allocator, p, .{ .target = .index, .three_way = ctx.three_way, .ref = ctx.ref }) catch {
+                failed_paths.append(ctx.allocator, firstPatchPath(p) orelse "<unknown>") catch {};
+                continue;
+            };
+            if (r == .applied_with_conflicts) {
+                // 3-way left unmerged entries in the user's restored index. Capture
+                // the path so the user knows what to resolve.
+                failed_paths.append(ctx.allocator, firstPatchPath(p) orelse "<unknown>") catch {};
+            }
         }
-    }
-    if (failed_paths.items.len > 0) {
-        std.debug.print("warning: commit succeeded but index sync failed for {d} patch(es) -- run 'git hunk add' to re-sync. First failure: {s}\n", .{ failed_paths.items.len, failed_paths.items[0] });
-    }
-    if (ctx.binary_paths.len > 0) {
-        git.runGitAddFiles(ctx.allocator, ctx.binary_paths) catch {
-            std.debug.print("warning: commit succeeded but binary file index sync failed -- run 'git add' to re-sync\n", .{});
-        };
-    }
+        if (failed_paths.items.len > 0) {
+            std.debug.print("warning: commit succeeded but index sync failed for {d} patch(es) -- run 'git hunk add' to re-sync. First failure: {s}\n", .{ failed_paths.items.len, failed_paths.items[0] });
+        }
+        if (ctx.binary_paths.len > 0) {
+            git.runGitAddFiles(ctx.allocator, ctx.binary_paths) catch {
+                std.debug.print("warning: commit succeeded but binary file index sync failed -- run 'git add' to re-sync\n", .{});
+            };
+        }
 
-    // 7. Cleanup
-    ctx.cwd.deleteFile(ctx.io, ctx.backup_path) catch {};
+        // 7. Cleanup (only when the index was successfully restored — otherwise
+        // the backup is the recovery path).
+        ctx.cwd.deleteFile(ctx.io, ctx.backup_path) catch {};
+    }
 
     return commit_output;
 }
