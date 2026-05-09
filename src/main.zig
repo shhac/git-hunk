@@ -161,13 +161,42 @@ fn resolveFileFilter(arena: std.mem.Allocator, prefix: []const u8, filter: []con
     }
 }
 
+/// Well-known empty-tree SHA in git. `git diff <empty-tree>..<commit>` shows
+/// the full content of `<commit>` as additions — used to handle parentless
+/// commits where `<commit>^` doesn't exist.
+const EMPTY_TREE_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
 /// Expand a single-ref `--ref <commit>` into the equivalent range `<commit>^..<commit>`
-/// (matching `git show <commit>` semantics). Range refs (containing `..`) and null refs
-/// pass through unchanged. The expanded string is arena-allocated.
+/// (matching `git show <commit>` semantics). For commits without a parent (initial
+/// commits), expands to `<empty-tree>..<commit>` so the full content is shown.
+/// Range refs (containing `..`) and null refs pass through unchanged.
 fn expandRefShorthand(arena: std.mem.Allocator, ref: *?[]const u8) !void {
     const r = ref.* orelse return;
     if (std.mem.indexOf(u8, r, "..") != null) return;
-    ref.* = try std.fmt.allocPrint(arena, "{s}^..{s}", .{ r, r });
+    ref.* = if (try refHasParent(arena, r))
+        try std.fmt.allocPrint(arena, "{s}^..{s}", .{ r, r })
+    else
+        try std.fmt.allocPrint(arena, "{s}..{s}", .{ EMPTY_TREE_SHA, r });
+}
+
+/// Returns true if `git rev-parse --verify <ref>^` succeeds — i.e. the ref has
+/// a parent commit. Soft-fails to false on any error so callers can use the
+/// empty-tree fallback.
+fn refHasParent(arena: std.mem.Allocator, ref: []const u8) !bool {
+    const probe = try std.fmt.allocPrint(arena, "{s}^", .{ref});
+    const argv = [_][]const u8{ "git", "rev-parse", "--verify", "--quiet", probe };
+    const io = types.getIo();
+    const result = std.process.run(arena, io, .{
+        .argv = &argv,
+        .stdout_limit = .limited(4096),
+        .stderr_limit = .limited(4096),
+    }) catch return false;
+    arena.free(result.stdout);
+    arena.free(result.stderr);
+    return switch (result.term) {
+        .exited => |code| code == 0,
+        else => false,
+    };
 }
 
 fn handleParseError(stdout: *std.Io.Writer, err: anyerror, cmd: help.Command) noreturn {

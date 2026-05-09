@@ -262,4 +262,23 @@ DIRTY118=$("$GIT_HUNK" list --ref "$HIST_HEAD" --porcelain --oneline)
     || fail "test 118: --ref shorthand should ignore worktree state; before='$RANGE116', after='$DIRTY118'"
 pass "test 118: --ref <commit> shorthand ignores worktree state"
 
+# ============================================================================
+# Test 119: --ref <initial-commit> works (no parent — diff against empty tree)
+# Regression for the parent-less commit edge case.
+# ============================================================================
+INIT_REPO=$(mktemp -d)
+cd "$INIT_REPO"
+git init -q
+git config user.email t@t.test
+git config user.name t
+echo "first content" > first.txt
+git add first.txt && git commit -q -m "initial"
+INIT_SHA=$(git rev-parse HEAD)
+
+OUT119=$("$GIT_HUNK" list --ref "$INIT_SHA" --porcelain --oneline 2>&1) || true
+echo "$OUT119" | grep -q "first.txt" \
+    || fail "test 119: --ref <initial-commit> should show its hunks; got: '$OUT119'"
+pass "test 119: --ref <initial-commit> handled (no parent → diff against empty tree)"
+cd /tmp && rm -rf "$INIT_REPO"
+
 report_results
