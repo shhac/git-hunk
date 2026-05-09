@@ -647,6 +647,13 @@ test "parseDiff multi-hunk single file" {
     try std.testing.expectEqual(@as(u32, 18), hunks.items[1].new_start);
     try std.testing.expectEqual(@as(u32, 4), hunks.items[1].new_count);
     try std.testing.expectEqualStrings("line 16", hunks.items[1].context);
+
+    // Reconstructed patch_header preserves the `index <oldsha>..<newsha>` line —
+    // required for `git apply --3way` to find the original blob.
+    try std.testing.expect(std.mem.indexOf(u8, hunks.items[0].patch_header, "index abc1234..def5678 100644") != null);
+    try std.testing.expect(std.mem.indexOf(u8, hunks.items[1].patch_header, "index abc1234..def5678 100644") != null);
+    // diff --git header is also preserved (always emitted, not just for new/deleted/rename).
+    try std.testing.expect(std.mem.indexOf(u8, hunks.items[0].patch_header, "diff --git a/hello.txt b/hello.txt") != null);
 }
 
 test "parseDiff multi-file" {

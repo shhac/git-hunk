@@ -297,4 +297,36 @@ WT1016="$(git diff --name-only)"
 echo "$WT1016" | grep -q "beta.txt" || fail "test 1016: beta.txt should still be modified in worktree"
 pass "test 1016: commit --file a --file c -m commits union, leaves b modified"
 
+# ============================================================================
+# Test 1017: commit --3way --dry-run does not error (we drop --3way for --check)
+# ============================================================================
+new_repo
+sed -i.bak '1s/.*/Changed alpha for 1017./' alpha.txt
+SHA1017=$("$GIT_HUNK" list --porcelain --oneline | head -1 | cut -f1)
+"$GIT_HUNK" commit --3way --dry-run "$SHA1017" -m "ignored" > /dev/null 2>&1 \
+    || fail "test 1017: commit --3way --dry-run should not error (git apply rejects --3way + --check)"
+pass "test 1017: commit --3way --dry-run runs without error"
+
+# ============================================================================
+# Test 1018: commit --ref <past-commit> --3way uses 3-way merge for cherry-pick
+# ============================================================================
+new_repo
+echo "feature line for cherry-pick" > picky.txt
+git add picky.txt && git commit -q -m "C1: add feature"
+HIST_C1_1018=$(git rev-parse HEAD)
+git revert --no-edit HEAD > /dev/null 2>&1
+
+SHA1018=$("$GIT_HUNK" list --ref "$HIST_C1_1018" --porcelain --oneline --file picky.txt | head -1 | cut -f1)
+[[ -n "$SHA1018" ]] || fail "test 1018: no hunk found in C1"
+
+COMMITS_BEFORE=$(git log --oneline | wc -l | tr -d ' ')
+"$GIT_HUNK" commit --ref "$HIST_C1_1018" --3way "$SHA1018" -m "cherry-pick: feature" > /dev/null 2>&1 \
+    || fail "test 1018: commit --ref --3way should succeed (clean apply)"
+COMMITS_AFTER=$(git log --oneline | wc -l | tr -d ' ')
+[[ "$COMMITS_AFTER" -eq "$((COMMITS_BEFORE + 1))" ]] \
+    || fail "test 1018: expected one new commit; before=$COMMITS_BEFORE after=$COMMITS_AFTER"
+git log --oneline -1 | grep -q "cherry-pick: feature" \
+    || fail "test 1018: new commit should have the cherry-pick message"
+pass "test 1018: commit --ref --3way is accepted for cherry-pick by hunk"
+
 report_results

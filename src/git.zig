@@ -161,11 +161,16 @@ pub const ApplyOptions = struct {
     reverse: bool = false,
     target: ApplyTarget = .index,
     check_only: bool = false,
-    /// Pass `--3way` to git apply: fall back to a 3-way merge (with conflict
-    /// markers in the worktree) when the patch context doesn't apply cleanly.
-    /// Useful for cherry-picking or reverting hunks from far enough back that
-    /// surrounding lines have drifted. Implies `target=.worktree` semantics for
-    /// conflict markers; git apply will refuse `--3way` with `--cached` only.
+    /// Pass `--3way` to git apply: fall back to a 3-way merge when the patch
+    /// context doesn't apply cleanly. Useful for cherry-picking or reverting
+    /// hunks from far enough back that surrounding lines have drifted.
+    ///
+    /// With `target = .worktree` (restore), conflicts produce `<<<<<<<` markers
+    /// in the file. With `target = .index` (add/commit), conflicts produce
+    /// **unmerged index entries** — the user must `git add` the resolved file
+    /// or use `git checkout --merge` to materialise the conflict in the worktree.
+    /// `git apply` rejects `--3way` together with `--check`, so dry-run paths
+    /// must drop this flag.
     three_way: bool = false,
     /// User-supplied `--ref` value for the failure message (so the user knows
     /// which historical diff conflicted). Null means "current diff".
@@ -192,6 +197,19 @@ pub fn runGitApply(allocator: Allocator, patch: []const u8, opts: ApplyOptions) 
     defer allocator.free(result.stdout);
     defer allocator.free(result.stderr);
 
+    // `git apply --3way` returns a non-zero exit code even when it successfully
+    // applies the patch with conflict markers (worktree) or unmerged index
+    // entries. Detect that path via the "Applied patch ... with conflicts"
+    // marker in stderr and treat it as a soft success — the patch state was
+    // committed; the user must resolve.
+    const three_way_with_conflicts = opts.three_way and result.exit_code != 0 and
+        std.mem.indexOf(u8, result.stderr, "Applied patch") != null and
+        std.mem.indexOf(u8, result.stderr, "with conflicts") != null;
+    if (three_way_with_conflicts) {
+        if (result.stderr.len > 0) std.debug.print("{s}", .{result.stderr});
+        std.debug.print("warning: --3way applied patch with conflicts — resolve before continuing\n", .{});
+        return;
+    }
     if (result.exit_code != 0) {
         if (result.stderr.len > 0) std.debug.print("{s}", .{result.stderr});
         if (opts.ref) |r| {

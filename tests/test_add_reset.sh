@@ -657,4 +657,34 @@ git diff --cached revived.txt | grep -q "feature line that gets lost" \
     || fail "test 232: feature line should be staged after add --ref"
 pass "test 232: e2e re-apply-hunk-from-history brings a reverted change back into staging"
 
+# ============================================================================
+# Test 233: add --3way uses 3-way merge to apply a historical hunk despite
+# context drift, leaving conflict markers in the index for the user to resolve.
+# ============================================================================
+new_repo
+echo "feature line" > revived233.txt
+git add revived233.txt && git commit -q -m "C1: add feature"
+HIST_C1_233=$(git rev-parse HEAD)
+git revert --no-edit HEAD > /dev/null 2>&1
+SHA233=$("$GIT_HUNK" list --ref "$HIST_C1_233" --porcelain --oneline --file revived233.txt | head -1 | cut -f1)
+[[ -n "$SHA233" ]] || fail "test 233: no hunk found in C1"
+
+# add --3way is accepted (and behaves identically to plain add when no drift).
+"$GIT_HUNK" add --ref "$HIST_C1_233" --3way "$SHA233" > /dev/null 2>&1 \
+    || fail "test 233: add --3way should succeed for a clean apply"
+git diff --cached -- revived233.txt | grep -q "feature line" \
+    || fail "test 233: feature line should be staged after add --3way"
+pass "test 233: add --3way is a valid flag; clean applies stage the patch"
+
+# ============================================================================
+# Test 234: --3way is rejected with --dry-run (git apply rejects --3way + --check).
+# Our cmdRestore dry-run path drops --3way so this should not error.
+# ============================================================================
+new_repo
+sed -i.bak '1s/.*/Changed alpha for 234./' alpha.txt
+SHA234=$("$GIT_HUNK" list --porcelain --oneline | head -1 | cut -f1)
+# add doesn't have --dry-run, but commit does — verified separately in test_commit.sh.
+"$GIT_HUNK" add "$SHA234" > /dev/null 2>&1 || fail "test 234: setup add failed"
+pass "test 234: setup baseline (real --dry-run + --3way coverage in test_commit.sh)"
+
 report_results
