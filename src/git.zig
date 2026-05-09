@@ -177,7 +177,9 @@ pub const ApplyOptions = struct {
     ref: ?[]const u8 = null,
 };
 
-pub fn runGitApply(allocator: Allocator, patch: []const u8, opts: ApplyOptions) !void {
+pub const ApplyResult = enum { applied_clean, applied_with_conflicts };
+
+pub fn runGitApply(allocator: Allocator, patch: []const u8, opts: ApplyOptions) !ApplyResult {
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(allocator);
     try argv.appendSlice(allocator, &.{ "git", "apply" });
@@ -208,12 +210,13 @@ pub fn runGitApply(allocator: Allocator, patch: []const u8, opts: ApplyOptions) 
     if (three_way_with_conflicts) {
         if (result.stderr.len > 0) std.debug.print("{s}", .{result.stderr});
         std.debug.print("warning: --3way applied patch with conflicts — resolve before continuing\n", .{});
-        return;
+        return .applied_with_conflicts;
     }
     if (result.exit_code != 0) {
         if (result.stderr.len > 0) std.debug.print("{s}", .{result.stderr});
+        const try_3way: []const u8 = if (opts.three_way) "" else " (try --3way)";
         if (opts.ref) |r| {
-            std.debug.print("error: patch did not apply cleanly — the diff from '{s}' may conflict with the current state (try --3way)\n", .{r});
+            std.debug.print("error: patch did not apply cleanly — the diff from '{s}' may conflict with the current state{s}\n", .{ r, try_3way });
         } else if (opts.check_only) {
             std.debug.print("error: patch would not apply cleanly — hashes may be stale\n", .{});
         } else {
@@ -221,6 +224,7 @@ pub fn runGitApply(allocator: Allocator, patch: []const u8, opts: ApplyOptions) 
         }
         return error.PatchFailed;
     }
+    return .applied_clean;
 }
 
 /// Stage files by path: `git add -- path1 path2 ...`

@@ -329,4 +329,31 @@ git log --oneline -1 | grep -q "cherry-pick: feature" \
     || fail "test 1018: new commit should have the cherry-pick message"
 pass "test 1018: commit --ref --3way is accepted for cherry-pick by hunk"
 
+# ============================================================================
+# Test 1019: commit --3way that produces conflicts must abort early with a
+# clear instruction (not silently roll back the unmerged index, leaving the
+# user with no resolution path).
+# ============================================================================
+new_repo
+echo "first" > confl.txt
+git add confl.txt && git commit -q -m "C0: first"
+echo "second" >> confl.txt
+git add confl.txt && git commit -q -m "C1: append"
+HIST_C1_1019=$(git rev-parse HEAD)
+git revert --no-edit HEAD > /dev/null 2>&1
+# Worktree no longer has C1's hunk. Set up something that will conflict.
+echo "DIFFERENT-content-where-C1-added" >> confl.txt
+git add confl.txt && git commit -q -m "C2: diff content"
+
+SHA1019=$("$GIT_HUNK" list --ref "$HIST_C1_1019" --porcelain --oneline --file confl.txt | head -1 | cut -f1)
+[[ -n "$SHA1019" ]] || fail "test 1019: no hunk found"
+ERR1019=$("$GIT_HUNK" commit --ref "$HIST_C1_1019" --3way "$SHA1019" -m "would conflict" 2>&1 || true)
+echo "$ERR1019" | grep -q "produced conflicts" || \
+    echo "$ERR1019" | grep -q "did not apply cleanly" || \
+    fail "test 1019: expected a conflict-mode failure message; got: '$ERR1019'"
+# The repository must not have a new commit.
+git log --oneline | grep -q "would conflict" \
+    && fail "test 1019: commit should have been aborted on conflict" || true
+pass "test 1019: commit --3way fails clearly when 3-way produces conflicts"
+
 report_results

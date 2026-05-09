@@ -384,6 +384,26 @@ pass "test 520: restore --3way merges around context drift, preserving unrelated
 git reset --hard HEAD > /dev/null 2>&1
 
 # ============================================================================
+# Test 522: when --3way is already set, the "try --3way" hint is suppressed
+# in the failure-path error message (regression for the misleading hint).
+# Force a hard failure: a hunk against a worktree whose blob is unrelated.
+# ============================================================================
+new_repo
+echo "completely unrelated worktree content" > unrelated.txt
+git add unrelated.txt && git commit -q -m "C0: unrelated.txt"
+HIST_FAIL=$(git rev-parse HEAD)
+echo "totally different content" > unrelated.txt
+git add unrelated.txt && git commit -q -m "C1: rewrite"
+git revert --no-edit HEAD~1 > /dev/null 2>&1 || true
+# Try restoring the C0 hunk against a worktree that no longer matches.
+SHA522=$("$GIT_HUNK" list --ref "$HIST_FAIL" --porcelain --oneline --file unrelated.txt | head -1 | cut -f1)
+ERR522=$("$GIT_HUNK" restore --ref "$HIST_FAIL" --3way "$SHA522" 2>&1 1>/dev/null || true)
+echo "$ERR522" | grep -q "try --3way" \
+    && fail "test 522: '(try --3way)' hint should NOT appear when --3way already set; got: '$ERR522'" || true
+pass "test 522: --3way suppresses the misleading 'try --3way' hint"
+git reset --hard HEAD > /dev/null 2>&1
+
+# ============================================================================
 # Test 521: end-to-end "undo this hunk from history" workflow
 # Setup a commit C that introduces a bug; later HEAD has unrelated state.
 # `restore --ref C^..C SHA` reverse-applies the bad hunk to make worktree

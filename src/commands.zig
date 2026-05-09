@@ -796,11 +796,11 @@ fn applyTextAndBinary(
             var i: usize = patches.len;
             while (i > 0) {
                 i -= 1;
-                try git.runGitApply(allocator, patches[i], apply_opts);
+                _ = try git.runGitApply(allocator, patches[i], apply_opts);
             }
         } else {
             for (patches) |patch| {
-                try git.runGitApply(allocator, patch, apply_opts);
+                _ = try git.runGitApply(allocator, patch, apply_opts);
             }
         }
     }
@@ -956,7 +956,7 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
         while (i > 0) {
             i -= 1;
             // git apply rejects --3way + --check; for dry-run we drop --3way.
-            try git.runGitApply(allocator, patches[i], .{
+            _ = try git.runGitApply(allocator, patches[i], .{
                 .reverse = true,
                 .target = .worktree,
                 .check_only = opts.dry_run,
@@ -1253,9 +1253,20 @@ fn runTransactionalCommit(ctx: CommitContext) ![]const u8 {
     const read_tree_ref: []const u8 = if (ctx.amend) "HEAD~1" else "HEAD";
     git.runGitReadTree(ctx.allocator, read_tree_ref) catch abortCommitAndExit(ctx.cwd, ctx.io, ctx.backup_path, ctx.index_path);
 
-    // 3. Stage target hunks (text via patch, binary via git add)
+    // 3. Stage target hunks (text via patch, binary via git add).
+    // If --3way produces unmerged index entries, the subsequent `git commit`
+    // would refuse and we'd roll back, leaving the user with no way to resolve.
+    // Detect and abort early with a clear instruction.
     for (ctx.patches) |p| {
-        git.runGitApply(ctx.allocator, p, .{ .target = .index, .three_way = ctx.three_way, .ref = ctx.ref }) catch abortCommitAndExit(ctx.cwd, ctx.io, ctx.backup_path, ctx.index_path);
+        const result = git.runGitApply(ctx.allocator, p, .{ .target = .index, .three_way = ctx.three_way, .ref = ctx.ref }) catch
+            abortCommitAndExit(ctx.cwd, ctx.io, ctx.backup_path, ctx.index_path);
+        if (result == .applied_with_conflicts) {
+            // Restore index and exit with a clear "use restore + commit normally" hint.
+            std.Io.Dir.copyFile(ctx.cwd, ctx.backup_path, ctx.cwd, ctx.index_path, ctx.io, .{}) catch {};
+            ctx.cwd.deleteFile(ctx.io, ctx.backup_path) catch {};
+            std.debug.print("error: --3way produced conflicts; cannot commit. Use `git hunk restore --ref <X> --3way <sha>` then resolve and `git commit` normally.\n", .{});
+            std.process.exit(1);
+        }
     }
     if (ctx.binary_paths.len > 0) {
         git.runGitAddFiles(ctx.allocator, ctx.binary_paths) catch abortCommitAndExit(ctx.cwd, ctx.io, ctx.backup_path, ctx.index_path);
@@ -1276,7 +1287,7 @@ fn runTransactionalCommit(ctx: CommitContext) ![]const u8 {
     // with 3-way against the post-commit index would risk producing conflict
     // markers in the real index.
     for (ctx.patches) |p| {
-        git.runGitApply(ctx.allocator, p, .{ .target = .index, .ref = ctx.ref }) catch {
+        _ = git.runGitApply(ctx.allocator, p, .{ .target = .index, .ref = ctx.ref }) catch {
             std.debug.print("warning: commit succeeded but index sync failed -- run 'git hunk add' to re-sync\n", .{});
             break;
         };
@@ -1354,7 +1365,7 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
     if (opts.dry_run) {
         for (patches) |p| {
             // git apply rejects --3way + --check; we pass plain --check for dry-run.
-            try git.runGitApply(allocator, p, .{ .target = .index, .check_only = true, .ref = opts.ref });
+            _ = try git.runGitApply(allocator, p, .{ .target = .index, .check_only = true, .ref = opts.ref });
         }
         const use_color = format.shouldUseColor(opts.output, opts.no_color);
         _ = try format.printMatchedHunks(stdout, matched.items, "would commit", "would-commit", use_color, opts.output, opts.verbosity);

@@ -25,6 +25,7 @@ const CommonFlags = struct {
     output: OutputMode = .human,
     context: ?u32 = null,
     verbosity: types.Verbosity = .normal,
+    three_way: bool = false,
 };
 
 /// Copy common flags into an options struct, using comptime field detection
@@ -35,7 +36,7 @@ const CommonFlags = struct {
 /// the error). This makes the parser-side errdefer for `common` a no-op after the
 /// call — only `opts.file_filter` needs further cleanup.
 fn applyCommonFlags(allocator: Allocator, common: *CommonFlags, opts: anytype) !void {
-    const fields = .{ "ref", "diff_filter", "no_color", "output", "context", "verbosity" };
+    const fields = .{ "ref", "diff_filter", "no_color", "output", "context", "verbosity", "three_way" };
     inline for (fields) |name| {
         if (comptime @hasField(@TypeOf(opts.*), name)) {
             @field(opts, name) = @field(common, name);
@@ -116,6 +117,9 @@ fn parseCommonFlag(allocator: Allocator, arg: []const u8, i: *usize, args: []con
         if (c.verbosity == .quiet) return error.ConflictingVerbosity;
         c.verbosity = .verbose;
         return true;
+    } else if (std.mem.eql(u8, arg, "--3way")) {
+        c.three_way = true;
+        return true;
     }
     return false;
 }
@@ -175,8 +179,6 @@ pub fn parseAddResetArgs(allocator: Allocator, args: []const [:0]const u8) !AddR
         if (try parseCommonFlag(allocator, arg, &i, args, &common)) continue;
         if (std.mem.eql(u8, arg, "--all")) {
             opts.select_all = true;
-        } else if (std.mem.eql(u8, arg, "--3way")) {
-            opts.three_way = true;
         } else if (std.mem.startsWith(u8, arg, "-")) {
             return unknownFlag(arg);
         } else {
@@ -318,8 +320,6 @@ pub fn parseRestoreArgs(allocator: Allocator, args: []const [:0]const u8) !Resto
             opts.dry_run = true;
         } else if (std.mem.eql(u8, arg, "--force")) {
             opts.force = true;
-        } else if (std.mem.eql(u8, arg, "--3way")) {
-            opts.three_way = true;
         } else if (std.mem.startsWith(u8, arg, "-")) {
             return unknownFlag(arg);
         } else {
@@ -444,8 +444,6 @@ pub fn parseCommitArgs(allocator: Allocator, args: []const [:0]const u8) !Commit
             opts.amend = true;
         } else if (std.mem.eql(u8, arg, "--dry-run")) {
             opts.dry_run = true;
-        } else if (std.mem.eql(u8, arg, "--3way")) {
-            opts.three_way = true;
         } else if (std.mem.startsWith(u8, arg, "-")) {
             return unknownFlag(arg);
         } else {
