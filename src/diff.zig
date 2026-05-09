@@ -49,6 +49,9 @@ const FileHeaderState = struct {
     file_mode: []const u8 = "100644",
     rename_from: ?[]const u8 = null,
     rename_to: ?[]const u8 = null,
+    /// Verbatim "index <oldsha>..<newsha> [mode]" line, when present. Preserved
+    /// so reconstructed patches retain blob ids — required for `git apply --3way`.
+    index_line: ?[]const u8 = null,
 };
 
 /// Consume extended-header lines (new/deleted file mode, Binary, rename, index,
@@ -72,6 +75,7 @@ fn parseExtendedHeaders(cursor: *DiffCursor) FileHeaderState {
         } else if (std.mem.startsWith(u8, line, "rename to ")) {
             state.rename_to = line["rename to ".len..];
         } else if (std.mem.startsWith(u8, line, "index ")) {
+            state.index_line = line;
             if (std.mem.endsWith(u8, line, " 160000")) {
                 state.is_submodule = true;
             } else if (std.mem.endsWith(u8, line, " 120000")) {
@@ -104,8 +108,19 @@ fn appendModeLine(arena: Allocator, ph: *std.ArrayList(u8), state: FileHeaderSta
     try ph.append(arena, '\n');
 }
 
+/// Append the `index <oldsha>..<newsha> [mode]` line if it was captured. Required
+/// for `git apply --3way` to find the original blob.
+fn appendIndexLine(arena: Allocator, ph: *std.ArrayList(u8), state: FileHeaderState) !void {
+    if (state.index_line) |line| {
+        try ph.appendSlice(arena, line);
+        try ph.append(arena, '\n');
+    }
+}
+
 /// Build a patch header for the standard case (---/+++ lines present plus the
-/// usual diff_git_line and rename/mode metadata when applicable).
+/// usual diff_git_line and rename/mode metadata when applicable). Always emits
+/// the `diff --git` header and (when present) the `index` line so reconstructed
+/// patches retain blob ids for `git apply --3way`.
 fn buildPatchHeader(
     arena: Allocator,
     diff_git_line: []const u8,
@@ -114,12 +129,8 @@ fn buildPatchHeader(
     state: FileHeaderState,
 ) ![]const u8 {
     var ph: std.ArrayList(u8) = .empty;
-    const need_diff_git = state.is_new_file or state.is_deleted_file or
-        (state.rename_from != null and state.rename_to != null);
-    if (need_diff_git) {
-        try ph.appendSlice(arena, diff_git_line);
-        try ph.append(arena, '\n');
-    }
+    try ph.appendSlice(arena, diff_git_line);
+    try ph.append(arena, '\n');
     try appendModeLine(arena, &ph, state);
     if (state.rename_from) |from| {
         try ph.appendSlice(arena, "rename from ");
@@ -131,6 +142,7 @@ fn buildPatchHeader(
         try ph.appendSlice(arena, to);
         try ph.append(arena, '\n');
     }
+    try appendIndexLine(arena, &ph, state);
     try ph.appendSlice(arena, minus_line);
     try ph.append(arena, '\n');
     try ph.appendSlice(arena, plus_line);
@@ -144,6 +156,7 @@ fn buildBinaryPatchHeader(arena: Allocator, diff_git_line: []const u8, state: Fi
     try ph.appendSlice(arena, diff_git_line);
     try ph.append(arena, '\n');
     try appendModeLine(arena, &ph, state);
+    try appendIndexLine(arena, &ph, state);
     return ph.items;
 }
 
@@ -154,6 +167,7 @@ fn buildEmptyFilePatchHeader(arena: Allocator, diff_git_line: []const u8, file_p
     try ph.appendSlice(arena, diff_git_line);
     try ph.append(arena, '\n');
     try appendModeLine(arena, &ph, state);
+    try appendIndexLine(arena, &ph, state);
     if (state.is_deleted_file) {
         try ph.appendSlice(arena, "--- a/");
         try ph.appendSlice(arena, file_path);

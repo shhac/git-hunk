@@ -331,53 +331,56 @@ echo "$UNSTAGED518" | grep -q "gamma.txt" && fail "test 518: gamma.txt should ha
 pass "test 518: restore --file a --file c restores union, leaves b"
 
 # ============================================================================
-# Test 519: restore --ref <past-commit> with drifted context fails without --3way
+# Test 519: restore --ref <past-commit> with drifted context fails without --3way.
+# Setup: a 5-line file is committed (C0). C1 modifies line 3. C2 modifies the
+# *surrounding lines* (not line 3) — context for C1's hunk drifts. Plain
+# reverse-apply of C1 should fail because the surrounding lines don't match.
 # ============================================================================
 new_repo
-# new_repo from setup-repo.sh leaves us with 2 commits already, so we have a
-# valid HEAD~1. Add a C2 that modifies a specific line.
-cat > drift.txt <<'EOF_C1'
-line one
-line two original
-line three
-EOF_C1
-git add drift.txt && git commit -q -m "C1: add drift.txt"
+cat > drift.txt <<'EOF_C0'
+alpha
+beta
+gamma
+delta
+epsilon
+EOF_C0
+git add drift.txt && git commit -q -m "C0: 5-line file"
+# C1: modify line 3 (gamma → GAMMA-modified)
+sed -i.bak 's/^gamma$/GAMMA-modified/' drift.txt && rm drift.txt.bak
+git add drift.txt && git commit -q -m "C1: modify line 3"
 HIST_C1=$(git rev-parse HEAD)
+# C2: rewrite the surrounding context lines so C1's hunk context drifts
 cat > drift.txt <<'EOF_C2'
-line one
-line two REWRITTEN
-line three
+ALPHA-rewritten
+BETA-rewritten
+GAMMA-modified
+DELTA-rewritten
+EPSILON-rewritten
 EOF_C2
-git add drift.txt && git commit -q -m "C2: rewrite line two"
+git add drift.txt && git commit -q -m "C2: rewrite context lines"
 
-# Find C1's hunk (its parent has no drift.txt → C1's hunk is "new file").
 SHA519=$("$GIT_HUNK" list --ref "$HIST_C1" --porcelain --oneline --file drift.txt | head -1 | cut -f1)
 [[ -n "$SHA519" ]] || fail "test 519: no hunk found in C1"
 
-# Plain reverse-apply of C1's "create drift.txt" hunk should fail because
-# the worktree's drift.txt no longer matches C1's content (C2 rewrote line two).
+# Plain reverse-apply: the patch recorded "context: alpha/beta/delta/epsilon"
+# but the worktree has "ALPHA/BETA/DELTA/EPSILON" → patch does not apply.
 if "$GIT_HUNK" restore --ref "$HIST_C1" "$SHA519" 2>/dev/null; then
     fail "test 519: plain restore should fail when context has drifted"
 fi
 pass "test 519: plain restore fails on context drift"
 
 # ============================================================================
-# Test 520: --3way attempts a 3-way merge instead of failing outright
+# Test 520: --3way uses recorded blob ids to merge despite context drift.
+# Setup as in 519: --3way should reverse-apply C1's line-3 change while
+# keeping C2's surrounding-line changes — i.e. line 3 reverts to "gamma"
+# while ALPHA/BETA/DELTA/EPSILON remain rewritten.
 # ============================================================================
-git reset --hard HEAD > /dev/null 2>&1
-# --3way should not fail with "patch does not apply" — it either succeeds
-# (clean merge) or leaves conflict markers (we accept either).
 "$GIT_HUNK" restore --ref "$HIST_C1" --3way "$SHA519" > /dev/null 2>&1 || true
-# Verify the worktree was modified (3-way merge attempted): drift.txt should
-# either contain conflict markers or be the merge result, not byte-identical
-# to its HEAD state.
-if grep -q "<<<<<<<" drift.txt 2>/dev/null; then
-    pass "test 520: restore --3way produced conflict markers (merge attempted)"
-else
-    # Even without conflicts, --3way should have been processed without error.
-    # If we got here it means the merge succeeded cleanly — accept that too.
-    pass "test 520: restore --3way attempted merge without 'patch does not apply' error"
-fi
+grep -q "^gamma$" drift.txt \
+    || fail "test 520: --3way should revert line 3 to 'gamma'; got: $(cat drift.txt)"
+grep -q "^ALPHA-rewritten$" drift.txt \
+    || fail "test 520: --3way should preserve C2's line-1 rewrite; got: $(cat drift.txt)"
+pass "test 520: restore --3way merges around context drift, preserving unrelated edits"
 git reset --hard HEAD > /dev/null 2>&1
 
 # ============================================================================

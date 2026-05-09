@@ -281,4 +281,36 @@ echo "$OUT119" | grep -q "first.txt" \
 pass "test 119: --ref <initial-commit> handled (no parent → diff against empty tree)"
 cd /tmp && rm -rf "$INIT_REPO"
 
+# ============================================================================
+# Test 120: --staged + --ref <single-ref> keeps staged-vs-ref semantics
+# (i.e. --ref shorthand is suppressed when --staged is set)
+# ============================================================================
+new_repo
+sed -i.bak '1s/.*/changed for staged ref/' alpha.txt
+"$GIT_HUNK" add --all > /dev/null 2>&1
+# `list --staged --ref HEAD` should show staged-vs-HEAD = the staged change.
+# If --ref shorthand erroneously expanded to HEAD^..HEAD, output would be empty
+# (no staged change between two committed trees).
+OUT120=$("$GIT_HUNK" list --staged --ref HEAD --porcelain --oneline)
+echo "$OUT120" | grep -q "alpha.txt" \
+    || fail "test 120: --staged + --ref HEAD should show staged-vs-HEAD diff; got: '$OUT120'"
+pass "test 120: --staged + --ref <single-ref> uses staged-vs-ref semantics"
+
+# ============================================================================
+# Test 121: --ref A...B (three-dot) is passed through to git unchanged
+# (git accepts the symmetric-difference syntax; we shouldn't split on the
+# first ".." and produce ill-formed argv).
+# ============================================================================
+new_repo
+echo "branch line" > branchwork.txt
+git add branchwork.txt && git commit -q -m "branch commit"
+B_HEAD=$(git rev-parse HEAD)
+B_PARENT=$(git rev-parse HEAD~1)
+# Three-dot: symmetric difference. git diff A...B includes the changes on B
+# since the merge base of A and B (which for linear history is just A).
+OUT121=$("$GIT_HUNK" list --ref "${B_PARENT}...${B_HEAD}" --porcelain --oneline 2>&1)
+echo "$OUT121" | grep -q "branchwork.txt" \
+    || fail "test 121: three-dot range should include the branch hunk; got: '$OUT121'"
+pass "test 121: --ref A...B three-dot symmetric difference works"
+
 report_results

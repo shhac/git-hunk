@@ -62,7 +62,7 @@ fn run(init: std.process.Init) !void {
             handleParseError(stdout, err, .list);
         defer args_mod.deinitFileFilter(allocator, opts.file_filter);
         try resolveFileFilter(arena, prefix, opts.file_filter);
-        try expandRefShorthand(arena, &opts.ref);
+        try expandRefShorthand(arena, &opts.ref, opts.mode == .staged);
         try commands.cmdList(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "add")) {
         var opts = args_mod.parseAddResetArgs(allocator, process_args[2..]) catch |err|
@@ -70,7 +70,7 @@ fn run(init: std.process.Init) !void {
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
         defer args_mod.deinitFileFilter(allocator, opts.file_filter);
         try resolveFileFilter(arena, prefix, opts.file_filter);
-        try expandRefShorthand(arena, &opts.ref);
+        try expandRefShorthand(arena, &opts.ref, false);
         try commands.cmdAdd(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "reset")) {
         var opts = args_mod.parseAddResetArgs(allocator, process_args[2..]) catch |err|
@@ -78,14 +78,14 @@ fn run(init: std.process.Init) !void {
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
         defer args_mod.deinitFileFilter(allocator, opts.file_filter);
         try resolveFileFilter(arena, prefix, opts.file_filter);
-        try expandRefShorthand(arena, &opts.ref);
+        try expandRefShorthand(arena, &opts.ref, false);
         try commands.cmdReset(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "count")) {
         var opts = args_mod.parseCountArgs(allocator, process_args[2..]) catch |err|
             handleParseError(stdout, err, .count);
         defer args_mod.deinitFileFilter(allocator, opts.file_filter);
         try resolveFileFilter(arena, prefix, opts.file_filter);
-        try expandRefShorthand(arena, &opts.ref);
+        try expandRefShorthand(arena, &opts.ref, opts.mode == .staged);
         try commands.cmdCount(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "check")) {
         var opts = args_mod.parseCheckArgs(allocator, process_args[2..]) catch |err|
@@ -93,7 +93,7 @@ fn run(init: std.process.Init) !void {
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
         defer args_mod.deinitFileFilter(allocator, opts.file_filter);
         try resolveFileFilter(arena, prefix, opts.file_filter);
-        try expandRefShorthand(arena, &opts.ref);
+        try expandRefShorthand(arena, &opts.ref, opts.mode == .staged);
         try commands.cmdCheck(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "restore")) {
         var opts = args_mod.parseRestoreArgs(allocator, process_args[2..]) catch |err|
@@ -101,7 +101,7 @@ fn run(init: std.process.Init) !void {
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
         defer args_mod.deinitFileFilter(allocator, opts.file_filter);
         try resolveFileFilter(arena, prefix, opts.file_filter);
-        try expandRefShorthand(arena, &opts.ref);
+        try expandRefShorthand(arena, &opts.ref, false);
         try commands.cmdRestore(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "diff")) {
         var opts = args_mod.parseDiffArgs(allocator, process_args[2..]) catch |err|
@@ -109,7 +109,7 @@ fn run(init: std.process.Init) !void {
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
         defer args_mod.deinitFileFilter(allocator, opts.file_filter);
         try resolveFileFilter(arena, prefix, opts.file_filter);
-        try expandRefShorthand(arena, &opts.ref);
+        try expandRefShorthand(arena, &opts.ref, opts.mode == .staged);
         try commands.cmdDiff(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "stash")) {
         var opts = args_mod.parseStashArgs(allocator, process_args[2..]) catch |err|
@@ -117,7 +117,7 @@ fn run(init: std.process.Init) !void {
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
         defer args_mod.deinitFileFilter(allocator, opts.file_filter);
         try resolveFileFilter(arena, prefix, opts.file_filter);
-        try expandRefShorthand(arena, &opts.ref);
+        try expandRefShorthand(arena, &opts.ref, false);
         try commands.cmdStash(allocator, stdout, opts, init.environ_map);
     } else if (std.mem.eql(u8, subcmd, "commit")) {
         var opts = args_mod.parseCommitArgs(allocator, process_args[2..]) catch |err|
@@ -125,7 +125,7 @@ fn run(init: std.process.Init) !void {
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
         defer args_mod.deinitFileFilter(allocator, opts.file_filter);
         try resolveFileFilter(arena, prefix, opts.file_filter);
-        try expandRefShorthand(arena, &opts.ref);
+        try expandRefShorthand(arena, &opts.ref, false);
         try commands.cmdCommit(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "--version") or std.mem.eql(u8, subcmd, "-V")) {
         try stdout.print("git-hunk {s}\n", .{build_options.version});
@@ -170,7 +170,13 @@ const EMPTY_TREE_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 /// (matching `git show <commit>` semantics). For commits without a parent (initial
 /// commits), expands to `<empty-tree>..<commit>` so the full content is shown.
 /// Range refs (containing `..`) and null refs pass through unchanged.
-fn expandRefShorthand(arena: std.mem.Allocator, ref: *?[]const u8) !void {
+///
+/// `is_staged` short-circuits the expansion: with `--staged`, the user-visible
+/// meaning of `--ref X` is "diff staged index against X" — git diff with `--cached`
+/// silently ignores the second tree if a range is passed, so we must keep the
+/// single-ref form here.
+fn expandRefShorthand(arena: std.mem.Allocator, ref: *?[]const u8, is_staged: bool) !void {
+    if (is_staged) return;
     const r = ref.* orelse return;
     if (std.mem.indexOf(u8, r, "..") != null) return;
     ref.* = if (try refHasParent(arena, r))

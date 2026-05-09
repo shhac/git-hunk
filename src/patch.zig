@@ -63,9 +63,6 @@ pub const HunkPartition = struct {
     tracked_binary_paths: []const []const u8,
     /// Deduped file paths from `untracked_binary`.
     untracked_binary_paths: []const []const u8,
-    /// Deduped file paths from `tracked_binary` + `untracked_binary`.
-    binary_paths: []const []const u8,
-
     /// Tracked + untracked text hunks combined into a single arena-owned slice.
     pub fn combinedText(self: HunkPartition, arena: Allocator) ![]MatchedHunk {
         var combined: std.ArrayList(MatchedHunk) = .empty;
@@ -80,6 +77,13 @@ pub const HunkPartition = struct {
         try combined.appendSlice(arena, self.tracked_binary);
         try combined.appendSlice(arena, self.untracked_binary);
         return combined.items;
+    }
+
+    /// Deduped file paths from `tracked_binary` + `untracked_binary`. Allocated on
+    /// `arena` on demand so callers that don't need the union don't pay for it.
+    pub fn allBinaryPaths(self: HunkPartition, arena: Allocator) ![]const []const u8 {
+        const combined = try self.combinedBinary(arena);
+        return collectUniqueFilePaths(arena, combined);
     }
 };
 
@@ -106,12 +110,6 @@ pub fn partitionByKind(arena: Allocator, matches: []const MatchedHunk) !HunkPart
         .untracked_binary = untracked_binary.items,
         .tracked_binary_paths = try collectUniqueFilePaths(arena, tracked_binary.items),
         .untracked_binary_paths = try collectUniqueFilePaths(arena, untracked_binary.items),
-        .binary_paths = blk: {
-            var combined: std.ArrayList(MatchedHunk) = .empty;
-            try combined.appendSlice(arena, tracked_binary.items);
-            try combined.appendSlice(arena, untracked_binary.items);
-            break :blk try collectUniqueFilePaths(arena, combined.items);
-        },
     };
 }
 
@@ -624,7 +622,8 @@ test "partitionByKind empty input" {
     try std.testing.expectEqual(@as(usize, 0), p.tracked_binary.len);
     try std.testing.expectEqual(@as(usize, 0), p.untracked_text.len);
     try std.testing.expectEqual(@as(usize, 0), p.untracked_binary.len);
-    try std.testing.expectEqual(@as(usize, 0), p.binary_paths.len);
+    const all_bin = try p.allBinaryPaths(arena.allocator());
+    try std.testing.expectEqual(@as(usize, 0), all_bin.len);
 }
 
 test "partitionByKind sorts into 4 buckets" {
@@ -669,11 +668,12 @@ test "partitionByKind dedups paths with multiple hunks per file" {
     const p = try partitionByKind(arena.allocator(), &matches);
     try std.testing.expectEqual(@as(usize, 2), p.tracked_binary.len);
     try std.testing.expectEqual(@as(usize, 1), p.tracked_binary_paths.len);
-    try std.testing.expectEqual(@as(usize, 1), p.binary_paths.len);
-    try std.testing.expectEqualStrings("img.png", p.binary_paths[0]);
+    const all_bin = try p.allBinaryPaths(arena.allocator());
+    try std.testing.expectEqual(@as(usize, 1), all_bin.len);
+    try std.testing.expectEqualStrings("img.png", all_bin[0]);
 }
 
-test "partitionByKind binary_paths combines tracked + untracked" {
+test "partitionByKind allBinaryPaths combines tracked + untracked" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     var ht = testMakeHunk("a.png", 1, 1, 1, 1);
@@ -688,5 +688,6 @@ test "partitionByKind binary_paths combines tracked + untracked" {
     const p = try partitionByKind(arena.allocator(), &matches);
     try std.testing.expectEqual(@as(usize, 1), p.tracked_binary_paths.len);
     try std.testing.expectEqual(@as(usize, 1), p.untracked_binary_paths.len);
-    try std.testing.expectEqual(@as(usize, 2), p.binary_paths.len);
+    const all_bin = try p.allBinaryPaths(arena.allocator());
+    try std.testing.expectEqual(@as(usize, 2), all_bin.len);
 }

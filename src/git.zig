@@ -130,20 +130,16 @@ pub fn runGitDiffFiles(allocator: Allocator, mode: DiffMode, ref: ?[]const u8, c
     try argv.appendSlice(allocator, &.{ "git", "diff" });
     if (mode == .staged) try argv.append(allocator, "--cached");
     if (ref) |r| {
-        if (std.mem.indexOf(u8, r, "..")) |dot_pos| {
-            // Range: A..B → two separate positional args
-            try argv.append(allocator, r[0..dot_pos]);
-            try argv.append(allocator, r[dot_pos + 2 ..]);
-        } else {
-            // Single ref: ref vs worktree.
-            try argv.append(allocator, r);
-        }
+        // Pass the ref through verbatim. Git diff understands single refs, two-dot
+        // ranges (A..B), and three-dot symmetric difference (A...B); the previous
+        // implementation hand-split on `..` and corrupted A...B and A.. forms.
+        try argv.append(allocator, r);
     }
     var context_buf: [16]u8 = undefined;
     if (context) |ctx| {
         try argv.append(allocator, std.fmt.bufPrint(&context_buf, "-U{d}", .{ctx}) catch "-U0");
     }
-    try argv.appendSlice(allocator, &.{ "--src-prefix=a/", "--dst-prefix=b/", "--no-color" });
+    try argv.appendSlice(allocator, &.{ "--src-prefix=a/", "--dst-prefix=b/", "--no-color", "--full-index" });
     if (file_paths.len > 0) {
         try argv.append(allocator, "--");
         try argv.appendSlice(allocator, file_paths);

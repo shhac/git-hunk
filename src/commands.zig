@@ -890,7 +890,7 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
 
     const partition = try patch_mod.partitionByKind(arena, matched.items);
     const text_matched = try partition.combinedText(arena);
-    const binary_paths = partition.binary_paths;
+    const binary_paths = try partition.allBinaryPaths(arena);
     const binary_matched = try partition.combinedBinary(arena);
 
     // Capture target-side hunks BEFORE and AFTER applying so buildResultGroups
@@ -955,11 +955,12 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
         var i: usize = patches.len;
         while (i > 0) {
             i -= 1;
+            // git apply rejects --3way + --check; for dry-run we drop --3way.
             try git.runGitApply(allocator, patches[i], .{
                 .reverse = true,
                 .target = .worktree,
                 .check_only = opts.dry_run,
-                .three_way = opts.three_way,
+                .three_way = opts.three_way and !opts.dry_run,
                 .ref = opts.ref,
             });
         }
@@ -1270,9 +1271,12 @@ fn runTransactionalCommit(ctx: CommitContext) ![]const u8 {
         std.debug.print("warning: commit succeeded but failed to restore original index -- backup at {s}\n", .{ctx.backup_path});
     };
 
-    // 6. Sync index with new HEAD (text via patch, binary via git add)
+    // 6. Sync index with new HEAD (text via patch, binary via git add).
+    // Don't pass --3way here: the patch already landed in step 3, and re-applying
+    // with 3-way against the post-commit index would risk producing conflict
+    // markers in the real index.
     for (ctx.patches) |p| {
-        git.runGitApply(ctx.allocator, p, .{ .target = .index, .three_way = ctx.three_way, .ref = ctx.ref }) catch {
+        git.runGitApply(ctx.allocator, p, .{ .target = .index, .ref = ctx.ref }) catch {
             std.debug.print("warning: commit succeeded but index sync failed -- run 'git hunk add' to re-sync\n", .{});
             break;
         };
@@ -1331,7 +1335,7 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
 
     const partition = try patch_mod.partitionByKind(arena, matched.items);
     const text_matched = try partition.combinedText(arena);
-    const binary_paths = partition.binary_paths;
+    const binary_paths = try partition.allBinaryPaths(arena);
 
     std.mem.sort(MatchedHunk, text_matched, {}, patch_mod.matchedHunkPatchOrder);
 
@@ -1349,7 +1353,8 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
     // Dry-run: validate patches against the index (without modifying it) and show what would be committed.
     if (opts.dry_run) {
         for (patches) |p| {
-            try git.runGitApply(allocator, p, .{ .target = .index, .check_only = true, .three_way = opts.three_way, .ref = opts.ref });
+            // git apply rejects --3way + --check; we pass plain --check for dry-run.
+            try git.runGitApply(allocator, p, .{ .target = .index, .check_only = true, .ref = opts.ref });
         }
         const use_color = format.shouldUseColor(opts.output, opts.no_color);
         _ = try format.printMatchedHunks(stdout, matched.items, "would commit", "would-commit", use_color, opts.output, opts.verbosity);
