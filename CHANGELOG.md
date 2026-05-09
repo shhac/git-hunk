@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.14.0] - 2026-05-09
+
+### Added
+- `--ref <commit>` single-ref shorthand: passing a single commit (e.g. `--ref HEAD~1`) now expands to `<commit>^..<commit>` (the diff of that commit, like `git show`). Range form (`A..B`, `A...B`) still works as before. Initial (parentless) commits expand against the empty tree so the workflow works on the very first commit.
+- `--3way` flag on `add`, `reset`, `restore`, and `commit`: passes `--3way` to the underlying `git apply`, enabling 3-way merge fallback when patch context drifts. Useful for "undo this hunk from history" / "re-apply this hunk from history" workflows where the worktree has moved on. On conflict, leaves unmerged index entries (or `<<<<<<<` markers in the worktree) and exits non-zero with a clear, action-aware resolution hint.
+- New section in the skill (`SKILL.md`) and a dedicated `docs/history-workflow.md` covering `--ref` + `--3way` for cherry-pick-by-hunk and undo-by-hunk from history.
+- Tests pinning every new path: `--ref` shorthand on initial commits and three-dot ranges, `--staged --ref` short-circuit, `--3way` clean-apply and conflict paths for add/restore/commit, end-to-end undo-and-re-apply-from-history workflows.
+
+### Changed
+- Transactional commit (`git hunk commit`) hardened: when index-restore (step 5) fails after a successful commit, the backup is now preserved (step 7 cleanup is gated on restore success) and the warning includes a concrete `cp <backup> <index>` recovery command. When `--3way` was used to land patches with drift, step 6 now also runs with `--3way` so the user's restored index reflects the merged content (previously index ≠ HEAD on drift).
+- `--3way` is now rejected (not silently swallowed) on commands that don't apply patches (`list`, `diff`, `count`, `check`, `stash`).
+- `cmdCommit --dry-run` no longer runs stale-backup recovery — a read-only preview should not modify the index.
+- `--3way` conflict messages are action-aware (stage path suggests `git add` once resolved; unstage path suggests `git checkout --` or re-stage the resolved version) and stdout is flushed before stderr so per-hunk output appears above the error on a TTY.
+- The "N hunks staged/restored" success summary is now suppressed when `--3way` lands unmerged entries — the conflict error is the single coherent signal.
+
+### Fixed
+- `--3way` 3-way fallback used to fail with "lacks the necessary blob" because reconstructed patches stripped the `index <oldsha>..<newsha>` line; that line is now preserved end-to-end and `--full-index` is passed to `git diff`.
+- `git apply --3way --cached` returning non-zero on soft-success (applied with conflicts) is now treated as a soft-success internally, with `runGitApply` returning `ApplyResult { applied_clean, applied_with_conflicts }` so callers can render correctly.
+- Three-dot ranges (`A...B`) are no longer corrupted by a manual `..` split — the ref string is passed verbatim to `git diff`.
+- `--staged --ref X` no longer silently drops `--cached` (single-ref expansion now short-circuits when `--staged` is set).
+- `commit --3way` with conflicts no longer silently rolls back the transactional commit; it aborts early with a "use restore --ref X --3way then commit normally" hint.
+
 ## [0.13.1] - 2026-05-09
 
 ### Changed
