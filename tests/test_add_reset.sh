@@ -631,4 +631,30 @@ echo "$OUT231" | grep -q "no staged changes" \
     || fail "test 231: expected 'no staged changes' message, got: '$OUT231'"
 pass "test 231: reset on clean stage emits no-staged-changes message"
 
+# ============================================================================
+# Test 232: end-to-end "re-apply this hunk from history" workflow
+# Setup a commit C that adds a feature line; HEAD has had it reverted.
+# `add --ref C^..C SHA` forward-applies the historical hunk into the index,
+# bringing the lost change back.
+# ============================================================================
+new_repo
+echo "first line" > revived.txt
+git add revived.txt && git commit -q -m "C-pre: bare file"
+cat > revived.txt <<'EOF'
+first line
+feature line that gets lost
+EOF
+git add revived.txt && git commit -q -m "C: add feature line"
+HIST_C232=$(git rev-parse HEAD)
+# Simulate HEAD~ → revert the feature line
+git revert --no-edit HEAD > /dev/null 2>&1
+# Worktree now matches C-pre. Now revive C's feature hunk by --ref.
+SHA232=$("$GIT_HUNK" list --ref "$HIST_C232" --porcelain --oneline --file revived.txt | head -1 | cut -f1)
+[[ -n "$SHA232" ]] || fail "test 232: no hunk found for C"
+"$GIT_HUNK" add --ref "$HIST_C232" "$SHA232" > /dev/null 2>&1 \
+    || fail "test 232: add --ref <past> should succeed (feature line is missing in HEAD)"
+git diff --cached revived.txt | grep -q "feature line that gets lost" \
+    || fail "test 232: feature line should be staged after add --ref"
+pass "test 232: e2e re-apply-hunk-from-history brings a reverted change back into staging"
+
 report_results

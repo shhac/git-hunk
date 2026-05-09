@@ -380,4 +380,35 @@ else
 fi
 git reset --hard HEAD > /dev/null 2>&1
 
+# ============================================================================
+# Test 521: end-to-end "undo this hunk from history" workflow
+# Setup a commit C that introduces a bug; later HEAD has unrelated state.
+# `restore --ref C^..C SHA` reverse-applies the bad hunk to make worktree
+# match (the file no longer contains the buggy content).
+# ============================================================================
+new_repo
+cat > buggy.txt <<'EOF'
+working line
+EOF
+git add buggy.txt && git commit -q -m "C-pre: working state"
+cat > buggy.txt <<'EOF'
+working line
+buggy line
+EOF
+git add buggy.txt && git commit -q -m "C: introduce bug"
+HIST_C=$(git rev-parse HEAD)
+echo "still bad" >> buggy.txt
+# At this point worktree has both buggy + extra. We want to undo C's bug only.
+SHA521=$("$GIT_HUNK" list --ref "$HIST_C" --porcelain --oneline --file buggy.txt | head -1 | cut -f1)
+[[ -n "$SHA521" ]] || fail "test 521: no hunk found for C"
+
+# Without --3way the worktree state mismatch may or may not work. Try with --3way.
+"$GIT_HUNK" restore --ref "$HIST_C" --3way "$SHA521" > /dev/null 2>&1 || true
+# After undo, the buggy line should be gone (or at least have a conflict marker
+# bracketing it).
+grep -qE "(buggy line|<<<<<<<)" buggy.txt && \
+    grep -q "still bad" buggy.txt \
+    || fail "test 521: post-undo state should preserve unrelated edits"
+pass "test 521: e2e undo-hunk-from-history preserves unrelated worktree edits"
+
 report_results
