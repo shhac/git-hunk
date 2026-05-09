@@ -36,6 +36,14 @@ const CommonFlags = struct {
 /// the error). This makes the parser-side errdefer for `common` a no-op after the
 /// call — only `opts.file_filter` needs further cleanup.
 fn applyCommonFlags(allocator: Allocator, common: *CommonFlags, opts: anytype) !void {
+    // --3way is only meaningful for commands that pass patches through
+    // `git apply` (add, reset, restore, commit). Reject it on commands like
+    // list/diff/count/check/stash that don't apply patches — silently
+    // swallowing it would mislead users into thinking it had an effect.
+    if (common.three_way and !comptime @hasField(@TypeOf(opts.*), "three_way")) {
+        std.debug.print("error: --3way is not supported for this subcommand (only add, reset, restore, commit)\n", .{});
+        return error.UnknownFlag;
+    }
     const fields = .{ "ref", "diff_filter", "no_color", "output", "context", "verbosity", "three_way" };
     inline for (fields) |name| {
         if (comptime @hasField(@TypeOf(opts.*), name)) {

@@ -83,4 +83,23 @@ OUT607="$("$GIT_HUNK" -V)"
     || fail "test 607: -V output '$OUT607' differs from --version '$OUT606'"
 pass "test 607: -V outputs same version string as --version"
 
+# ============================================================================
+# Test 608: --3way is rejected on commands that don't apply patches.
+# Silently accepting it would mislead users into thinking it had an effect.
+# ============================================================================
+new_repo
+echo "x" > f608.txt
+git add f608.txt && git commit -q -m "c0"
+echo "y" >> f608.txt
+ERR608=$("$GIT_HUNK" list --3way 2>&1 || true)
+echo "$ERR608" | grep -q "not supported for this subcommand" \
+    || fail "test 608: list --3way should error 'not supported'; got: '$ERR608'"
+ERR608B=$("$GIT_HUNK" diff --3way 2>&1 || true)
+echo "$ERR608B" | grep -q "not supported for this subcommand" \
+    || fail "test 608: diff --3way should error 'not supported'; got: '$ERR608B'"
+ERR608C=$("$GIT_HUNK" stash --3way 2>&1 || true)
+echo "$ERR608C" | grep -q "not supported for this subcommand" \
+    || fail "test 608: stash --3way should error 'not supported'; got: '$ERR608C'"
+pass "test 608: --3way rejected on commands that don't apply patches"
+
 report_results
