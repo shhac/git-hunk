@@ -130,6 +130,8 @@ const add_help: []const u8 =
     \\                    i.e. that commit's diff. Use a range (e.g. main..HEAD) to diff between two refs.
     \\                    Combines with --staged for ref vs index comparison.
     \\  --all             Stage all unstaged hunks
+    \\  --3way            On context drift, fall back to a 3-way merge instead of failing
+    \\                    (passes --3way to git apply; useful with --ref <past-commit>).
     \\  --file <path>     Stage all hunks in the given file (repeatable)
     \\  --porcelain       Machine-readable output
     \\  --no-color        Disable colored output
@@ -166,6 +168,7 @@ const reset_help: []const u8 =
     \\                    i.e. that commit's diff. Use a range (e.g. main..HEAD) to diff between two refs.
     \\                    Combines with --staged for ref vs index comparison.
     \\  --all             Unstage all staged hunks
+    \\  --3way            On context drift, fall back to a 3-way merge instead of failing.
     \\  --file <path>     Unstage all hunks in the given file (repeatable)
     \\  --porcelain       Machine-readable output
     \\  --no-color        Disable colored output
@@ -199,6 +202,8 @@ const restore_help: []const u8 =
     \\                    i.e. that commit's diff. Use a range (e.g. main..HEAD) to diff between two refs.
     \\                    Combines with --staged for ref vs index comparison.
     \\  --all             Restore all unstaged hunks (DESTRUCTIVE)
+    \\  --3way            On context drift, fall back to a 3-way merge instead of failing
+    \\                    (useful for "undo this hunk from history" when surrounding lines drifted).
     \\  --file <path>     Restore all hunks in the given file (repeatable)
     \\  --force           Required to restore untracked files (deletes them permanently)
     \\  --dry-run         Show what would be restored without making changes
@@ -353,6 +358,7 @@ const commit_help: []const u8 =
     \\  --amend           Amend the previous commit
     \\  --dry-run         Show what would be committed without committing
     \\  --all             Commit all unstaged hunks
+    \\  --3way            On context drift, fall back to a 3-way merge instead of failing.
     \\  --file <path>     Commit all hunks in a file (repeatable)
     \\  --ref <refspec>   Compare against a git ref instead of the default.
     \\                    Single ref (e.g. HEAD~1, abc123) is shorthand for `<ref>^..<ref>`,

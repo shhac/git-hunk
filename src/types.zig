@@ -102,6 +102,8 @@ pub const AddResetOptions = struct {
     file_filter: []const []const u8 = &.{},
     ref: ?[]const u8 = null,
     select_all: bool = false,
+    /// Pass `--3way` to git apply: fall back to a 3-way merge if context drifted.
+    three_way: bool = false,
     verbosity: Verbosity = .normal,
     output: OutputMode = .human,
     no_color: bool = false,
@@ -151,6 +153,8 @@ pub const RestoreOptions = struct {
     select_all: bool = false,
     dry_run: bool = false,
     force: bool = false,
+    /// Pass `--3way` to git apply: fall back to a 3-way merge if context drifted.
+    three_way: bool = false,
     output: OutputMode = .human,
     no_color: bool = false,
     context: ?u32 = null,
@@ -178,6 +182,8 @@ pub const CommitOptions = struct {
     amend: bool = false,
     dry_run: bool = false,
     select_all: bool = false,
+    /// Pass `--3way` to git apply: fall back to a 3-way merge if context drifted.
+    three_way: bool = false,
     diff_filter: DiffFilter = .all,
     file_filter: []const []const u8 = &.{},
     ref: ?[]const u8 = null,

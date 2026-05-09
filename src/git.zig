@@ -161,14 +161,30 @@ pub fn runGitDiffFiles(allocator: Allocator, mode: DiffMode, ref: ?[]const u8, c
 
 pub const ApplyTarget = enum { index, worktree };
 
-pub fn runGitApply(allocator: Allocator, patch: []const u8, reverse: bool, target: ApplyTarget, check_only: bool, ref: ?[]const u8) !void {
+pub const ApplyOptions = struct {
+    reverse: bool = false,
+    target: ApplyTarget = .index,
+    check_only: bool = false,
+    /// Pass `--3way` to git apply: fall back to a 3-way merge (with conflict
+    /// markers in the worktree) when the patch context doesn't apply cleanly.
+    /// Useful for cherry-picking or reverting hunks from far enough back that
+    /// surrounding lines have drifted. Implies `target=.worktree` semantics for
+    /// conflict markers; git apply will refuse `--3way` with `--cached` only.
+    three_way: bool = false,
+    /// User-supplied `--ref` value for the failure message (so the user knows
+    /// which historical diff conflicted). Null means "current diff".
+    ref: ?[]const u8 = null,
+};
+
+pub fn runGitApply(allocator: Allocator, patch: []const u8, opts: ApplyOptions) !void {
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(allocator);
     try argv.appendSlice(allocator, &.{ "git", "apply" });
-    if (target == .index) try argv.append(allocator, "--cached");
-    if (reverse) try argv.append(allocator, "--reverse");
+    if (opts.target == .index) try argv.append(allocator, "--cached");
+    if (opts.reverse) try argv.append(allocator, "--reverse");
     try argv.append(allocator, "--unidiff-zero");
-    if (check_only) try argv.append(allocator, "--check");
+    if (opts.check_only) try argv.append(allocator, "--check");
+    if (opts.three_way) try argv.append(allocator, "--3way");
 
     const result = runCommand(allocator, argv.items, .{ .stdin_data = patch }) catch |err| {
         if (err == error.AbnormalTermination) {
@@ -182,9 +198,9 @@ pub fn runGitApply(allocator: Allocator, patch: []const u8, reverse: bool, targe
 
     if (result.exit_code != 0) {
         if (result.stderr.len > 0) std.debug.print("{s}", .{result.stderr});
-        if (ref) |r| {
-            std.debug.print("error: patch did not apply cleanly — the diff from '{s}' may conflict with the current state\n", .{r});
-        } else if (check_only) {
+        if (opts.ref) |r| {
+            std.debug.print("error: patch did not apply cleanly — the diff from '{s}' may conflict with the current state (try --3way)\n", .{r});
+        } else if (opts.check_only) {
             std.debug.print("error: patch would not apply cleanly — hashes may be stale\n", .{});
         } else {
             std.debug.print("error: patch did not apply cleanly — re-run 'list' and try again\n", .{});

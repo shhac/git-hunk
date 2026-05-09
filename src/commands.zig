@@ -785,20 +785,22 @@ fn applyTextAndBinary(
     text_matched: []MatchedHunk,
     binary_paths: []const []const u8,
     ref: ?[]const u8,
+    three_way: bool,
 ) !void {
     if (text_matched.len > 0) {
         std.mem.sort(MatchedHunk, text_matched, {}, patch_mod.matchedHunkPatchOrder);
         const patches = try patch_mod.buildCombinedPatches(arena, text_matched);
         const reverse = action == .unstage;
+        const apply_opts = git.ApplyOptions{ .reverse = reverse, .target = .index, .three_way = three_way, .ref = ref };
         if (reverse) {
             var i: usize = patches.len;
             while (i > 0) {
                 i -= 1;
-                try git.runGitApply(allocator, patches[i], reverse, .index, false, ref);
+                try git.runGitApply(allocator, patches[i], apply_opts);
             }
         } else {
             for (patches) |patch| {
-                try git.runGitApply(allocator, patch, reverse, .index, false, ref);
+                try git.runGitApply(allocator, patch, apply_opts);
             }
         }
     }
@@ -902,7 +904,7 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
     defer old_target_hunks.deinit(arena);
     if (text_matched.len > 0) try captureTargetHunks(arena, target_mode, opts.context, file_paths, &old_target_hunks);
 
-    try applyTextAndBinary(allocator, arena, action, text_matched, binary_paths, opts.ref);
+    try applyTextAndBinary(allocator, arena, action, text_matched, binary_paths, opts.ref, opts.three_way);
 
     var new_hunks: std.ArrayList(Hunk) = .empty;
     defer new_hunks.deinit(arena);
@@ -953,7 +955,13 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
         var i: usize = patches.len;
         while (i > 0) {
             i -= 1;
-            try git.runGitApply(allocator, patches[i], true, .worktree, opts.dry_run, opts.ref);
+            try git.runGitApply(allocator, patches[i], .{
+                .reverse = true,
+                .target = .worktree,
+                .check_only = opts.dry_run,
+                .three_way = opts.three_way,
+                .ref = opts.ref,
+            });
         }
     }
 
@@ -1222,6 +1230,7 @@ const CommitContext = struct {
     binary_paths: []const []const u8,
     message: []const u8,
     amend: bool,
+    three_way: bool,
     ref: ?[]const u8,
     cwd: std.Io.Dir,
     io: std.Io,
@@ -1245,7 +1254,7 @@ fn runTransactionalCommit(ctx: CommitContext) ![]const u8 {
 
     // 3. Stage target hunks (text via patch, binary via git add)
     for (ctx.patches) |p| {
-        git.runGitApply(ctx.allocator, p, false, .index, false, ctx.ref) catch abortCommitAndExit(ctx.cwd, ctx.io, ctx.backup_path, ctx.index_path);
+        git.runGitApply(ctx.allocator, p, .{ .target = .index, .three_way = ctx.three_way, .ref = ctx.ref }) catch abortCommitAndExit(ctx.cwd, ctx.io, ctx.backup_path, ctx.index_path);
     }
     if (ctx.binary_paths.len > 0) {
         git.runGitAddFiles(ctx.allocator, ctx.binary_paths) catch abortCommitAndExit(ctx.cwd, ctx.io, ctx.backup_path, ctx.index_path);
@@ -1263,7 +1272,7 @@ fn runTransactionalCommit(ctx: CommitContext) ![]const u8 {
 
     // 6. Sync index with new HEAD (text via patch, binary via git add)
     for (ctx.patches) |p| {
-        git.runGitApply(ctx.allocator, p, false, .index, false, ctx.ref) catch {
+        git.runGitApply(ctx.allocator, p, .{ .target = .index, .three_way = ctx.three_way, .ref = ctx.ref }) catch {
             std.debug.print("warning: commit succeeded but index sync failed -- run 'git hunk add' to re-sync\n", .{});
             break;
         };
@@ -1340,7 +1349,7 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
     // Dry-run: validate patches against the index (without modifying it) and show what would be committed.
     if (opts.dry_run) {
         for (patches) |p| {
-            try git.runGitApply(allocator, p, false, .index, true, opts.ref);
+            try git.runGitApply(allocator, p, .{ .target = .index, .check_only = true, .three_way = opts.three_way, .ref = opts.ref });
         }
         const use_color = format.shouldUseColor(opts.output, opts.no_color);
         _ = try format.printMatchedHunks(stdout, matched.items, "would commit", "would-commit", use_color, opts.output, opts.verbosity);
@@ -1353,6 +1362,7 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
         .binary_paths = binary_paths,
         .message = message,
         .amend = opts.amend,
+        .three_way = opts.three_way,
         .ref = opts.ref,
         .cwd = cwd,
         .io = io,

@@ -175,6 +175,8 @@ pub fn parseAddResetArgs(allocator: Allocator, args: []const [:0]const u8) !AddR
         if (try parseCommonFlag(allocator, arg, &i, args, &common)) continue;
         if (std.mem.eql(u8, arg, "--all")) {
             opts.select_all = true;
+        } else if (std.mem.eql(u8, arg, "--3way")) {
+            opts.three_way = true;
         } else if (std.mem.startsWith(u8, arg, "-")) {
             return unknownFlag(arg);
         } else {
@@ -316,6 +318,8 @@ pub fn parseRestoreArgs(allocator: Allocator, args: []const [:0]const u8) !Resto
             opts.dry_run = true;
         } else if (std.mem.eql(u8, arg, "--force")) {
             opts.force = true;
+        } else if (std.mem.eql(u8, arg, "--3way")) {
+            opts.three_way = true;
         } else if (std.mem.startsWith(u8, arg, "-")) {
             return unknownFlag(arg);
         } else {
@@ -440,6 +444,8 @@ pub fn parseCommitArgs(allocator: Allocator, args: []const [:0]const u8) !Commit
             opts.amend = true;
         } else if (std.mem.eql(u8, arg, "--dry-run")) {
             opts.dry_run = true;
+        } else if (std.mem.eql(u8, arg, "--3way")) {
+            opts.three_way = true;
         } else if (std.mem.startsWith(u8, arg, "-")) {
             return unknownFlag(arg);
         } else {

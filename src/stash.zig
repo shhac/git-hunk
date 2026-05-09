@@ -459,7 +459,7 @@ pub fn cleanupWorktree(
         var i: usize = index_patches.len;
         while (i > 0) {
             i -= 1;
-            git.runGitApply(allocator, index_patches[i], true, .worktree, false, null) catch {
+            git.runGitApply(allocator, index_patches[i], .{ .reverse = true, .target = .worktree }) catch {
                 std.debug.print("warning: stash created but worktree changes could not be removed\n", .{});
                 std.debug.print("hint: use 'git stash pop' to undo or manually resolve\n", .{});
                 break;
