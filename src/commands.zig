@@ -1329,18 +1329,23 @@ fn runTransactionalCommit(ctx: CommitContext) ![]const u8 {
     };
 
     // 6. Sync index with new HEAD (text via patch, binary via git add).
-    // Don't pass --3way here: the patch already landed in step 3, and re-applying
-    // with 3-way against the post-commit index would risk producing conflict
-    // markers in the real index.
-    // Continue past failures so the user's index reflects as much progress as
-    // possible, and report which patch(es) failed by extracting the leading
-    // `diff --git a/<path>` so the user has a starting point.
+    // Mirror step 3's --3way mode: if the commit was made via 3-way merging
+    // (drift between patch pre-image and current state), the post-commit
+    // content reflects the merged result. Re-applying the literal patch
+    // without --3way would put divergent content in the index — index ≠ HEAD.
+    // Continue past failures and report a per-patch summary.
     var failed_paths: std.ArrayList([]const u8) = .empty;
     defer failed_paths.deinit(ctx.allocator);
     for (ctx.patches) |p| {
-        _ = git.runGitApply(ctx.allocator, p, .{ .target = .index, .ref = ctx.ref }) catch {
+        const r = git.runGitApply(ctx.allocator, p, .{ .target = .index, .three_way = ctx.three_way, .ref = ctx.ref }) catch {
             failed_paths.append(ctx.allocator, firstPatchPath(p) orelse "<unknown>") catch {};
+            continue;
         };
+        if (r == .applied_with_conflicts) {
+            // 3-way left unmerged entries in the user's restored index. Capture
+            // the path so the user knows what to resolve.
+            failed_paths.append(ctx.allocator, firstPatchPath(p) orelse "<unknown>") catch {};
+        }
     }
     if (failed_paths.items.len > 0) {
         std.debug.print("warning: commit succeeded but index sync failed for {d} patch(es) -- run 'git hunk add' to re-sync. First failure: {s}\n", .{ failed_paths.items.len, failed_paths.items[0] });
@@ -1379,7 +1384,10 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
     const io = defaultIo();
     const cwd = std.Io.Dir.cwd();
 
-    recoverStaleIndexBackup(cwd, io, backup_path, index_path);
+    // Don't run recovery during --dry-run: recovery rewrites the user's index
+    // from a backup, which is a real mutation. A user expecting a read-only
+    // preview would be surprised to find their index changed.
+    if (!opts.dry_run) recoverStaleIndexBackup(cwd, io, backup_path, index_path);
 
     // Resolve hunks (same pattern as cmdApplyHunks/cmdRestore).
     var hunks: std.ArrayList(Hunk) = .empty;
