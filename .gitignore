@@ -25,9 +25,15 @@ CLAUDE.local.md
 .ai-cache/
 design-docs/
 
+# Agent local files
+.agents/skills/
+
 # Claude Code local files
 .claude/*.local.json
-.claude/skills/
+.claude/skills
+
+# OpenCode local files
+.opencode/skills
 
 # Temporary files
 *.tmp
