@@ -525,6 +525,29 @@ echo "$HUMAN861" | grep -q "mylink861.txt@" \
 pass "test 861: human-mode list shows @ suffix for symlinks"
 
 # ============================================================================
+# Test 862: untracked symlinks to directories appear in list and add --all
+# ============================================================================
+new_repo
+mkdir -p .agents/commands .claude .opencode
+printf 'hello\n' > .agents/commands/release.md
+ln -s ../.agents/commands .claude/commands
+ln -s ../.agents/commands .opencode/commands
+
+LIST862="$("$GIT_HUNK" list --untracked-only --porcelain --oneline 2>/dev/null)"
+echo "$LIST862" | grep -q ".claude/commands@" \
+    || fail "test 862: .claude symlink-to-directory not found in list"
+echo "$LIST862" | grep -q ".opencode/commands@" \
+    || fail "test 862: .opencode symlink-to-directory not found in list"
+"$GIT_HUNK" add --all > /dev/null
+MODE862_CLAUDE="$(git ls-files -s .claude/commands | awk '{print $1}')"
+[[ "$MODE862_CLAUDE" == "120000" ]] \
+    || fail "test 862: expected .claude/commands mode 120000, got '$MODE862_CLAUDE'"
+MODE862_OPENCODE="$(git ls-files -s .opencode/commands | awk '{print $1}')"
+[[ "$MODE862_OPENCODE" == "120000" ]] \
+    || fail "test 862: expected .opencode/commands mode 120000, got '$MODE862_OPENCODE'"
+pass "test 862: untracked symlinks to directories are listed and staged"
+
+# ============================================================================
 # T20 — Typechange support (file replaced by symlink)
 # ============================================================================
 

@@ -302,6 +302,10 @@ pub fn diffUntrackedFiles(allocator: Allocator, file_filter: []const []const u8)
 /// Run `git diff --no-index --src-prefix=a/ --dst-prefix=b/ --no-color -- /dev/null <file>`
 /// for a single untracked file. Exit code 1 is expected (differences found).
 fn diffSingleUntrackedFile(allocator: Allocator, file_path: []const u8) ![]u8 {
+    if (try diffSingleUntrackedSymlink(allocator, file_path)) |diff| {
+        return diff;
+    }
+
     const argv: []const []const u8 = &.{
         "git",             "diff",            "--no-index",
         "--src-prefix=a/", "--dst-prefix=b/", "--no-color",
@@ -319,6 +323,45 @@ fn diffSingleUntrackedFile(allocator: Allocator, file_path: []const u8) ![]u8 {
         return try allocator.alloc(u8, 0);
     }
     return result.stdout;
+}
+
+/// Build the Git diff form for an untracked symlink. `git diff --no-index
+/// /dev/null <path>` works for symlinks to files, but treats symlinks to
+/// directories as directories and looks for `<path>/null`.
+fn diffSingleUntrackedSymlink(allocator: Allocator, file_path: []const u8) !?[]u8 {
+    var target_buf: [4096]u8 = undefined;
+    const target_len = std.Io.Dir.cwd().readLink(defaultIo(), file_path, &target_buf) catch |err| switch (err) {
+        error.NotLink => return null,
+        else => return err,
+    };
+    const target = target_buf[0..target_len];
+
+    const blob_sha = computeGitBlobSha(target);
+    return try std.fmt.allocPrint(
+        allocator,
+        "diff --git a/{s} b/{s}\n" ++
+            "new file mode 120000\n" ++
+            "index 0000000..{s}\n" ++
+            "--- /dev/null\n" ++
+            "+++ b/{s}\n" ++
+            "@@ -0,0 +1 @@\n" ++
+            "+{s}\n" ++
+            "\\ No newline at end of file\n",
+        .{ file_path, file_path, blob_sha[0..7], file_path, target },
+    );
+}
+
+fn computeGitBlobSha(content: []const u8) [40]u8 {
+    var hasher = std.crypto.hash.Sha1.init(.{});
+
+    var header_buf: [64]u8 = undefined;
+    const header = std.fmt.bufPrint(&header_buf, "blob {d}\x00", .{content.len}) catch unreachable;
+    hasher.update(header);
+    hasher.update(content);
+
+    var digest: [std.crypto.hash.Sha1.digest_length]u8 = undefined;
+    hasher.final(&digest);
+    return std.fmt.bytesToHex(digest, .lower);
 }
 
 // ─── Stash plumbing helpers ───────────────────────────────────────────
