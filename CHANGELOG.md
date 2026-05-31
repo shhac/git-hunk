@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.14.1] - 2026-05-31
+
+### Fixed
+- Untracked symlinks to directories are now listed and staged correctly. Previously `git hunk list --untracked-only` and `git hunk add --all` skipped symlink entries like `.claude/commands -> ../.agents/commands` because `git diff --no-index /dev/null <path>` treated the symlink target as a directory.
+
 ## [0.14.0] - 2026-05-09
 
 ### Added
