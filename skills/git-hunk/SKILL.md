@@ -26,13 +26,18 @@ Installed on PATH as `git hunk <subcommand>`. No dependencies beyond git.
 Before every commit, use this workflow to review and stage changes:
 
 ```bash
-git hunk list                    # see what changed (with diffs)
-git hunk diff a3f7c21            # inspect a specific hunk
-git hunk add a3f7c21             # stage only that hunk
-git hunk add b82e0f4             # remaining hashes are unchanged
-git hunk list --staged           # verify what's staged
+git hunk list --oneline          # compact inventory of changed hunks
+git hunk diff a3f7c21 b82e0f4    # inspect the hunks you plan to stage
+git hunk add a3f7c21 b82e0f4     # stage exact hunks in one index write
+git hunk list --staged --oneline # verify the staged hunk inventory
+git diff --cached --check        # catch whitespace/conflict-marker issues
+git diff --cached --stat         # final staged summary
 git commit -m "feat: add error handling and update parser"
 ```
+
+Do not run multiple staging commands in parallel. Git index writes contend on
+`.git/index.lock`; collect the intended hashes and pass them to one
+`git hunk add <hash>...` command.
 
 ## NEVER use `git add <file>` — use `git hunk add` instead
 
@@ -43,6 +48,11 @@ reviewed. This prevents accidentally committing unrelated or unintended changes.
 **Do this:**
 - `git hunk list` to see changes → `git hunk add <hash>` to stage specific hunks
 - `git hunk add --all` when you genuinely want to stage everything (replaces `git add .`)
+
+Prefer hash staging for hand-edited files. Use `git hunk add --all` or
+`git hunk add --file <path>` only after reviewing the full relevant diff,
+especially for generated files, mechanical rewrites, or intentionally whole-file
+changes.
 
 **Only exception** for `git add`:
 - `git add -N <file>` for intent-to-add on new untracked files (optional — untracked files appear in `list` automatically)
@@ -69,7 +79,7 @@ per-command help.
 ## Hash stability
 
 Hashes are deterministic: staging or unstaging other hunks does **not** change the
-remaining hashes. List once, then stage multiple hunks sequentially.
+remaining hashes. List once, then stage multiple hunks together in one command.
 
 The hash is computed from: file path, stable line number (worktree side for unstaged,
 HEAD side for staged), and diff content (`+`/`-` lines only). Staged and unstaged
