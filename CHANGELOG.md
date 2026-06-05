@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.14.2] - 2026-06-05
+
+### Fixed
+- `git hunk add <path>` and `git hunk reset <path>` now fail with a clearer path-vs-hash diagnostic when a path is provided where a hunk hash is expected, including a `hint:` to run `git hunk list --oneline` and use `--file <path>` only to narrow by path. Valid hash-like filenames still resolve as hunk hashes, and missed hash fragments continue to report `no hunk matching`.
+
 ## [0.14.1] - 2026-05-31
 
 ### Fixed
