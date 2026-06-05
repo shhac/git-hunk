@@ -15,6 +15,10 @@ pub fn getIo() std.Io {
     return g_io.?;
 }
 
+pub fn getIoOrNull() ?std.Io {
+    return g_io;
+}
+
 /// Set the process-wide environment map. Must be called once at startup.
 pub fn setEnvMap(env: *const std.process.Environ.Map) void {
     g_env_map = env;

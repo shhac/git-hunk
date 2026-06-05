@@ -497,12 +497,18 @@ fn parseShaArg(allocator: Allocator, arg: []const u8) !ShaArg {
     const line_part: ?[]const u8 = if (colon_pos) |pos| arg[pos + 1 ..] else null;
 
     // Validate SHA prefix
-    if (sha_part.len < 4) {
-        std.debug.print("error: sha prefix too short (minimum 4 chars): '{s}'\n", .{sha_part});
-        return error.InvalidArgument;
-    }
-    for (sha_part) |c| {
-        if (!isHexDigit(c)) {
+    if (!isValidShaPrefix(sha_part)) {
+        if (looksLikePathArg(sha_part) or pathExists(sha_part)) {
+            std.debug.print("error: '{s}' looks like a path, not a hunk hash\n", .{sha_part});
+            std.debug.print("hint: run 'git hunk list --oneline' to find hashes; use '--file <path>' to narrow by path\n", .{});
+            return error.InvalidArgument;
+        }
+        if (sha_part.len < 4) {
+            std.debug.print("error: sha prefix too short (minimum 4 chars): '{s}'\n", .{sha_part});
+            return error.InvalidArgument;
+        }
+        for (sha_part) |c| {
+            if (isHexDigit(c)) continue;
             std.debug.print("error: invalid hex in sha prefix: '{s}'\n", .{sha_part});
             return error.InvalidArgument;
         }
@@ -518,6 +524,24 @@ fn parseShaArg(allocator: Allocator, arg: []const u8) !ShaArg {
     } else null;
 
     return .{ .prefix = sha_part, .line_spec = line_spec };
+}
+
+fn isValidShaPrefix(arg: []const u8) bool {
+    if (arg.len < 4) return false;
+    for (arg) |c| {
+        if (!isHexDigit(c)) return false;
+    }
+    return true;
+}
+
+fn looksLikePathArg(arg: []const u8) bool {
+    return std.mem.indexOfAny(u8, arg, "/\\.") != null;
+}
+
+fn pathExists(arg: []const u8) bool {
+    const io = types.getIoOrNull() orelse return false;
+    _ = std.Io.Dir.cwd().access(io, arg, .{}) catch return false;
+    return true;
 }
 
 /// Parse a comma-separated line spec like "3-5,8,12-15"
@@ -840,6 +864,12 @@ test "parseAddResetArgs too short sha" {
 test "parseAddResetArgs non-hex sha" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]const u8{"xyzw1234"};
+    try std.testing.expectError(error.InvalidArgument, parseAddResetArgs(allocator, &args_arr));
+}
+
+test "parseAddResetArgs path-shaped argument" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]const u8{"src/main.zig"};
     try std.testing.expectError(error.InvalidArgument, parseAddResetArgs(allocator, &args_arr));
 }
 

@@ -632,7 +632,53 @@ echo "$OUT231" | grep -q "no staged changes" \
 pass "test 231: reset on clean stage emits no-staged-changes message"
 
 # ============================================================================
-# Test 232: end-to-end "re-apply this hunk from history" workflow
+# Test 232: add with path positional arguments gives a hash hint
+# ============================================================================
+new_repo
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
+ERR232=$("$GIT_HUNK" add alpha.txt 2>&1 >/dev/null || true)
+echo "$ERR232" | grep -q "error: 'alpha.txt' looks like a path, not a hunk hash" \
+    || fail "test 232a: expected path-vs-hash error for dotted file, got: '$ERR232'"
+echo "$ERR232" | grep -q "hint: run 'git hunk list --oneline' to find hashes; use '--file <path>' to narrow by path" \
+    || fail "test 232a: expected list/narrow hint for dotted file, got: '$ERR232'"
+
+ERR232_SHA_MISS=$("$GIT_HUNK" add 00000000 2>&1 >/dev/null || true)
+echo "$ERR232_SHA_MISS" | grep -q "no hunk matching '00000000'" \
+    || fail "test 232b: expected no-hunk error for missed SHA fragment, got: '$ERR232_SHA_MISS'"
+echo "$ERR232_SHA_MISS" | grep -q "looks like a path" \
+    && fail "test 232b: missed SHA fragment should not get path hint, got: '$ERR232_SHA_MISS'"
+
+touch noext
+git add noext && git commit -q -m "add noext"
+echo "changed" > noext
+ERR232_NOEXT=$("$GIT_HUNK" add noext 2>&1 >/dev/null || true)
+echo "$ERR232_NOEXT" | grep -q "looks like a path, not a hunk hash" \
+    || fail "test 232c: expected path-vs-hash hint for no-extension file, got: '$ERR232_NOEXT'"
+
+mkdir -p nested
+touch nested/inner
+git add nested/inner && git commit -q -m "add nested inner"
+echo "changed" > nested/inner
+ERR232_NESTED=$("$GIT_HUNK" add nested/inner 2>&1 >/dev/null || true)
+echo "$ERR232_NESTED" | grep -q "looks like a path, not a hunk hash" \
+    || fail "test 232d: expected path-vs-hash hint for nested path, got: '$ERR232_NESTED'"
+
+ERR232_DIR=$("$GIT_HUNK" add nested 2>&1 >/dev/null || true)
+echo "$ERR232_DIR" | grep -q "looks like a path, not a hunk hash" \
+    || fail "test 232e: expected path-vs-hash hint for directory, got: '$ERR232_DIR'"
+
+SHA232_HASH_NAME="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+[[ -n "$SHA232_HASH_NAME" ]] || fail "test 232f: no alpha hunk found"
+touch "$SHA232_HASH_NAME"
+git add "$SHA232_HASH_NAME" && git commit -q -m "add hash-named file"
+"$GIT_HUNK" add "$SHA232_HASH_NAME" > /dev/null 2>&1 \
+    || fail "test 232f: valid hash should be treated as a hash even when a file has the same name"
+git diff --cached -- alpha.txt | grep -q "Changed alpha" \
+    || fail "test 232f: hash-shaped filename should not prevent staging the matching hunk"
+pass "test 232: add path arguments suggest using a hash without stealing hash-shaped filenames"
+
+# ============================================================================
+# Test 233: end-to-end "re-apply this hunk from history" workflow
 # Setup a commit C that adds a feature line; HEAD has had it reverted.
 # `add --ref C^..C SHA` forward-applies the historical hunk into the index,
 # bringing the lost change back.
@@ -649,16 +695,16 @@ HIST_C232=$(git rev-parse HEAD)
 # Simulate HEAD~ → revert the feature line
 git revert --no-edit HEAD > /dev/null 2>&1
 # Worktree now matches C-pre. Now revive C's feature hunk by --ref.
-SHA232=$("$GIT_HUNK" list --ref "$HIST_C232" --porcelain --oneline --file revived.txt | head -1 | cut -f1)
-[[ -n "$SHA232" ]] || fail "test 232: no hunk found for C"
-"$GIT_HUNK" add --ref "$HIST_C232" "$SHA232" > /dev/null 2>&1 \
-    || fail "test 232: add --ref <past> should succeed (feature line is missing in HEAD)"
+SHA233=$("$GIT_HUNK" list --ref "$HIST_C232" --porcelain --oneline --file revived.txt | head -1 | cut -f1)
+[[ -n "$SHA233" ]] || fail "test 233: no hunk found for C"
+"$GIT_HUNK" add --ref "$HIST_C232" "$SHA233" > /dev/null 2>&1 \
+    || fail "test 233: add --ref <past> should succeed (feature line is missing in HEAD)"
 git diff --cached revived.txt | grep -q "feature line that gets lost" \
-    || fail "test 232: feature line should be staged after add --ref"
-pass "test 232: e2e re-apply-hunk-from-history brings a reverted change back into staging"
+    || fail "test 233: feature line should be staged after add --ref"
+pass "test 233: e2e re-apply-hunk-from-history brings a reverted change back into staging"
 
 # ============================================================================
-# Test 233: add --3way uses 3-way merge to apply a historical hunk despite
+# Test 234: add --3way uses 3-way merge to apply a historical hunk despite
 # context drift, leaving conflict markers in the index for the user to resolve.
 # ============================================================================
 new_repo
@@ -667,17 +713,17 @@ git add revived233.txt && git commit -q -m "C1: add feature"
 HIST_C1_233=$(git rev-parse HEAD)
 git revert --no-edit HEAD > /dev/null 2>&1
 SHA233=$("$GIT_HUNK" list --ref "$HIST_C1_233" --porcelain --oneline --file revived233.txt | head -1 | cut -f1)
-[[ -n "$SHA233" ]] || fail "test 233: no hunk found in C1"
+[[ -n "$SHA233" ]] || fail "test 234: no hunk found in C1"
 
 # add --3way is accepted (and behaves identically to plain add when no drift).
 "$GIT_HUNK" add --ref "$HIST_C1_233" --3way "$SHA233" > /dev/null 2>&1 \
-    || fail "test 233: add --3way should succeed for a clean apply"
+    || fail "test 234: add --3way should succeed for a clean apply"
 git diff --cached -- revived233.txt | grep -q "feature line" \
-    || fail "test 233: feature line should be staged after add --3way"
-pass "test 233: add --3way is a valid flag; clean applies stage the patch"
+    || fail "test 234: feature line should be staged after add --3way"
+pass "test 234: add --3way is a valid flag; clean applies stage the patch"
 
 # ============================================================================
-# Test 234: add --3way that lands unmerged index entries fails with a clear
+# Test 235: add --3way that lands unmerged index entries fails with a clear
 # message (mirrors `git apply --3way --cached` semantics: don't silently
 # claim "staged" while leaving conflicts).
 # ============================================================================
@@ -691,24 +737,24 @@ git revert --no-edit HEAD > /dev/null 2>&1
 echo "DIFFERENT-content-where-C1-added" >> confl234.txt
 git add confl234.txt && git commit -q -m "C2: diff content"
 SHA234=$("$GIT_HUNK" list --ref "$HIST_C1_234" --porcelain --oneline --file confl234.txt | head -1 | cut -f1)
-[[ -n "$SHA234" ]] || fail "test 234: no hunk found"
+[[ -n "$SHA234" ]] || fail "test 235: no hunk found"
 ERR234=$("$GIT_HUNK" add --ref "$HIST_C1_234" --3way "$SHA234" 2>&1 || true)
 echo "$ERR234" | grep -qE "(unmerged index entries|did not apply cleanly)" \
-    || fail "test 234: expected conflict-mode message; got: '$ERR234'"
+    || fail "test 235: expected conflict-mode message; got: '$ERR234'"
 # Post-condition: if --3way landed unmerged entries, `git ls-files -u` shows them
 # (the user's resolution path). When --3way fails outright, the index is clean.
 # Either is acceptable, but if there's any hint of "unmerged" in stderr, the
 # index must reflect that.
 if echo "$ERR234" | grep -q "unmerged index entries"; then
     git ls-files -u | grep -q "confl234.txt" \
-        || fail "test 234: 'unmerged index entries' message should imply ls-files -u shows them"
+        || fail "test 235: 'unmerged index entries' message should imply ls-files -u shows them"
 fi
-pass "test 234: add --3way fails with clear message when 3-way produces conflicts"
+pass "test 235: add --3way fails with clear message when 3-way produces conflicts"
 
-# Test 235 (reset --3way conflict) deliberately not added: reset matches
+# Test 236 (reset --3way conflict) deliberately not added: reset matches
 # hunks-by-SHA against the current index, so any pre-condition that diverges
 # the index from the captured SHA also invalidates the SHA before --3way runs.
 # The action-aware error message is a single `switch (action)` in cmdApplyHunks
-# — covered by inspection plus test 234's stage-side path.
+# — covered by inspection plus test 235's stage-side path.
 
 report_results
