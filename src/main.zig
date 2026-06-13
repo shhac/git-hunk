@@ -244,6 +244,8 @@ fn printUsage(stdout: *std.Io.Writer) !void {
         \\  --untracked-only  Only include hunks from untracked files
         \\  --porcelain       Machine-readable tab-separated output
         \\  --no-color        Disable colored output
+        \\  -v, --verbose     Show summary counts and hints
+        \\  -q, --quiet       Suppress all output except errors
         \\  --help, -h        Show help for a command
         \\
         \\examples:
