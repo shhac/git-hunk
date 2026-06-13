@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.14.3] - 2026-06-13
+
+### Added
+- The man page now documents `--ref` and `--3way` under GLOBAL OPTIONS, expands the `commit` command entry, and includes examples for committing hunks directly and cherry-picking hunks from past commits.
+- Top-level `--help` now lists `-v`/`--verbose` and `-q`/`--quiet` alongside the other common options.
+- Releases now update the Homebrew tap formula automatically via a tag-scoped deploy key.
+
+### Changed
+- CI now enforces `zig fmt --check`.
+
 ## [0.14.2] - 2026-06-05
 
 ### Fixed
