@@ -143,6 +143,9 @@ jobs:
     name: Update Homebrew Tap
     runs-on: ubuntu-latest
     needs: create-release
+    # TAP_DEPLOY_KEY lives in this environment, which only releases v* tag refs
+    # can claim — workflows on branches never see the secret.
+    environment: homebrew-tap
     steps:
       # Delete the TAP_DEPLOY_KEY secret (and the deploy key on shhac/homebrew-tap)
       # to stop publishing to the tap; this job then no-ops instead of failing.
