@@ -1,4 +1,4 @@
-.TH GIT\-HUNK 1 "2026-02-28" "git-hunk" "User Commands"
+.TH GIT\-HUNK 1 "2026-06-13" "git-hunk" "User Commands"
 .SH NAME
 git\-hunk \- non\-interactive hunk staging for git
 .SH SYNOPSIS
@@ -49,6 +49,8 @@ Use \fB\-\-include\-untracked\fR / \fB\-u\fR to include untracked files with \fB
 .TP
 .B commit
 Commit specific hunks directly, bypassing manual staging.
+Existing staged changes are preserved and restored afterwards.
+Accepts hashes, line selections, \fB\-\-all\fR, or \fB\-\-file\fR to choose what to commit.
 Use \fB\-m\fR to set the commit message and \fB\-\-amend\fR to amend the previous commit.
 Use \fB\-\-dry\-run\fR to preview what would be committed.
 .SH GLOBAL OPTIONS
@@ -82,6 +84,21 @@ Only include hunks from tracked files (exclude untracked files).
 .TP
 .B \-\-untracked\-only
 Only include hunks from untracked files (exclude tracked file changes).
+.TP
+.BI \-\-ref " refspec"
+Compare against a git ref instead of the default.
+A single ref (e.g. \fBHEAD~1\fR, \fBabc123\fR) is shorthand for
+\fI<ref>\fB^..\fI<ref>\fR, i.e. that commit's diff.
+Use a range (e.g. \fBmain..HEAD\fR) to diff between two refs.
+Combines with \fB\-\-staged\fR for ref vs index comparison.
+With \fBadd\fR, \fBreset\fR, \fBrestore\fR, or \fBcommit\fR, this enables
+cherry\-picking or reverting individual hunks from past commits.
+.TP
+.B \-\-3way
+On context drift, fall back to a 3\-way merge instead of failing
+(passes \fB\-\-3way\fR to \fBgit apply\fR).
+Applies to \fBadd\fR, \fBreset\fR, \fBrestore\fR, and \fBcommit\fR;
+useful with \fB\-\-ref\fR \fI<past\-commit>\fR.
 .SH EXAMPLES
 List all unstaged hunks:
 .PP
@@ -120,6 +137,23 @@ Stage only lines 3\-5 and 8 of a hunk:
 .RS 4
 .nf
 $ git\-hunk add a3f7c21:3\-5,8
+.fi
+.RE
+.PP
+Commit specific hunks directly, preserving existing staged changes:
+.PP
+.RS 4
+.nf
+$ git\-hunk commit a3f7c21 b82e0f4 \-m "feat: add validation"
+.fi
+.RE
+.PP
+Cherry\-pick a hunk from a past commit into the index:
+.PP
+.RS 4
+.nf
+$ git\-hunk list \-\-ref HEAD~3
+$ git\-hunk add \-\-ref HEAD~3 \-\-3way a3f7c21
 .fi
 .RE
 .SH LINE SELECTION
