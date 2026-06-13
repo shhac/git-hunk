@@ -137,7 +137,6 @@ pub fn cmdList(allocator: Allocator, stdout: *std.Io.Writer, opts: ListOptions) 
     if (opts.verbosity == .verbose and opts.output == .human and hunk_count > 0) {
         std.debug.print("{d} hunks across {d} files\n", .{ hunk_count, file_count });
     }
-
 }
 
 pub fn cmdCount(allocator: Allocator, stdout: *std.Io.Writer, opts: CountOptions) !void {
@@ -427,8 +426,10 @@ fn collectAppliedFor(
         const content_match = m.line_spec == null and
             std.mem.eql(u8, m.hunk.diff_lines, created.diff_lines);
         const line_match = !content_match and rangesOverlap(
-            m.hunk.new_start, m.hunk.new_count,
-            created.new_start, created.new_count,
+            m.hunk.new_start,
+            m.hunk.new_count,
+            created.new_start,
+            created.new_count,
         );
         if (content_match or line_match) {
             try app_buf.append(arena, .{ .sha7 = m.hunk.sha_hex[0..7], .line_spec = m.line_spec });
@@ -1310,8 +1311,7 @@ fn runTransactionalCommit(ctx: CommitContext) ![]const u8 {
         const result = git.runGitApply(ctx.allocator, p, .{ .target = .index, .three_way = ctx.three_way, .ref = ctx.ref }) catch
             abortCommitAndExit(ctx.cwd, ctx.io, ctx.backup_path, ctx.index_path, null);
         if (result == .applied_with_conflicts) {
-            abortCommitAndExit(ctx.cwd, ctx.io, ctx.backup_path, ctx.index_path,
-                "error: --3way produced conflicts; cannot commit. Use `git hunk restore --ref <X> --3way <sha>` then resolve and `git commit` normally.\n");
+            abortCommitAndExit(ctx.cwd, ctx.io, ctx.backup_path, ctx.index_path, "error: --3way produced conflicts; cannot commit. Use `git hunk restore --ref <X> --3way <sha>` then resolve and `git commit` normally.\n");
         }
     }
     if (ctx.binary_paths.len > 0) {
