@@ -3,23 +3,172 @@
 # as `_git` (e.g. Homebrew git, Apple Command Line Tools). That wrapper
 # dispatches `git hunk <TAB>` to a bash-style function named `_git_hunk`
 # under ksh emulation, with words starting at "git". zsh's builtin _git
-# instead dispatches to `_git-hunk` directly, which this file delegates to.
+# instead dispatches to `_git-hunk` directly and never loads this file.
+#
+# This bridge completes natively with compadd/_wanted/_files instead of
+# delegating to _git-hunk: inside the wrapper's dispatch context the
+# engines behind _describe (compdescribe) and _arguments option handling
+# silently add no matches for non-empty words, while the primitives used
+# here work. Flag inventories mirror _git-hunk and are drift-checked
+# against src/spec.zig by `zig build docs`.
 #
 # Install alongside _git-hunk on your $fpath (see completions/README.md).
 emulate -L zsh
 
-# The wrapper restores $words to the full command line (starting at "git",
-# with the trailing empty word dropped) but leaves CURRENT relative to the
-# subcommand words. Align words to start at "hunk" and keep CURRENT.
+# Wrapper contract: $words holds the full command line starting at "git"
+# (trailing empty word dropped) and CURRENT indexes it 0-based. After the
+# 1-based slice below the two off-by-ones cancel out.
 integer _gh_i=${words[(i)hunk]}
 (( _gh_i <= $#words )) || return 1
 local -a words=("${(@)words[_gh_i,-1]}")
 (( CURRENT > $#words )) && words+=('')
 
-local ret=1
-_git-hunk && ret=0
+local _gh_ret=1
+() {
+  local cur=${words[CURRENT]} prev='' w
+  (( CURRENT > 1 )) && prev=${words[CURRENT-1]}
+  local -a expl
+
+  # Values of flags that take an argument.
+  case $prev in
+    --file)
+      _wanted files expl 'file' _files && _gh_ret=0
+      return
+      ;;
+    --ref)
+      local -a refs
+      refs=(${(f)"$(git for-each-ref --format='%(refname:short)' 2>/dev/null)"} HEAD)
+      _wanted refs expl 'git ref' compadd -a refs && _gh_ret=0
+      return
+      ;;
+    -U|--unified|-m|--message)
+      # Free-form value: offer nothing, but suppress file fallback.
+      _gh_ret=0
+      return
+      ;;
+  esac
+
+  # Locate the subcommand, skipping flags and their values.
+  local sub=''
+  integer j=2 subj=0
+  local -a valueflags=(--file --ref -U --unified -m --message)
+  while (( j < CURRENT )); do
+    w=${words[j]}
+    if (( $valueflags[(Ie)$w] )); then (( j += 2 )); continue; fi
+    if [[ $w == -* ]]; then (( j++ )); continue; fi
+    sub=$w subj=$j
+    break
+  done
+
+  if [[ -z $sub ]]; then
+    if [[ $cur == -* ]]; then
+      local -a topopts=(-h --help -V --version)
+      _wanted options expl 'option' compadd -a topopts && _gh_ret=0
+    else
+      local -a cmds=(list diff add reset restore count check stash commit help)
+      local -a disps=(
+        'list     List diff hunks with content hashes'
+        'diff     Show diff content of specific hunks'
+        'add      Stage hunks (or selected lines) by hash'
+        'reset    Unstage hunks (or selected lines) by hash'
+        'restore  Restore unstaged worktree changes by hash'
+        'count    Count diff hunks (bare integer output)'
+        'check    Validate hunk hashes exist in current diff'
+        'stash    Stash hunks into git stash, remove from worktree'
+        'commit   Commit specific hunks directly, bypassing manual staging'
+        'help     Show help for a command'
+      )
+      _wanted commands expl 'git-hunk command' compadd -d disps -a cmds && _gh_ret=0
+    fi
+    return
+  fi
+
+  if [[ $sub == help ]]; then
+    local -a cmds=(list diff add reset restore count check stash commit)
+    _wanted commands expl 'git-hunk command' compadd -a cmds && _gh_ret=0
+    return
+  fi
+
+  # `stash pop` takes no further flags or arguments.
+  if [[ $sub == stash && $subj -lt $((CURRENT - 1)) && ${words[subj+1]} == pop ]]; then
+    _gh_ret=0
+    return
+  fi
+
+  local -a opts
+  local hashmode=''
+  case $sub in
+    list)
+      opts=(--staged --oneline --ref --file --porcelain --no-color --tracked-only --untracked-only -U --unified -v --verbose -q --quiet -h --help)
+      ;;
+    diff)
+      opts=(--staged --ref --file --porcelain --no-color --tracked-only --untracked-only -U --unified -v --verbose -q --quiet -h --help)
+      hashmode=auto
+      ;;
+    add)
+      opts=(--all --3way --ref --file --porcelain --no-color --tracked-only --untracked-only -U --unified -v --verbose -q --quiet -h --help)
+      hashmode=unstaged
+      ;;
+    reset)
+      # reset operates on staged hunks (see `git-hunk help reset`).
+      opts=(--all --3way --ref --file --porcelain --no-color --tracked-only --untracked-only -U --unified -v --verbose -q --quiet -h --help)
+      hashmode=staged
+      ;;
+    restore)
+      opts=(--all --3way --force --dry-run --ref --file --porcelain --no-color --tracked-only --untracked-only -U --unified -v --verbose -q --quiet -h --help)
+      hashmode=unstaged
+      ;;
+    count)
+      opts=(--staged --ref --file --tracked-only --untracked-only -U --unified -q --quiet -h --help)
+      ;;
+    check)
+      opts=(--staged --exclusive --allow-empty --ref --file --porcelain --no-color --tracked-only --untracked-only -U --unified -v --verbose -q --quiet -h --help)
+      hashmode=auto
+      ;;
+    stash)
+      opts=(--all --include-untracked -u -m --message --file --porcelain --no-color --tracked-only --untracked-only -U --unified -v --verbose -q --quiet -h --help)
+      hashmode=unstaged
+      ;;
+    commit)
+      opts=(-m --message --amend --dry-run --all --3way --ref --file -U --unified --tracked-only --untracked-only --no-color --porcelain -v --verbose -q --quiet -h --help)
+      hashmode=unstaged
+      ;;
+    *)
+      return
+      ;;
+  esac
+
+  if [[ $cur == -* ]]; then
+    _wanted options expl 'option' compadd -a opts && _gh_ret=0
+    return
+  fi
+
+  # First argument after `stash` may be the push/pop keyword.
+  if [[ $sub == stash ]] && (( subj + 1 == CURRENT )); then
+    local -a kw=(push pop)
+    _wanted stash-commands expl 'stash subcommand' compadd -a kw && _gh_ret=0
+  fi
+
+  [[ -n $hashmode ]] || { _gh_ret=0; return }
+  local -a mode
+  case $hashmode in
+    staged) mode=(--staged) ;;
+    auto) (( ${words[(I)--staged]} )) && mode=(--staged) ;;
+  esac
+
+  local -a lines hashes disps
+  lines=(${(f)"$(git-hunk list $mode --porcelain --oneline 2>/dev/null)"})
+  local l
+  for l in $lines; do
+    [[ $l == *$'\t'* ]] || continue
+    hashes+=("${l%%$'\t'*}")
+    disps+=("${l//$'\t'/  }")
+  done
+  (( $#hashes )) || return
+  _wanted hunk-hashes expl 'hunk hash' compadd -d disps -a hashes && _gh_ret=0
+}
 
 # Tell the wrapper we handled the completion so it skips its _default
 # (file completion) fallback.
-(( ret == 0 && ${+_ret} )) && _ret=0
-return ret
+(( _gh_ret == 0 && ${+_ret} )) && _ret=0
+return _gh_ret

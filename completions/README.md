@@ -22,11 +22,13 @@ Copy **both files** onto your `$fpath` (before `compinit` runs):
 - Homebrew: `$(brew --prefix)/share/zsh/site-functions/`
 - Manual: `~/.zsh/completions/` plus `fpath=(~/.zsh/completions $fpath)`
 
-`_git-hunk` is the implementation; zsh's builtin `_git` dispatches
-`git hunk <TAB>` to it automatically. `_git_hunk` (underscores) is a small
-bridge for setups where `_git` is git's own `git-completion.zsh` wrapper
-(installed by e.g. Homebrew git or the Apple Command Line Tools), which
-dispatches to bash-style `_git_<cmd>` function names instead. Installing
+`_git-hunk` is the compsys implementation; zsh's builtin `_git` dispatches
+`git hunk <TAB>` to it automatically. `_git_hunk` (underscores) is a
+self-contained completer for setups where `_git` is git's own
+`git-completion.zsh` wrapper (installed by e.g. Homebrew git or the Apple
+Command Line Tools), which dispatches to bash-style `_git_<cmd>` function
+names — and whose dispatch context breaks the compsys helpers `_git-hunk`
+relies on, so the bridge completes with raw compadd instead. Installing
 both covers either setup.
 
 ## fish — `git-hunk.fish`
