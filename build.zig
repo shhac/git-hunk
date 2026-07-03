@@ -1,10 +1,11 @@
 const std = @import("std");
+const zon = @import("build.zig.zon");
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const version_option = b.option([]const u8, "version", "Version string") orelse "0.14.3";
+    const version_option = b.option([]const u8, "version", "Version string") orelse zon.version;
     const build_options = b.addOptions();
     build_options.addOption([]const u8, "version", version_option);
 
