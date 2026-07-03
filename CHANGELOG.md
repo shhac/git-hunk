@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.15.2] - 2026-07-03
+
+### Changed
+- zsh and fish hash completion displays now mirror `git hunk list --oneline` exactly — aligned file column, `empty`/`N-M` line ranges, truncated summaries, list order (by file/line) instead of hash order. The display is sourced from the binary's own `--oneline --no-color` output, so future `list` improvements flow into completions automatically.
+
+### Added
+- zsh completion listings colour the hunk hash yellow, matching `list --oneline` (and `git log --oneline`). Shipped as a soft default: a `hunk-hashes` `list-colors` zstyle applied only when the user has no matching style of their own, and skipped when `NO_COLOR` is set. Menu selection keeps zsh's standard `ma=` highlight, user-tunable as usual.
+
 ## [0.15.1] - 2026-07-03
 
 ### Fixed
