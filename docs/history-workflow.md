@@ -54,9 +54,9 @@ index:
 git hunk commit --ref abc1234 aaaa111 -m "rescue: re-apply the helper"
 ```
 
-`commit --ref` runs the full transactional commit pipeline (backup index →
-reset → apply → commit → restore index → resync) so your existing staging
-state is preserved.
+`commit --ref` builds the commit in a throwaway temp index (read HEAD into
+it → apply → commit → resync the real index), so your existing staging
+state is never touched.
 
 ## Recipe 2: Undo a hunk from a past commit
 
