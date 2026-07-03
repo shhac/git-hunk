@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.15.1] - 2026-07-03
+
+### Fixed
+- zsh completion via git's own `git-completion.zsh` wrapper (Homebrew git, Apple Command Line Tools) now completes non-empty words. Previously any typed prefix — `git hunk add 9<TAB>`, `git hunk list --sta<TAB>`, even a unique hash prefix — completed nothing, because the wrapper's dispatch context breaks the compsys engines behind `_describe` and `_arguments` option matching. The `_git_hunk` bridge is now a self-contained wrapper-native completer built on raw `compadd`/`_wanted`/`_files`, and hash candidates gain oneline-style descriptions (`9ab03ef  foo  0  0  new file`). zsh's builtin `_git` dispatch and direct `git-hunk` completion are unchanged.
+
+### Added
+- Interactive completion regression tests (`tests/test_completions.sh`): drives real TAB completion in a pty for both the direct and `git hunk` wrapper dispatch paths, with hash-prefix overlap guaranteed by construction. Skips gracefully when zsh/zpty or a git-completion.zsh wrapper is unavailable.
+
 ## [0.15.0] - 2026-07-03
 
 ### Added
