@@ -233,13 +233,14 @@ git-hunk commit --dry-run a3f7 -m "check first"       # preview without committi
 
 ### Behavior
 
-- Uses a save/restore index approach: backs up the current index, resets to HEAD, stages only target hunks, runs `git commit` (hooks fire normally), then restores the original index.
-- Existing staged changes are preserved — only the specified hunks are committed.
+- Commits through a throwaway temp index (`GIT_INDEX_FILE`): HEAD is read into a temporary index, only the target hunks are staged there, and `git commit` runs against it. Hooks fire normally and see exactly the content being committed.
+- The user's real index is never rewritten — existing staged changes are untouched throughout; only the specified hunks are committed. After the commit, the real index is re-synced with the new HEAD for the committed paths.
+- A crash at any point mid-commit leaves the index and staged work untouched (at worst a stray temp file in `/tmp`); rerunning needs no recovery step.
 - The worktree is not modified — only HEAD and the index change.
-- With `--amend`, resets index to `HEAD~1` and uses `git commit --amend`.
+- With `--amend`, seeds the temp index from `HEAD~1` and uses `git commit --amend`.
 - With `--dry-run`, validates the patch with `git apply --check` and prints "would commit" lines without committing.
-- Crash recovery: if a stale `.git/index.hunk-backup` is found from a previous interrupted commit, it is automatically restored.
-- If the post-commit index sync fails (step 6), a warning is printed but the exit code is 0 (the commit succeeded).
+- Legacy crash recovery: a stale `.git/index.hunk-backup` left by an interrupted commit from an older version is still restored automatically.
+- If the post-commit index re-sync fails, a warning is printed but the exit code is 0 (the commit succeeded).
 - On success, prints one line per committed hunk: `committed {sha7}  {file}`, followed by git's commit output.
 - With `--porcelain`, output is tab-separated: `committed\t{sha7}\t{file}`.
 - With `--dry-run`, verb is `would commit` (human) or `would-commit` (porcelain).

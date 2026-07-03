@@ -17,7 +17,7 @@ const rangesOverlap = types.rangesOverlap;
 
 const defaultIo = types.getIo;
 
-fn cloneEnvMap(allocator: Allocator, src: *const EnvMap) !EnvMap {
+pub fn cloneEnvMap(allocator: Allocator, src: *const EnvMap) !EnvMap {
     var dst: EnvMap = .{ .array_hash_map = .empty, .allocator = allocator };
     errdefer dst.deinit();
     var it = src.array_hash_map.iterator();
@@ -29,7 +29,7 @@ fn cloneEnvMap(allocator: Allocator, src: *const EnvMap) !EnvMap {
 
 /// A throwaway git index in /tmp pre-populated by GIT_INDEX_FILE in `env_map`.
 /// Use as `var tmp = try createTempIndex(...); defer tmp.deinit();`.
-const TempIndex = struct {
+pub const TempIndex = struct {
     env_map: EnvMap,
     path_z: [:0]const u8,
 
@@ -42,7 +42,7 @@ const TempIndex = struct {
 /// Build a temporary git index file under /tmp with a unique random suffix and
 /// return an env map (cloned from `parent_env`) that points GIT_INDEX_FILE at
 /// it. `prefix` becomes part of the filename for human-readable diagnostics.
-fn createTempIndex(arena: Allocator, allocator: Allocator, parent_env: *const EnvMap, prefix: []const u8) !TempIndex {
+pub fn createTempIndex(arena: Allocator, allocator: Allocator, parent_env: *const EnvMap, prefix: []const u8) !TempIndex {
     var random_bytes: [8]u8 = undefined;
     std.Io.random(defaultIo(), &random_bytes);
     const random_val = std.mem.readInt(u64, &random_bytes, .little);

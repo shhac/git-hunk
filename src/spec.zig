@@ -528,7 +528,7 @@ pub const commands = [_]CommandSpec{
         .summary = "Commit specific hunks directly, bypassing manual staging",
         .man_desc = &.{
             "Commit specific hunks directly, bypassing manual staging.",
-            "Existing staged changes are preserved and restored afterwards.",
+            "Existing staged changes are never touched (the commit is built in a temporary index).",
             "Accepts hashes, line selections, \\fB\\-\\-all\\fR, or \\fB\\-\\-file\\fR to choose what to commit.",
             "Use \\fB\\-m\\fR to set the commit message and \\fB\\-\\-amend\\fR to amend the previous commit.",
             "Use \\fB\\-\\-dry\\-run\\fR to preview what would be committed.",

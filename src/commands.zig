@@ -1254,15 +1254,6 @@ fn firstPatchPath(patch: []const u8) ?[]const u8 {
     return after[0..sp];
 }
 
-/// transactional commit hits a fatal mid-transaction error. If `msg` is given,
-/// it's printed to stderr before exit.
-fn abortCommitAndExit(cwd: std.Io.Dir, io: std.Io, backup_path: []const u8, index_path: []const u8, msg: ?[]const u8) noreturn {
-    std.Io.Dir.copyFile(cwd, backup_path, cwd, index_path, io, .{}) catch {};
-    cwd.deleteFile(io, backup_path) catch {};
-    if (msg) |m| std.debug.print("{s}", .{m});
-    std.process.exit(1);
-}
-
 /// If a stale `index.hunk-backup` exists from a previously-interrupted commit,
 /// restore it over `index` and remove it. Exits on restore failure.
 fn recoverStaleIndexBackup(cwd: std.Io.Dir, io: std.Io, backup_path: []const u8, index_path: []const u8) void {
@@ -1283,88 +1274,71 @@ const CommitContext = struct {
     amend: bool,
     three_way: bool,
     ref: ?[]const u8,
-    cwd: std.Io.Dir,
-    io: std.Io,
-    backup_path: []const u8,
-    index_path: []const u8,
+    env_map: *const std.process.Environ.Map,
 };
 
-/// Run the 7-step transactional commit (backup → reset → apply → commit →
-/// restore → resync → cleanup) and return the captured commit output. Aborts
-/// the process on a fatal mid-transaction error after restoring the backup.
-fn runTransactionalCommit(ctx: CommitContext) ![]const u8 {
-    // 1. Save index
-    std.Io.Dir.copyFile(ctx.cwd, ctx.index_path, ctx.cwd, ctx.backup_path, ctx.io, .{}) catch {
-        std.debug.print("error: failed to backup index file\n", .{});
-        std.process.exit(1);
-    };
+/// Commit the target hunks through a throwaway GIT_INDEX_FILE index: build
+/// HEAD (or HEAD~1 for --amend) in a temp index, stage only the target
+/// hunks there, and run `git commit` against it. The user's real index is
+/// never rewritten, so an abort at any point leaves their staged work
+/// untouched (at worst a stray temp file in /tmp). Hooks run normally and
+/// see exactly the content being committed via the inherited
+/// GIT_INDEX_FILE. After a successful commit the real index is re-synced
+/// with the new HEAD for the committed paths; failures there downgrade to
+/// warnings because the commit already stands.
+fn runTempIndexCommit(ctx: CommitContext) ![]const u8 {
+    var arena_state = std.heap.ArenaAllocator.init(ctx.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
 
-    // 2. Reset index to HEAD (or HEAD~1 for amend)
+    // 1. Temp index seeded from HEAD (or HEAD~1 for amend).
+    var tmp = try stash_mod.createTempIndex(arena, ctx.allocator, ctx.env_map, "commit-");
+    defer tmp.deinit();
     const read_tree_ref: []const u8 = if (ctx.amend) "HEAD~1" else "HEAD";
-    git.runGitReadTree(ctx.allocator, read_tree_ref) catch abortCommitAndExit(ctx.cwd, ctx.io, ctx.backup_path, ctx.index_path, null);
+    try git.runGitReadTree(ctx.allocator, read_tree_ref, &tmp.env_map);
 
-    // 3. Stage target hunks (text via patch, binary via git add).
-    // If --3way produces unmerged index entries, the subsequent `git commit`
-    // would refuse and we'd roll back, leaving the user with no way to resolve.
-    // Detect and abort early with a clear instruction.
+    // 2. Stage target hunks into the temp index (text via patch, binary via
+    // git add). A --3way conflict would leave unmerged temp-index entries
+    // that `git commit` refuses; abort early with a clear instruction.
     for (ctx.patches) |p| {
-        const result = git.runGitApply(ctx.allocator, p, .{ .target = .index, .three_way = ctx.three_way, .ref = ctx.ref }) catch
-            abortCommitAndExit(ctx.cwd, ctx.io, ctx.backup_path, ctx.index_path, null);
+        const result = try git.runGitApply(ctx.allocator, p, .{ .target = .index, .three_way = ctx.three_way, .ref = ctx.ref, .env_map = &tmp.env_map });
         if (result == .applied_with_conflicts) {
-            abortCommitAndExit(ctx.cwd, ctx.io, ctx.backup_path, ctx.index_path, "error: --3way produced conflicts; cannot commit. Use `git hunk restore --ref <X> --3way <sha>` then resolve and `git commit` normally.\n");
+            std.debug.print("error: --3way produced conflicts; cannot commit. Use `git hunk restore --ref <X> --3way <sha>` then resolve and `git commit` normally.\n", .{});
+            return error.PatchFailed;
         }
     }
     if (ctx.binary_paths.len > 0) {
-        git.runGitAddFiles(ctx.allocator, ctx.binary_paths) catch abortCommitAndExit(ctx.cwd, ctx.io, ctx.backup_path, ctx.index_path, null);
+        try git.runGitAddFilesWithEnv(ctx.allocator, ctx.binary_paths, &tmp.env_map);
     }
 
-    // 4. Commit
-    const commit_output = git.runGitCommit(ctx.allocator, .{ .message = ctx.message, .amend = ctx.amend }) catch
-        abortCommitAndExit(ctx.cwd, ctx.io, ctx.backup_path, ctx.index_path, null);
+    // 3. Commit from the temp index.
+    const commit_output = try git.runGitCommit(ctx.allocator, .{ .message = ctx.message, .amend = ctx.amend, .env_map = &tmp.env_map });
     errdefer ctx.allocator.free(commit_output);
 
-    // 5. Restore original index. If this fails, the backup is the user's only
-    // recovery path — DON'T run step 6 (would scribble onto an unrestored index)
-    // and DON'T run step 7 cleanup (would delete the backup we just told the
-    // user about).
-    var restored = true;
-    std.Io.Dir.copyFile(ctx.cwd, ctx.backup_path, ctx.cwd, ctx.index_path, ctx.io, .{}) catch {
-        restored = false;
-        std.debug.print("warning: commit succeeded but failed to restore original index -- backup preserved at {s} (recover with: cp {s} {s})\n", .{ ctx.backup_path, ctx.backup_path, ctx.index_path });
-    };
-
-    if (restored) {
-        // 6. Sync index with new HEAD (text via patch, binary via git add).
-        // Mirror step 3's --3way mode: if the commit was made via 3-way merging
-        // (drift between patch pre-image and current state), the post-commit
-        // content reflects the merged result. Re-applying the literal patch
-        // without --3way would put divergent content in the index — index ≠ HEAD.
-        // Continue past failures and report a per-patch summary.
-        var failed_paths: std.ArrayList([]const u8) = .empty;
-        defer failed_paths.deinit(ctx.allocator);
-        for (ctx.patches) |p| {
-            const r = git.runGitApply(ctx.allocator, p, .{ .target = .index, .three_way = ctx.three_way, .ref = ctx.ref }) catch {
-                failed_paths.append(ctx.allocator, firstPatchPath(p) orelse "<unknown>") catch {};
-                continue;
-            };
-            if (r == .applied_with_conflicts) {
-                // 3-way left unmerged entries in the user's restored index. Capture
-                // the path so the user knows what to resolve.
-                failed_paths.append(ctx.allocator, firstPatchPath(p) orelse "<unknown>") catch {};
-            }
+    // 4. Sync the real index with the new HEAD (text via patch, binary via
+    // git add). Mirror the --3way mode used to land the patches so the
+    // synced content matches the merged result. Continue past failures and
+    // report a per-patch summary -- the commit already succeeded.
+    var failed_paths: std.ArrayList([]const u8) = .empty;
+    defer failed_paths.deinit(ctx.allocator);
+    for (ctx.patches) |p| {
+        const r = git.runGitApply(ctx.allocator, p, .{ .target = .index, .three_way = ctx.three_way, .ref = ctx.ref }) catch {
+            failed_paths.append(ctx.allocator, firstPatchPath(p) orelse "<unknown>") catch {};
+            continue;
+        };
+        if (r == .applied_with_conflicts) {
+            // 3-way left unmerged entries in the user's index. Capture the
+            // path so the user knows what to resolve.
+            failed_paths.append(ctx.allocator, firstPatchPath(p) orelse "<unknown>") catch {};
         }
-        if (failed_paths.items.len > 0) {
-            std.debug.print("warning: commit succeeded but index sync failed for {d} patch(es) -- run 'git hunk add' to re-sync. First failure: {s}\n", .{ failed_paths.items.len, failed_paths.items[0] });
-        }
-        if (ctx.binary_paths.len > 0) {
-            git.runGitAddFiles(ctx.allocator, ctx.binary_paths) catch {
-                std.debug.print("warning: commit succeeded but binary file index sync failed -- run 'git add' to re-sync\n", .{});
-            };
-        }
-
-        // 7. Cleanup (only when the index was successfully restored — otherwise
-        // the backup is the recovery path).
-        ctx.cwd.deleteFile(ctx.io, ctx.backup_path) catch {};
+    }
+    if (failed_paths.items.len > 0) {
+        std.debug.print("warning: commit succeeded but index sync failed for {d} patch(es) -- run 'git hunk add' to re-sync. First failure: {s}\n", .{ failed_paths.items.len, failed_paths.items[0] });
+    }
+    if (ctx.binary_paths.len > 0) {
+        git.runGitAddFilesLenient(ctx.allocator, ctx.binary_paths) catch {
+            std.debug.print("warning: commit succeeded but binary file index sync failed -- run 'git add' to re-sync\n", .{});
+        };
     }
 
     return commit_output;
@@ -1379,7 +1353,7 @@ fn printCommitResults(stdout: *std.Io.Writer, opts: CommitOptions, matched: []co
     format.printHunkCountSummary(opts.verbosity, opts.output, count, "committed");
 }
 
-pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptions) !void {
+pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptions, env_map: *const std.process.Environ.Map) !void {
     var arena_state = std.heap.ArenaAllocator.init(allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -1441,7 +1415,7 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
         return;
     }
 
-    const commit_output = try runTransactionalCommit(.{
+    const commit_output = runTempIndexCommit(.{
         .allocator = allocator,
         .patches = patches,
         .binary_paths = binary_paths,
@@ -1449,11 +1423,12 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
         .amend = opts.amend,
         .three_way = opts.three_way,
         .ref = opts.ref,
-        .cwd = cwd,
-        .io = io,
-        .backup_path = backup_path,
-        .index_path = index_path,
-    });
+        .env_map = env_map,
+    }) catch |err| switch (err) {
+        // git's own stderr has already been shown; exit without extra noise.
+        error.ReadTreeFailed, error.CommitFailed => std.process.exit(1),
+        else => return err,
+    };
     defer allocator.free(commit_output);
 
     try printCommitResults(stdout, opts, matched.items, commit_output);

@@ -175,6 +175,9 @@ pub const ApplyOptions = struct {
     /// User-supplied `--ref` value for the failure message (so the user knows
     /// which historical diff conflicted). Null means "current diff".
     ref: ?[]const u8 = null,
+    /// Optional child environment (e.g. GIT_INDEX_FILE pointing at a temp
+    /// index). Null inherits the parent environment.
+    env_map: ?*const EnvMap = null,
 };
 
 pub const ApplyResult = enum { applied_clean, applied_with_conflicts };
@@ -189,7 +192,7 @@ pub fn runGitApply(allocator: Allocator, patch: []const u8, opts: ApplyOptions) 
     if (opts.check_only) try argv.append(allocator, "--check");
     if (opts.three_way) try argv.append(allocator, "--3way");
 
-    const result = runCommand(allocator, argv.items, .{ .stdin_data = patch }) catch |err| {
+    const result = runCommand(allocator, argv.items, .{ .stdin_data = patch, .env_map = opts.env_map }) catch |err| {
         if (err == error.AbnormalTermination) {
             std.debug.print("error: git apply terminated abnormally\n", .{});
             return error.PatchFailed;
@@ -249,6 +252,23 @@ pub fn runGitCheckoutFiles(allocator: Allocator, file_paths: []const []const u8)
 pub fn runGitAddFilesWithEnv(allocator: Allocator, file_paths: []const []const u8, env_map: *const EnvMap) !void {
     const out = try runGitFileCmd(allocator, &.{ "git", "add" }, file_paths, .{ .env_map = env_map }, "git add");
     allocator.free(out);
+}
+
+/// Stage files by path, returning an error on git failure instead of
+/// exiting the process. For post-commit index resync, where a failure
+/// must downgrade to a warning (the commit already succeeded).
+pub fn runGitAddFilesLenient(allocator: Allocator, file_paths: []const []const u8) !void {
+    var argv: std.ArrayList([]const u8) = .empty;
+    defer argv.deinit(allocator);
+    try argv.appendSlice(allocator, &.{ "git", "add", "--" });
+    try argv.appendSlice(allocator, file_paths);
+    const result = try runCommand(allocator, argv.items, .{});
+    defer allocator.free(result.stdout);
+    defer allocator.free(result.stderr);
+    if (result.exit_code != 0) {
+        if (result.stderr.len > 0) std.debug.print("{s}", .{result.stderr});
+        return error.AddFailed;
+    }
 }
 
 /// Build argv as `prefix... -- file_paths...` and run via runGitCapture.
@@ -473,10 +493,11 @@ pub fn runGitRevParseGitDir(allocator: Allocator) ![]u8 {
     return runGitCapture(allocator, &.{ "git", "rev-parse", "--git-dir" }, .{}, "git rev-parse --git-dir");
 }
 
-/// Run `git read-tree <treeish>` on the real index (no custom env).
-/// Returns an error on failure instead of calling fatal, so callers can clean up.
-pub fn runGitReadTree(allocator: Allocator, treeish: []const u8) !void {
-    const result = try runCommand(allocator, &.{ "git", "read-tree", treeish }, .{});
+/// Run `git read-tree <treeish>`, optionally against a custom environment
+/// (GIT_INDEX_FILE temp index). Returns an error on failure instead of
+/// calling fatal, so callers can clean up.
+pub fn runGitReadTree(allocator: Allocator, treeish: []const u8, env_map: ?*const EnvMap) !void {
+    const result = try runCommand(allocator, &.{ "git", "read-tree", treeish }, .{ .env_map = env_map });
     defer allocator.free(result.stdout);
     defer allocator.free(result.stderr);
     if (result.exit_code != 0) {
@@ -487,13 +508,13 @@ pub fn runGitReadTree(allocator: Allocator, treeish: []const u8) !void {
 
 /// Run `git commit -m <message> [--amend]` and return the commit output.
 /// Returns `error.CommitFailed` on non-zero exit instead of calling fatal.
-pub fn runGitCommit(allocator: Allocator, args: struct { message: []const u8, amend: bool }) ![]u8 {
+pub fn runGitCommit(allocator: Allocator, args: struct { message: []const u8, amend: bool, env_map: ?*const EnvMap = null }) ![]u8 {
     const argv: []const []const u8 = if (args.amend)
         &.{ "git", "commit", "-m", args.message, "--amend" }
     else
         &.{ "git", "commit", "-m", args.message };
 
-    const result = try runCommand(allocator, argv, .{});
+    const result = try runCommand(allocator, argv, .{ .env_map = args.env_map });
     if (result.exit_code != 0) {
         allocator.free(result.stdout);
         if (result.stderr.len > 0) std.debug.print("{s}", .{result.stderr});
