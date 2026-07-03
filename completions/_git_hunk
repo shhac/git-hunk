@@ -176,8 +176,9 @@ local _gh_ret=1
       zstyle ':completion:*:hunk-hashes' list-colors '=(#b)([0-9a-f]##)(  *)=0=33=0'
     fi
   fi
-  # -V: keep list order (by file/line) instead of sorting by hash.
-  _wanted hunk-hashes expl 'hunk hash' compadd -V hunk-hashes -d disps -a hashes && _gh_ret=0
+  # -l: one candidate per row (never columnized); -V: keep list order
+  # (by file/line) instead of sorting by hash.
+  _wanted hunk-hashes expl 'hunk hash' compadd -l -V hunk-hashes -d disps -a hashes && _gh_ret=0
 }
 
 # Tell the wrapper we handled the completion so it skips its _default

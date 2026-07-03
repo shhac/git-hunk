@@ -56,8 +56,9 @@ __git-hunk_hash_matches() {
   done
   (( $#hashes )) || return 1
   __git-hunk_color_default
-  # -V: keep list order (by file/line) instead of sorting by hash.
-  _wanted hunk-hashes expl 'hunk hash' compadd -V hunk-hashes -d disps -a hashes
+  # -l: one candidate per row (never columnized); -V: keep list order
+  # (by file/line) instead of sorting by hash.
+  _wanted hunk-hashes expl 'hunk hash' compadd -l -V hunk-hashes -d disps -a hashes
 }
 
 __git-hunk_hashes() {

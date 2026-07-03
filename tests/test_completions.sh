@@ -115,8 +115,7 @@ fi
 
 if [[ -z "$WRAPPER_DIR" ]]; then
     echo "SKIP: git-completion.zsh wrapper not found; skipping 'git hunk' wrapper tests"
-    report_results
-fi
+else
 
 # ============================================================================
 # Test 1402: wrapper path -- unique hash prefix completes to the full hash
@@ -147,6 +146,27 @@ if [[ "$COMPLETED_BUFFER" == *"--staged"* ]]; then
     pass "test 1404: wrapper flag prefix completes to --staged"
 else
     fail "test 1404: expected buffer to contain '--staged', got '$COMPLETED_BUFFER'"
+fi
+
+fi # wrapper tests
+
+# ============================================================================
+# Test 1405: listings stay one-candidate-per-row in wide terminals
+# (without compadd -l, zsh columnizes short display lines side by side)
+# ============================================================================
+new_repo
+for f in a b c d e f; do
+    echo x > "$f.txt"
+done
+rm -f "$OUTDIR/t1405.buf"
+zsh "$ZSH_HARNESS" "$CURRENT_REPO" "git-hunk add " "$OUTDIR/t1405.buf" "$OUTDIR/t1405.disp" "$COMPLETIONS_DIR" 220 || true
+DISP1405="$(perl -pe 's/\x1b\[[0-9;]*[A-Za-z]//g; s/\x00//g' "$OUTDIR/t1405.disp" 2>/dev/null || true)"
+N_SHAS="$(echo "$DISP1405" | grep -cE '[0-9a-f]{7}  ' || true)"
+N_DUAL="$(echo "$DISP1405" | grep -cE '([0-9a-f]{7}.*){2}' || true)"
+if [[ "$N_SHAS" -ge 2 && "$N_DUAL" -eq 0 ]]; then
+    pass "test 1405: wide-terminal listing keeps one candidate per row"
+else
+    fail "test 1405: expected >=2 candidate rows and none sharing a line (rows=$N_SHAS, shared=$N_DUAL)"
 fi
 
 report_results
