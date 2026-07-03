@@ -24,21 +24,40 @@ __git-hunk_commands() {
   _describe -t commands 'git-hunk command' commands
 }
 
+# Soft colour default for hash listings: yellow sha, matching
+# `git hunk list --oneline`. Set once per session, only when the user has
+# no list-colors of their own mentioning hunk-hashes, and never under
+# NO_COLOR (mirroring the binary's colour rules).
+__git-hunk_color_default() {
+  (( ${+_git_hunk_colors_checked} )) && return 0
+  typeset -g _git_hunk_colors_checked=1
+  [[ -n ${NO_COLOR-} ]] && return 0
+  zmodload -i zsh/complist 2>/dev/null
+  zstyle -L | command grep -q 'hunk-hashes' && return 0
+  zstyle ':completion:*:hunk-hashes' list-colors '=(#b)([0-9a-f]##)(  *)=0=33=0'
+  return 0
+}
+
 # Complete hunk hashes from `git-hunk list`; pass --staged for the staged
-# diff. Silently completes nothing outside a repo or if git-hunk is missing.
-# Only ever call this through the argument-less wrappers below: _arguments
-# invokes action functions with extra compadd options that must not leak
-# into the git-hunk invocation.
+# diff. Displays are the `list --oneline` lines verbatim, so the completion
+# listing mirrors the command's own output (aligned columns, empty/N-M
+# ranges). Silently completes nothing outside a repo or if git-hunk is
+# missing. Only ever call this through the argument-less wrappers below:
+# _arguments invokes action functions with extra compadd options that must
+# not leak into the git-hunk invocation.
 __git-hunk_hash_matches() {
-  local -a lines specs
+  local -a lines hashes disps expl
   local l
-  lines=(${(f)"$(git-hunk list "$@" --porcelain --oneline 2>/dev/null)"})
+  lines=(${(f)"$(git-hunk list "$@" --oneline --no-color 2>/dev/null)"})
   for l in $lines; do
-    [[ $l == *$'\t'* ]] || continue
-    specs+=("${l%%$'\t'*}:${${l#*$'\t'}//$'\t'/ }")
+    [[ ${#l} -ge 9 && ${l[8,9]} == '  ' && ${l[1,7]} != *[^0-9a-f]* ]] || continue
+    hashes+=("${l[1,7]}")
+    disps+=("$l")
   done
-  (( $#specs )) || return 1
-  _describe -t hunk-hashes 'hunk hash' specs
+  (( $#hashes )) || return 1
+  __git-hunk_color_default
+  # -V: keep list order (by file/line) instead of sorting by hash.
+  _wanted hunk-hashes expl 'hunk hash' compadd -V hunk-hashes -d disps -a hashes
 }
 
 __git-hunk_hashes() {

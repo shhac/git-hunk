@@ -70,15 +70,14 @@ function __git_hunk_stash_keyword_position
     test (count $toks) -ge 1; and test "$toks[-1]" = stash
 end
 
-# Hunk hashes as "hash<TAB>file lines" pairs; pass --staged for the staged
+# Hunk hashes as "hash<TAB>desc" pairs, desc mirroring `list --oneline`
+# (file, range, summary); pass --staged for the staged
 # diff. Silently prints nothing outside a repo or if git-hunk is missing.
 function __git_hunk_hashes
-    git-hunk list $argv --porcelain --oneline 2>/dev/null | while read -l line
-        set -l parts (string split \t -- $line)
-        if test (count $parts) -ge 2
-            printf '%s\t%s\n' $parts[1] (string join ' ' -- $parts[2..-1])
-        else if test -n "$parts[1]"
-            printf '%s\n' $parts[1]
+    git-hunk list $argv --oneline --no-color 2>/dev/null | while read -l line
+        if string match -qr '^[0-9a-f]{7}  ' -- $line
+            set -l desc (string replace -ra ' +' ' ' -- (string trim -- (string sub -s 8 -- $line)))
+            printf '%s\t%s\n' (string sub -l 7 -- $line) $desc
         end
     end
 end

@@ -105,6 +105,13 @@ if [[ "$COMPLETED_DISPLAY" == *"$SHARED_A"* && "$COMPLETED_DISPLAY" == *"$SHARED
 else
     fail "test 1401: expected display to list $SHARED_A and $SHARED_B"
 fi
+# Displays mirror `list --oneline`: file column and the dash-joined range
+# (single-line files show "1-1"; porcelain showed separate "1  1" fields).
+if [[ "$COMPLETED_DISPLAY" == *".txt"* && "$COMPLETED_DISPLAY" == *"1-1"* ]]; then
+    pass "test 1401b: candidate display carries oneline file and range columns"
+else
+    fail "test 1401b: expected oneline-style display with file and '1-1' range"
+fi
 
 if [[ -z "$WRAPPER_DIR" ]]; then
     echo "SKIP: git-completion.zsh wrapper not found; skipping 'git hunk' wrapper tests"

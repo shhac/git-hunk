@@ -156,16 +156,28 @@ local _gh_ret=1
     auto) (( ${words[(I)--staged]} )) && mode=(--staged) ;;
   esac
 
+  # Displays are the `list --oneline` lines verbatim, so the completion
+  # listing mirrors the command's own output.
   local -a lines hashes disps
-  lines=(${(f)"$(git-hunk list $mode --porcelain --oneline 2>/dev/null)"})
+  lines=(${(f)"$(git-hunk list $mode --oneline --no-color 2>/dev/null)"})
   local l
   for l in $lines; do
-    [[ $l == *$'\t'* ]] || continue
-    hashes+=("${l%%$'\t'*}")
-    disps+=("${l//$'\t'/  }")
+    [[ ${#l} -ge 9 && ${l[8,9]} == '  ' && ${l[1,7]} != *[^0-9a-f]* ]] || continue
+    hashes+=("${l[1,7]}")
+    disps+=("$l")
   done
   (( $#hashes )) || return
-  _wanted hunk-hashes expl 'hunk hash' compadd -d disps -a hashes && _gh_ret=0
+  # Soft colour default (yellow sha, as in list --oneline): once per
+  # session, only without user list-colors for the tag, never under NO_COLOR.
+  if ! (( ${+_git_hunk_colors_checked} )); then
+    typeset -g _git_hunk_colors_checked=1
+    if [[ -z ${NO_COLOR-} ]] && ! { zstyle -L | command grep -q 'hunk-hashes' }; then
+      zmodload -i zsh/complist 2>/dev/null
+      zstyle ':completion:*:hunk-hashes' list-colors '=(#b)([0-9a-f]##)(  *)=0=33=0'
+    fi
+  fi
+  # -V: keep list order (by file/line) instead of sorting by hash.
+  _wanted hunk-hashes expl 'hunk hash' compadd -V hunk-hashes -d disps -a hashes && _gh_ret=0
 }
 
 # Tell the wrapper we handled the completion so it skips its _default
