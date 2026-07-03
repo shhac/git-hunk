@@ -1,0 +1,25 @@
+#autoload
+# Bridge for git's own git-completion.zsh wrapper, which many setups install
+# as `_git` (e.g. Homebrew git, Apple Command Line Tools). That wrapper
+# dispatches `git hunk <TAB>` to a bash-style function named `_git_hunk`
+# under ksh emulation, with words starting at "git". zsh's builtin _git
+# instead dispatches to `_git-hunk` directly, which this file delegates to.
+#
+# Install alongside _git-hunk on your $fpath (see completions/README.md).
+emulate -L zsh
+
+# The wrapper restores $words to the full command line (starting at "git",
+# with the trailing empty word dropped) but leaves CURRENT relative to the
+# subcommand words. Align words to start at "hunk" and keep CURRENT.
+integer _gh_i=${words[(i)hunk]}
+(( _gh_i <= $#words )) || return 1
+local -a words=("${(@)words[_gh_i,-1]}")
+(( CURRENT > $#words )) && words+=('')
+
+local ret=1
+_git-hunk && ret=0
+
+# Tell the wrapper we handled the completion so it skips its _default
+# (file completion) fallback.
+(( ret == 0 && ${+_ret} )) && _ret=0
+return ret

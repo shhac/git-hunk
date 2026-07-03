@@ -1,0 +1,183 @@
+#compdef git-hunk
+# zsh completion for git-hunk
+#
+# Completes both invocation forms:
+#   git-hunk <TAB>      (via the #compdef line above)
+#   git hunk <TAB>      (zsh's _git dispatches external subcommands to a
+#                        function named _git-hunk, which this file provides)
+#
+# Install: copy onto your $fpath as `_git-hunk` (see completions/README.md).
+
+__git-hunk_commands() {
+  local -a commands=(
+    'list:list diff hunks with content hashes'
+    'diff:show diff content of specific hunks'
+    'add:stage hunks (or selected lines) by hash'
+    'reset:unstage hunks (or selected lines) by hash'
+    'restore:restore unstaged worktree changes by hash'
+    'count:count diff hunks'
+    'check:validate hunk hashes exist in current diff'
+    'stash:stash hunks into git stash'
+    'commit:commit specific hunks directly'
+    'help:show help for a command'
+  )
+  _describe -t commands 'git-hunk command' commands
+}
+
+# Complete hunk hashes from `git-hunk list`; pass --staged for the staged
+# diff. Silently completes nothing outside a repo or if git-hunk is missing.
+# Only ever call this through the argument-less wrappers below: _arguments
+# invokes action functions with extra compadd options that must not leak
+# into the git-hunk invocation.
+__git-hunk_hash_matches() {
+  local -a lines specs
+  local l
+  lines=(${(f)"$(git-hunk list "$@" --porcelain --oneline 2>/dev/null)"})
+  for l in $lines; do
+    [[ $l == *$'\t'* ]] || continue
+    specs+=("${l%%$'\t'*}:${${l#*$'\t'}//$'\t'/ }")
+  done
+  (( $#specs )) || return 1
+  _describe -t hunk-hashes 'hunk hash' specs
+}
+
+__git-hunk_hashes() {
+  __git-hunk_hash_matches
+}
+
+__git-hunk_staged_hashes() {
+  __git-hunk_hash_matches --staged
+}
+
+# diff/check follow the diff mode already on the command line.
+__git-hunk_hashes_auto() {
+  if (( ${words[(I)--staged]} )); then
+    __git-hunk_hash_matches --staged
+  else
+    __git-hunk_hash_matches
+  fi
+}
+
+__git-hunk_refs() {
+  local -a refs expl
+  refs=(HEAD ${(f)"$(git for-each-ref --format='%(refname:short)' 2>/dev/null)"})
+  refs=(${refs:#})
+  _wanted refs expl 'git ref' compadd -a refs
+}
+
+__git-hunk_stash_first() {
+  local ret=1
+  local -a kw=(
+    'push:stash hunks (default when omitted)'
+    'pop:restore the most recent git-hunk stash'
+  )
+  _describe -t stash-commands 'stash subcommand' kw && ret=0
+  __git-hunk_hash_matches && ret=0
+  return ret
+}
+
+_git-hunk() {
+  local curcontext=$curcontext state line ret=1
+  typeset -A opt_args
+
+  _arguments -C \
+    '(- *)'{-h,--help}'[show help]' \
+    '(- *)'{-V,--version}'[show version]' \
+    '1: :__git-hunk_commands' \
+    '*:: :->args' && ret=0
+
+  [[ $state == args ]] || return ret
+
+  local cmd=$words[1]
+  curcontext="${curcontext%:*:*}:git-hunk-$cmd:"
+
+  local -a base_opts output_opts
+  base_opts=(
+    '*--file[restrict to hunks in the given file]: :_files'
+    '(--tracked-only --untracked-only)--tracked-only[only include hunks from tracked files]'
+    '(--tracked-only --untracked-only)--untracked-only[only include hunks from untracked files]'
+    '(-U --unified)'{-U+,--unified=}'[lines of diff context]: :_guard "[0-9]#" "number of context lines"'
+    '(-q --quiet -v --verbose)'{-q,--quiet}'[suppress output]'
+    '(- :)'{-h,--help}'[show help]'
+  )
+  output_opts=(
+    '--porcelain[machine-readable output]'
+    '--no-color[disable colored output]'
+    '(-q --quiet -v --verbose)'{-v,--verbose}'[show summary counts]'
+  )
+  local ref_opt='--ref[compare against a git ref or range]: :__git-hunk_refs'
+
+  case $cmd in
+    list)
+      _arguments $base_opts $output_opts $ref_opt \
+        '--staged[list hunks from the staged diff]' \
+        '--oneline[one hunk per line]' && ret=0
+      ;;
+    diff)
+      _arguments $base_opts $output_opts $ref_opt \
+        '--staged[show hunks from the staged diff]' \
+        '*: :__git-hunk_hashes_auto' && ret=0
+      ;;
+    add)
+      _arguments $base_opts $output_opts $ref_opt \
+        '--all[stage all unstaged hunks]' \
+        '--3way[fall back to a 3-way merge on context drift]' \
+        '*: :__git-hunk_hashes' && ret=0
+      ;;
+    reset)
+      # reset operates on staged hunks (see `git-hunk help reset`).
+      _arguments $base_opts $output_opts $ref_opt \
+        '--all[unstage all staged hunks]' \
+        '--3way[fall back to a 3-way merge on context drift]' \
+        '*: :__git-hunk_staged_hashes' && ret=0
+      ;;
+    restore)
+      _arguments $base_opts $output_opts $ref_opt \
+        '--all[restore all unstaged hunks (destructive)]' \
+        '--3way[fall back to a 3-way merge on context drift]' \
+        '--force[required to restore untracked files (deletes them)]' \
+        '--dry-run[preview without making changes]' \
+        '*: :__git-hunk_hashes' && ret=0
+      ;;
+    count)
+      _arguments $base_opts $ref_opt \
+        '--staged[count staged hunks]' && ret=0
+      ;;
+    check)
+      _arguments $base_opts $output_opts $ref_opt \
+        '--staged[check against the staged diff]' \
+        '--exclusive[assert these are the only hunks in the diff]' \
+        '--allow-empty[allow zero sha arguments]' \
+        '*: :__git-hunk_hashes_auto' && ret=0
+      ;;
+    stash)
+      if [[ $words[2] == pop ]]; then
+        _message 'no more arguments'
+        ret=0
+      else
+        _arguments $base_opts $output_opts \
+          '--all[stash all unstaged tracked hunks]' \
+          '(-u --include-untracked)'{-u,--include-untracked}'[include untracked files (with --all)]' \
+          '(-m --message)'{-m,--message}'[set the stash message]:message' \
+          '1: :__git-hunk_stash_first' \
+          '*: :__git-hunk_hashes' && ret=0
+      fi
+      ;;
+    commit)
+      _arguments $base_opts $output_opts $ref_opt \
+        '(-m --message)'{-m,--message}'[commit message]:message' \
+        '--amend[amend the previous commit]' \
+        '--dry-run[show what would be committed without committing]' \
+        '--all[commit all unstaged hunks]' \
+        '--3way[fall back to a 3-way merge on context drift]' \
+        '*: :__git-hunk_hashes' && ret=0
+      ;;
+    help)
+      _arguments '1: :__git-hunk_commands' && ret=0
+      ;;
+  esac
+
+  return ret
+}
+
+_git-hunk "$@"

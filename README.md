@@ -57,6 +57,12 @@ Once on your PATH, git-hunk works as a git subcommand:
 git hunk list
 ```
 
+## Shell completions
+
+Completions for bash, zsh, and fish live in [`completions/`](completions/),
+covering both `git-hunk` and `git hunk` forms, with live hunk-hash completion.
+See [completions/README.md](completions/README.md) for install paths.
+
 ## Help
 
 ```
