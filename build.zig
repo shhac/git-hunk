@@ -52,6 +52,27 @@ pub fn build(b: *std.Build) void {
     // Install alongside the run so parallel campaigns can invoke zig-out/bin/fuzz-driver directly.
     fuzz_step.dependOn(&b.addInstallArtifact(fuzz_exe, .{}).step);
 
+    const gen_docs = b.addExecutable(.{
+        .name = "gen-docs",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/gen_docs.zig"),
+            .target = b.resolveTargetQuery(.{}),
+            .optimize = .Debug,
+        }),
+    });
+    gen_docs.root_module.addImport("spec", b.createModule(.{
+        .root_source_file = b.path("src/spec.zig"),
+        .target = b.resolveTargetQuery(.{}),
+        .optimize = .Debug,
+    }));
+    const docs_step = b.step("docs", "Regenerate man page sections and check doc/completion drift (-- --check for CI)");
+    const run_docs = b.addRunArtifact(gen_docs);
+    run_docs.addArg(b.build_root.path orelse ".");
+    if (b.args) |args| run_docs.addArgs(args);
+    // Doc targets change out-of-band; never cache this run.
+    run_docs.has_side_effects = true;
+    docs_step.dependOn(&run_docs.step);
+
     const integration_step = b.step("test-integration", "Run integration tests (requires git)");
     const bin_path = b.getInstallPath(.bin, "git-hunk");
     const run_integration = b.addSystemCommand(&.{ "bash", "tests/run-all.sh", bin_path });

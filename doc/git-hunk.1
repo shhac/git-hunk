@@ -14,6 +14,7 @@ with a deterministic enumerate\-then\-select workflow.
 Diff hunks are identified by stable content hashes, allowing precise,
 scriptable, and repeatable partial staging without interactive prompts.
 .SH COMMANDS
+.\" GENERATED-BEGIN commands -- edit src/spec.zig and run `zig build docs`
 .TP
 .B list
 List diff hunks with content hashes. Shows unstaged hunks by default;
@@ -53,7 +54,9 @@ Existing staged changes are preserved and restored afterwards.
 Accepts hashes, line selections, \fB\-\-all\fR, or \fB\-\-file\fR to choose what to commit.
 Use \fB\-m\fR to set the commit message and \fB\-\-amend\fR to amend the previous commit.
 Use \fB\-\-dry\-run\fR to preview what would be committed.
+.\" GENERATED-END commands
 .SH GLOBAL OPTIONS
+.\" GENERATED-BEGIN global-options -- edit src/spec.zig and run `zig build docs`
 .TP
 .BR \-h ", " \-\-help
 Show help. Use \fBgit\-hunk \fI<command>\fR \fB\-\-help\fR for command\-specific details.
@@ -90,7 +93,7 @@ Compare against a git ref instead of the default.
 A single ref (e.g. \fBHEAD~1\fR, \fBabc123\fR) is shorthand for
 \fI<ref>\fB^..\fI<ref>\fR, i.e. that commit's diff.
 Use a range (e.g. \fBmain..HEAD\fR) to diff between two refs.
-Combines with \fB\-\-staged\fR for ref vs index comparison.
+With \fBlist\fR, \fBdiff\fR, \fBcount\fR, or \fBcheck\fR, combines with \fB\-\-staged\fR for ref vs index comparison.
 With \fBadd\fR, \fBreset\fR, \fBrestore\fR, or \fBcommit\fR, this enables
 cherry\-picking or reverting individual hunks from past commits.
 .TP
@@ -99,6 +102,7 @@ On context drift, fall back to a 3\-way merge instead of failing
 (passes \fB\-\-3way\fR to \fBgit apply\fR).
 Applies to \fBadd\fR, \fBreset\fR, \fBrestore\fR, and \fBcommit\fR;
 useful with \fB\-\-ref\fR \fI<past\-commit>\fR.
+.\" GENERATED-END global-options
 .SH EXAMPLES
 List all unstaged hunks:
 .PP

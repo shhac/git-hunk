@@ -13,7 +13,8 @@ git-hunk list [--staged] [--file <path>] [--porcelain] [--oneline] [--unified <n
 | Flag | Description |
 |------|-------------|
 | `--staged` | Show staged hunks (HEAD vs index) instead of unstaged (index vs worktree) |
-| `--file <path>` | Only show hunks for the given file path. Path must match exactly as shown in diff output. May be repeated to match any of several files. |
+| `--file <path>` | Only show hunks for the given file path, resolved relative to the current directory. May be repeated to match any of several files. |
+| `--ref <refspec>` | Source the diff from a git ref. **Single ref** (e.g. `HEAD~1`, `abc1234`) is shorthand for `<ref>^..<ref>` — that commit's diff (`git show` semantics). **Range** (e.g. `main..HEAD`) is the literal diff between two refs. Initial commits (no parent) diff against the empty tree. Combines with `--staged` for ref vs index comparison. |
 | `--porcelain` | Tab-separated machine-readable output. See [output format](output.md). |
 | `--oneline` | Compact one-line-per-hunk output without inline diff content. |
 | `--unified <n>` / `-U<n>` / `--unified=<n>` | Number of context lines to use in diffs (default: git's `diff.context` or 3). Lower values produce more granular hunks. |
@@ -67,6 +68,7 @@ git-hunk diff <sha[:lines]>... [--staged] [--file <path>] [--porcelain] [--unifi
 |------|-------------|
 | `--staged` | Show hunks from staged diff (HEAD vs index) instead of unstaged (index vs worktree) |
 | `--file <path>` | Restrict hash matching to hunks in this file. May be repeated to match any of several files. |
+| `--ref <refspec>` | Source the diff from a git ref. **Single ref** (e.g. `HEAD~1`, `abc1234`) is shorthand for `<ref>^..<ref>` — that commit's diff (`git show` semantics). **Range** (e.g. `main..HEAD`) is the literal diff between two refs. Initial commits (no parent) diff against the empty tree. Combines with `--staged` for ref vs index comparison. |
 | `--porcelain` | Machine-readable output: metadata header line + raw diff lines + blank separator. |
 | `--tracked-only` | Only show hunks from tracked files. |
 | `--untracked-only` | Only show hunks from untracked files. |
@@ -131,6 +133,8 @@ git-hunk add [<sha[:lines]>...] [--file <path>] [--all] [--porcelain] [--unified
 |------|-------------|
 | `--file <path>` | Restrict hash matching to hunks in this file. When used without SHAs, stages all hunks in the file. May be repeated to match any of several files. |
 | `--all` | Stage all unstaged hunks. No SHA arguments required. |
+| `--ref <refspec>` | Source the diff from a git ref. **Single ref** (e.g. `HEAD~1`, `abc1234`) is shorthand for `<ref>^..<ref>` — that commit's diff (`git show` semantics). **Range** (e.g. `main..HEAD`) is the literal diff between two refs. Enables cherry-picking or reverting individual hunks from past commits (pair with `--3way` when context has drifted). |
+| `--3way` | When applying a patch fails because surrounding context has drifted, fall back to a 3-way merge instead of erroring. May leave unmerged index entries on conflict. Useful with `--ref <past-commit>`. |
 | `--porcelain` | Tab-separated machine-readable output. See [output format](output.md#porcelain-format-1). |
 | `--tracked-only` | Only include hunks from tracked files. |
 | `--untracked-only` | Only include hunks from untracked files. |
@@ -273,6 +277,8 @@ git-hunk reset [<sha[:lines]>...] [--file <path>] [--all] [--porcelain] [--unifi
 |------|-------------|
 | `--file <path>` | Restrict hash matching to hunks in this file. When used without SHAs, unstages all hunks in the file. May be repeated to match any of several files. |
 | `--all` | Unstage all staged hunks. No SHA arguments required. |
+| `--ref <refspec>` | Source the diff from a git ref. **Single ref** (e.g. `HEAD~1`, `abc1234`) is shorthand for `<ref>^..<ref>` — that commit's diff (`git show` semantics). **Range** (e.g. `main..HEAD`) is the literal diff between two refs. Enables cherry-picking or reverting individual hunks from past commits (pair with `--3way` when context has drifted). |
+| `--3way` | When applying a patch fails because surrounding context has drifted, fall back to a 3-way merge instead of erroring. May leave unmerged index entries on conflict. Useful with `--ref <past-commit>`. |
 | `--porcelain` | Tab-separated machine-readable output. See [output format](output.md#porcelain-format-1). |
 | `--tracked-only` | Only include hunks from tracked files. |
 | `--untracked-only` | Only include hunks from untracked files. |
@@ -329,6 +335,8 @@ git-hunk restore [<sha[:lines]>...] [--file <path>] [--all] [--dry-run] [--porce
 |------|-------------|
 | `--file <path>` | Restrict hash matching to hunks in this file. When used without SHAs, restores all hunks in the file. May be repeated to match any of several files. |
 | `--all` | Restore all unstaged hunks. No SHA arguments required. |
+| `--ref <refspec>` | Source the diff from a git ref. **Single ref** (e.g. `HEAD~1`, `abc1234`) is shorthand for `<ref>^..<ref>` — that commit's diff (`git show` semantics). **Range** (e.g. `main..HEAD`) is the literal diff between two refs. Enables cherry-picking or reverting individual hunks from past commits (pair with `--3way` when context has drifted). |
+| `--3way` | When applying a patch fails because surrounding context has drifted, fall back to a 3-way merge instead of erroring. Either succeeds cleanly or leaves `<<<<<<<` conflict markers in the worktree. Useful for undoing hunks from history with `--ref`. |
 | `--dry-run` | Preview what would be restored without modifying the worktree. Uses `git apply --check`. |
 | `--force` | Required to restore untracked files (they are deleted permanently). |
 | `--porcelain` | Tab-separated machine-readable output. |
@@ -401,6 +409,7 @@ git-hunk count [--staged] [--file <path>] [--unified <n>]
 |------|-------------|
 | `--staged` | Count staged hunks (HEAD vs index) instead of unstaged (index vs worktree) |
 | `--file <path>` | Only count hunks for the given file path. May be repeated to match any of several files. |
+| `--ref <refspec>` | Source the diff from a git ref. **Single ref** (e.g. `HEAD~1`, `abc1234`) is shorthand for `<ref>^..<ref>` — that commit's diff (`git show` semantics). **Range** (e.g. `main..HEAD`) is the literal diff between two refs. Initial commits (no parent) diff against the empty tree. Combines with `--staged` for ref vs index comparison. |
 | `--tracked-only` | Only count hunks from tracked files. |
 | `--untracked-only` | Only count hunks from untracked files. |
 | `--unified <n>` / `-U<n>` / `--unified=<n>` | Number of context lines (default: git's `diff.context` or 3). Affects hunk splitting and therefore count. |
@@ -453,6 +462,7 @@ git-hunk check [--staged] [--exclusive] [--allow-empty] [--file <path>] [--porce
 | `--staged` | Check against staged hunks (HEAD vs index) instead of unstaged (index vs worktree) |
 | `--exclusive` | Assert the provided hashes are the ONLY hunks (scoped by `--file` if given) |
 | `--allow-empty` | Allow zero SHA arguments (useful with `--exclusive` to assert no hunks exist) |
+| `--ref <refspec>` | Source the diff from a git ref. **Single ref** (e.g. `HEAD~1`, `abc1234`) is shorthand for `<ref>^..<ref>` — that commit's diff (`git show` semantics). **Range** (e.g. `main..HEAD`) is the literal diff between two refs. Initial commits (no parent) diff against the empty tree. Combines with `--staged` for ref vs index comparison. |
 | `--file <path>` | Scope all lookups to hunks in this file. May be repeated to match any of several files. |
 | `--porcelain` | Machine-parseable tab-separated output (reports all entries) |
 | `--tracked-only` | Only check hunks from tracked files. |

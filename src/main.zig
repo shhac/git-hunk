@@ -222,43 +222,5 @@ fn handleParseError(stdout: *std.Io.Writer, err: anyerror, cmd: help.Command) no
 
 fn printUsage(stdout: *std.Io.Writer) !void {
     try stdout.print("git-hunk {s}\n", .{build_options.version});
-    try stdout.print(
-        \\
-        \\usage: git-hunk <command> [options] [args]
-        \\
-        \\commands:
-        \\  list      List diff hunks with content hashes
-        \\  diff      Show diff content of specific hunks
-        \\  add       Stage hunks (or selected lines) by hash
-        \\  reset     Unstage hunks (or selected lines) by hash
-        \\  restore   Restore unstaged worktree changes by hash
-        \\  count     Count diff hunks (bare integer output)
-        \\  check     Validate hunk hashes exist in current diff
-        \\  stash     Stash hunks into git stash, remove from worktree
-        \\  commit    Commit specific hunks directly, bypassing manual staging
-        \\
-        \\common options:
-        \\  -U, --unified <n> Lines of diff context (default: git's diff.context or 3)
-        \\  --file <path>     Restrict to hunks in a specific file
-        \\  --tracked-only    Only include hunks from tracked files
-        \\  --untracked-only  Only include hunks from untracked files
-        \\  --porcelain       Machine-readable tab-separated output
-        \\  --no-color        Disable colored output
-        \\  -v, --verbose     Show summary counts and hints
-        \\  -q, --quiet       Suppress all output except errors
-        \\  --help, -h        Show help for a command
-        \\
-        \\examples:
-        \\  git-hunk list                       List unstaged hunks
-        \\  git-hunk add a3f7c21                Stage a hunk by hash
-        \\  git-hunk add a3f7:3-5,8             Stage specific lines from a hunk
-        \\  git-hunk add --all                  Stage all unstaged hunks
-        \\  git-hunk list --staged --oneline    Verify what's staged
-        \\
-        \\Run 'git-hunk <command> --help' for detailed usage of each command.
-        \\
-        \\note: 'git hunk --help' opens the man page. Use 'git hunk help [command]'
-        \\for inline help when using the git subcommand form.
-        \\
-    , .{});
+    try stdout.writeAll(help.top_help);
 }
