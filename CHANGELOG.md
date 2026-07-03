@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.15.3] - 2026-07-03
+
+### Fixed
+- zsh hash completion listings no longer columnize side by side in wide terminals — candidates always display one per row (`compadd -l`), keeping the `list --oneline` table readable.
+
 ## [0.15.2] - 2026-07-03
 
 ### Changed
