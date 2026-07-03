@@ -36,6 +36,22 @@ pub fn build(b: *std.Build) void {
     const run_tests = b.addRunArtifact(exe_tests);
     test_step.dependOn(&run_tests.step);
 
+    const fuzz_exe = b.addExecutable(.{
+        .name = "fuzz-driver",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/fuzz_driver.zig"),
+            .target = target,
+            // Safety checks on, but fast enough for millions of iterations.
+            .optimize = .ReleaseSafe,
+        }),
+    });
+    const fuzz_step = b.step("fuzz", "Brute-force fuzz the diff parser (args: iterations seed)");
+    const run_fuzz = b.addRunArtifact(fuzz_exe);
+    if (b.args) |args| run_fuzz.addArgs(args);
+    fuzz_step.dependOn(&run_fuzz.step);
+    // Install alongside the run so parallel campaigns can invoke zig-out/bin/fuzz-driver directly.
+    fuzz_step.dependOn(&b.addInstallArtifact(fuzz_exe, .{}).step);
+
     const integration_step = b.step("test-integration", "Run integration tests (requires git)");
     const bin_path = b.getInstallPath(.bin, "git-hunk");
     const run_integration = b.addSystemCommand(&.{ "bash", "tests/run-all.sh", bin_path });

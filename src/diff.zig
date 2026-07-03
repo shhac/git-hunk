@@ -1387,3 +1387,56 @@ test "parseExtendedHeaders: noop arms (old mode/new mode/similarity/copy)" {
     // Stops at the --- line.
     try std.testing.expect(std.mem.startsWith(u8, cursor.peek().?, "--- "));
 }
+
+// ============================================================================
+// Fuzzing
+// ============================================================================
+
+/// Fuzz entry: parseDiff must never panic or return an error on arbitrary
+/// input, and every hunk it produces must be hashable. Under `zig build test`
+/// (no --fuzz) this replays the seed corpus as deterministic regression inputs.
+fn fuzzParseDiff(_: void, smith: *std.testing.Smith) anyerror!void {
+    var buf: [1 << 16]u8 = undefined;
+    const len = smith.sliceWithHash(&buf, 0x9e3779b9);
+    const input = buf[0..len];
+
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    inline for ([_]DiffMode{ .unstaged, .staged }) |mode| {
+        var hunks: std.ArrayList(Hunk) = .empty;
+        try parseDiff(arena, input, mode, &hunks);
+        for (hunks.items) |h| {
+            for (h.sha_hex) |c| try std.testing.expect(std.ascii.isHex(c));
+        }
+    }
+}
+
+/// Smith slice draws consume a 4-byte little-endian length prefix from corpus
+/// input; wrap readable seed diffs so they replay as the intended bytes.
+fn fuzzCorpusEntry(comptime s: []const u8) []const u8 {
+    comptime {
+        var len_bytes: [4]u8 = undefined;
+        std.mem.writeInt(u32, &len_bytes, s.len, .little);
+        const arr = len_bytes ++ s[0..s.len].*;
+        const final = arr;
+        return &final;
+    }
+}
+
+const fuzz_corpus: []const []const u8 = &.{
+    fuzzCorpusEntry("diff --git a/f.txt b/f.txt\nindex 1234567..89abcde 100644\n--- a/f.txt\n+++ b/f.txt\n@@ -1,2 +1,3 @@ fn ctx()\n line\n-old\n+new\n+added\n"),
+    fuzzCorpusEntry("diff --git a/new.txt b/new.txt\nnew file mode 100644\nindex 0000000..e69de29\n"),
+    fuzzCorpusEntry("diff --git a/gone.txt b/gone.txt\ndeleted file mode 100644\nindex e69de29..0000000\n"),
+    fuzzCorpusEntry("diff --git a/img.png b/img.png\nindex 1234567..89abcde 100644\nGIT binary patch\nliteral 5\nMc$`b\n\nliteral 0\nHc$@<O00001\n"),
+    fuzzCorpusEntry("diff --git a/link b/link\nnew file mode 120000\nindex 0000000..1de5659\n--- /dev/null\n+++ b/link\n@@ -0,0 +1 @@\n+target\n\\ No newline at end of file\n"),
+    fuzzCorpusEntry("diff --git a/sub b/sub\nindex 1234567..89abcde 160000\n--- a/sub\n+++ b/sub\n@@ -1 +1 @@\n-Subproject commit aaaa\n+Subproject commit bbbb\n"),
+    fuzzCorpusEntry("diff --git a/r.txt b/s.txt\nsimilarity index 90%\nrename from r.txt\nrename to s.txt\nindex 1234567..89abcde 100644\n--- a/r.txt\n+++ b/s.txt\n@@ -1 +1 @@\n-a\n+b\n"),
+    fuzzCorpusEntry("diff --git a/x b/x\n@@ -1 +1 @@\n"),
+    fuzzCorpusEntry(""),
+};
+
+test "fuzz parseDiff" {
+    try std.testing.fuzz({}, fuzzParseDiff, .{ .corpus = fuzz_corpus });
+}
