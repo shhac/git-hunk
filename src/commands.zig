@@ -1311,6 +1311,11 @@ fn runTempIndexCommit(ctx: CommitContext) ![]const u8 {
         try git.runGitAddFilesWithEnv(ctx.allocator, ctx.binary_paths, &tmp.env_map);
     }
 
+    // Snapshot the user's staged paths before HEAD moves: the hook-path
+    // cleanup below must never touch anything the user had staged.
+    const user_staged_raw: ?[]u8 = git.runGitDiffCachedNames(ctx.allocator) catch null;
+    defer if (user_staged_raw) |raw| ctx.allocator.free(raw);
+
     // 3. Commit from the temp index.
     const commit_output = try git.runGitCommit(ctx.allocator, .{ .message = ctx.message, .amend = ctx.amend, .env_map = &tmp.env_map });
     errdefer ctx.allocator.free(commit_output);
@@ -1341,7 +1346,45 @@ fn runTempIndexCommit(ctx: CommitContext) ![]const u8 {
         };
     }
 
+    // 5. Hook-created paths: files changed by the new commit that we didn't
+    // target and the user hadn't staged (i.e. a pre-commit hook `git add`ed
+    // them into the temp index). Without this they linger as phantom staged
+    // deletions, since the real index never learned about them. Point their
+    // index entries at the new HEAD. Best-effort cosmetic cleanup: any git
+    // failure here just skips it.
+    syncHookCreatedPaths(arena, ctx, user_staged_raw) catch {};
+
     return commit_output;
+}
+
+fn syncHookCreatedPaths(arena: Allocator, ctx: CommitContext, user_staged_raw: ?[]const u8) !void {
+    const changed_raw = try git.runGitDiffTreeNames(ctx.allocator);
+    defer ctx.allocator.free(changed_raw);
+
+    var candidates: std.ArrayList([]const u8) = .empty;
+    defer candidates.deinit(arena);
+
+    var it = std.mem.splitScalar(u8, changed_raw, '\n');
+    outer: while (it.next()) |path| {
+        if (path.len == 0) continue;
+        for (ctx.patches) |p| {
+            const target = firstPatchPath(p) orelse continue;
+            if (std.mem.eql(u8, target, path)) continue :outer;
+        }
+        for (ctx.binary_paths) |bp| {
+            if (std.mem.eql(u8, bp, path)) continue :outer;
+        }
+        if (user_staged_raw) |raw| {
+            var sit = std.mem.splitScalar(u8, raw, '\n');
+            while (sit.next()) |staged| {
+                if (staged.len > 0 and std.mem.eql(u8, staged, path)) continue :outer;
+            }
+        }
+        try candidates.append(arena, try arena.dupe(u8, path));
+    }
+    if (candidates.items.len > 0) {
+        try git.runGitResetFilesLenient(ctx.allocator, candidates.items);
+    }
 }
 
 fn printCommitResults(stdout: *std.Io.Writer, opts: CommitOptions, matched: []const MatchedHunk, commit_output: []const u8) !void {

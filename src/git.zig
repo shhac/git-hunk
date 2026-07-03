@@ -254,6 +254,43 @@ pub fn runGitAddFilesWithEnv(allocator: Allocator, file_paths: []const []const u
     allocator.free(out);
 }
 
+/// Paths changed by HEAD relative to its first parent (newline-separated;
+/// --root covers parentless commits). Returns an error instead of fatal.
+pub fn runGitDiffTreeNames(allocator: Allocator) ![]u8 {
+    const result = try runCommand(allocator, &.{ "git", "diff-tree", "-r", "--name-only", "--no-commit-id", "--root", "HEAD" }, .{});
+    defer allocator.free(result.stderr);
+    if (result.exit_code != 0) {
+        allocator.free(result.stdout);
+        return error.DiffTreeFailed;
+    }
+    return result.stdout;
+}
+
+/// Paths with staged changes (`git diff --cached --name-only`),
+/// newline-separated. Returns an error instead of fatal.
+pub fn runGitDiffCachedNames(allocator: Allocator) ![]u8 {
+    const result = try runCommand(allocator, &.{ "git", "diff", "--cached", "--name-only" }, .{});
+    defer allocator.free(result.stderr);
+    if (result.exit_code != 0) {
+        allocator.free(result.stdout);
+        return error.DiffFailed;
+    }
+    return result.stdout;
+}
+
+/// Reset index entries to HEAD for the given paths, returning an error on
+/// git failure instead of exiting. For best-effort cleanup passes.
+pub fn runGitResetFilesLenient(allocator: Allocator, file_paths: []const []const u8) !void {
+    var argv: std.ArrayList([]const u8) = .empty;
+    defer argv.deinit(allocator);
+    try argv.appendSlice(allocator, &.{ "git", "reset", "-q", "HEAD", "--" });
+    try argv.appendSlice(allocator, file_paths);
+    const result = try runCommand(allocator, argv.items, .{});
+    allocator.free(result.stdout);
+    allocator.free(result.stderr);
+    if (result.exit_code != 0) return error.ResetFailed;
+}
+
 /// Stage files by path, returning an error on git failure instead of
 /// exiting the process. For post-commit index resync, where a failure
 /// must downgrade to a warning (the commit already succeeded).

@@ -179,18 +179,19 @@ pass "test 1104: S8 near-overlap aborts, S8b far-apart succeeds with staged half
 
 # ============================================================================
 # Test 1105 (S9): a pre-commit hook that creates + `git add`s a file gets that
-# file INTO the commit (hooks see the transaction index).
-#
-# KNOWN WART, pinned deliberately: after the commit, the restored index
-# predates the hook's `git add`, so hookfix.txt shows as a phantom staged
-# deletion (`D  hookfix.txt`) plus untracked (`?? hookfix.txt`). If a future
-# redesign fixes this, this test SHOULD fail and be updated consciously.
+# file INTO the commit (hooks see the transaction index), and afterwards the
+# hook-created path is fully clean: its index entry is synced to the new
+# HEAD, so there is no phantom staged deletion and no untracked leftover.
+# User-staged paths (including staged deletions) must survive the cleanup.
 # ============================================================================
 new_repo
 mkdir -p .git/hooks
 printf '#!/bin/sh\necho fixed > hookfix.txt\ngit add hookfix.txt\n' > .git/hooks/pre-commit
 chmod +x .git/hooks/pre-commit
 sed -i.bak '1s/.*/unstaged one s9/' alpha.txt
+printf 'staged s9\n' > staged1105.txt
+git add staged1105.txt              # user-staged addition: must survive
+git rm -q beta.txt                  # user-staged deletion: must survive
 
 SHA1105="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
 [[ -n "$SHA1105" ]] || fail "test 1105: no unstaged hunk found"
@@ -202,13 +203,15 @@ echo "$COMMITTED1105" | grep -q "^alpha.txt$" \
 echo "$COMMITTED1105" | grep -q "^hookfix.txt$" \
     || fail "test 1105: hook-added hookfix.txt missing from commit"
 STATUS1105="$(git status --short)"
-echo "$STATUS1105" | grep -q "^D  hookfix.txt$" \
-    || fail "test 1105: expected phantom staged deletion 'D  hookfix.txt' (known wart), got: '$STATUS1105'"
-echo "$STATUS1105" | grep -q "^?? hookfix.txt$" \
-    || fail "test 1105: expected untracked '?? hookfix.txt' (known wart), got: '$STATUS1105'"
+echo "$STATUS1105" | grep -q "hookfix.txt" \
+    && fail "test 1105: hook-created path should be clean after commit, got: '$STATUS1105'"
+echo "$STATUS1105" | grep -q "^A  staged1105.txt$" \
+    || fail "test 1105: user-staged addition lost, got: '$STATUS1105'"
+echo "$STATUS1105" | grep -q "^D  beta.txt$" \
+    || fail "test 1105: user-staged deletion lost, got: '$STATUS1105'"
 [[ "$(cat hookfix.txt)" == "fixed" ]] \
     || fail "test 1105: hookfix.txt worktree content wrong"
-pass "test 1105: S9 hook-added file lands in commit (phantom D + ?? wart pinned)"
+pass "test 1105: S9 hook-added file lands in commit; index synced, staged work intact"
 
 # ============================================================================
 # Tests 1106-1109: fault injection via tests/git-shim.sh — a `git` shim
