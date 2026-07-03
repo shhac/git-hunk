@@ -47,8 +47,9 @@ jobs:
       - name: Create tarball
         run: |
           cp doc/git-hunk.1 zig-out/bin/
+          cp -R completions zig-out/bin/completions
           cd zig-out/bin
-          tar -czf ../../git-hunk-${{ matrix.platform }}.tar.gz git-hunk git-hunk.1
+          tar -czf ../../git-hunk-${{ matrix.platform }}.tar.gz git-hunk git-hunk.1 completions
           cd ../..
 
       - name: Upload artifact
@@ -82,7 +83,7 @@ jobs:
       - name: Create universal binary
         run: |
           lipo -create -output git-hunk git-hunk-x86_64 git-hunk-aarch64
-          tar -czf git-hunk-macos-universal.tar.gz git-hunk git-hunk.1
+          tar -czf git-hunk-macos-universal.tar.gz git-hunk git-hunk.1 completions
 
       - name: Upload universal artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -210,6 +211,11 @@ jobs:
             def install
               bin.install "git-hunk"
               man1.install "git-hunk.1" if File.exist? "git-hunk.1"
+              if File.directory? "completions"
+                bash_completion.install "completions/git-hunk.bash" => "git-hunk"
+                zsh_completion.install "completions/_git-hunk", "completions/_git_hunk"
+                fish_completion.install "completions/git-hunk.fish"
+              end
             end
 
             test do
