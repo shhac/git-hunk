@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.15.0] - 2026-07-03
+
+### Added
+- Shell completions for bash, zsh, and fish (`completions/`), covering both `git-hunk` and `git hunk` invocation forms, with live hunk-hash completion from `list --porcelain --oneline` (staged hashes for `reset`), `--ref` completion from git refs, and `--file` path completion. Release tarballs now ship them and the Homebrew formula installs them.
+- `zig build fuzz` — a brute-force mutating fuzzer for the diff parser (`src/fuzz_driver.zig`), plus a corpus-seeded fuzz test in `src/diff.zig` that replays deterministic regression inputs under `zig build test`. 8 million mutated inputs survived clean at time of writing. (Coverage-guided `zig build test --fuzz` is blocked on a Zig 0.16.0 stdlib bug.)
+- `zig build docs` — CLI documentation facts (commands, flags, arguments, examples) are now single-sourced in `src/spec.zig`. `--help` and top-level usage render from it at comptime; the man page's COMMANDS/GLOBAL OPTIONS sections are generated from it; and the skill reference plus all three shell completions are coverage-checked against it. `zig build docs -- --check` runs in CI as a drift gate.
+
+### Changed
+- `--help` flag display normalized to short-form-first (`-h, --help`, `-u, --include-untracked`); example columns aligned consistently across commands.
+- `count` now documents its accepted no-op flags (`--porcelain`, `--no-color`, `-v`); top-level help now documents `-V, --version`.
+- The version string is single-sourced from `build.zig.zon` (`build.zig` imports it; release builds still override via `-Dversion` from the tag).
+
+### Fixed
+- Help and man page no longer claim `--ref` "combines with `--staged`" on `add`, `reset`, and `restore` — those commands reject `--staged`.
+- Skill reference (`commands.md`): added previously missing `--ref` and `--3way` flag documentation across seven commands; corrected the stale claim that `--file` paths must match diff output exactly (they resolve relative to the current directory since 0.10.2).
+
 ## [0.14.3] - 2026-06-13
 
 ### Added
