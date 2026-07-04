@@ -35,6 +35,8 @@ ERR1100="$("$GIT_HUNK" commit "$SHA1100" -m "s2 overlap" 2>&1)" || EC1100=$?
     || fail "test 1100: index backup left behind after abort"
 [[ "$(cat alpha.txt)" == "$WT1100" ]] \
     || fail "test 1100: worktree file changed despite abort"
+echo "$ERR1100" | grep -q "did not apply cleanly" \
+    || fail "test 1100: expected 'did not apply cleanly' on stderr, got: '$ERR1100'"
 pass "test 1100: S2 same-region staged+unstaged overlap aborts cleanly"
 
 # ============================================================================
@@ -96,6 +98,8 @@ git diff --cached --name-status | grep -q "^D	alpha.txt" \
     || fail "test 1102: index backup left behind after abort"
 [[ "$(cat alpha.txt)" == "$(printf 'recreated line one\nrecreated line two\n')" ]] \
     || fail "test 1102: recreated worktree file changed despite abort"
+echo "$ERR1102" | grep -q "already exists in index" \
+    || fail "test 1102: expected 'already exists in index' on stderr, got: '$ERR1102'"
 pass "test 1102: S5 staged-delete + recreate aborts cleanly"
 
 # ============================================================================
@@ -124,6 +128,8 @@ ERR1103="$("$GIT_HUNK" commit "$SHA1103" -m "s6 delete" 2>&1)" || EC1103=$?
     || fail "test 1103: index backup left behind after abort"
 [[ ! -f alpha.txt ]] \
     || fail "test 1103: worktree deletion should be untouched by abort"
+echo "$ERR1103" | grep -q "did not apply cleanly" \
+    || fail "test 1103: expected 'did not apply cleanly' on stderr, got: '$ERR1103'"
 pass "test 1103: S6 staged-mod + worktree-delete aborts cleanly"
 
 # ============================================================================
@@ -403,5 +409,101 @@ echo "$ERR1110" | grep -q "stale index backup" \
     || fail "test 1110: rerun did not commit"
 rm -rf "$KILLSHIM"
 pass "test 1110: kill -9 mid-commit leaves index untouched, rerun clean"
+
+# ============================================================================
+# Test 1111: binary commit preserves the full transactional contract
+# (the binary path uses separate git-add plumbing for temp staging and
+# real-index resync; previously only the commit message was asserted)
+# ============================================================================
+new_repo
+printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00' > image.png
+git add image.png && git commit -q -m "add binary"
+printf 'staged bin1111\n' > staged1111.txt
+git add staged1111.txt                 # user-staged addition: must survive
+printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\xff' > image.png
+STAGED1111="$(git diff --cached)"
+SHA1111="$("$GIT_HUNK" list --porcelain --oneline --file image.png | head -1 | cut -f1)"
+"$GIT_HUNK" commit "$SHA1111" -m "binary invariants" >/dev/null 2>&1 \
+    || fail "test 1111: binary commit failed"
+git show --name-only --pretty=format: HEAD | grep -q "^image.png$" \
+    || fail "test 1111: image.png missing from commit"
+[[ "$(git diff --cached)" == "$STAGED1111" ]] \
+    || fail "test 1111: staged diff changed across the binary commit"
+STATUS1111="$(git status --short)"
+echo "$STATUS1111" | grep -q "image.png" \
+    && fail "test 1111: binary path not clean after commit, got: '$STATUS1111'"
+echo "$STATUS1111" | grep -q "^A  staged1111.txt$" \
+    || fail "test 1111: user-staged addition lost, got: '$STATUS1111'"
+[[ ! -f .git/index.hunk-backup ]] \
+    || fail "test 1111: backup left behind"
+pass "test 1111: binary commit keeps index clean and staged work intact"
+
+# ============================================================================
+# Test 1112: binary resync failure downgrades to a warning, commit stands
+# (shim: 1st `add` stages into the temp index, 2nd is the real-index resync)
+# ============================================================================
+new_repo
+printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00' > image.png
+git add image.png && git commit -q -m "add binary"
+printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\xff' > image.png
+COMMITS1112="$(git rev-list --count HEAD)"
+SHA1112="$("$GIT_HUNK" list --porcelain --oneline --file image.png | head -1 | cut -f1)"
+echo 0 > "$SHIM_COUNT"
+EC1112=0
+ERR1112="$(PATH="$SHIM_DIR:$PATH" GIT_HUNK_SHIM_FAIL=add GIT_HUNK_SHIM_FAIL_ON=2 GIT_HUNK_SHIM_COUNT_FILE="$SHIM_COUNT" \
+    "$GIT_HUNK" commit "$SHA1112" -m "bin resync fail" 2>&1 >/dev/null)" || EC1112=$?
+[[ "$EC1112" -eq 0 ]] \
+    || fail "test 1112: expected exit 0 when only binary resync fails, got $EC1112"
+[[ "$(git rev-list --count HEAD)" -eq "$((COMMITS1112 + 1))" ]] \
+    || fail "test 1112: commit should exist despite binary resync failure"
+echo "$ERR1112" | grep -qi "binary file index sync failed" \
+    || fail "test 1112: expected binary re-sync warning, got: '$ERR1112'"
+pass "test 1112: binary resync failure warns, commit stands, exit 0"
+
+# ============================================================================
+# Test 1113: resync failure warning names the failed patch's first path
+# (a multi-file selection builds ONE combined patch — apply runs once for
+# temp staging and once for resync, so FAIL_ON=2 hits the resync; a
+# patches-count > 1 needs a typechange split and is not exercised here)
+# ============================================================================
+new_repo
+sed -i.bak '1s/.*/multi one/' alpha.txt && rm alpha.txt.bak
+sed -i.bak '1s/.*/multi two/' beta.txt && rm beta.txt.bak
+COMMITS1113="$(git rev-list --count HEAD)"
+SHA1113A="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA1113B="$("$GIT_HUNK" list --porcelain --oneline --file beta.txt | head -1 | cut -f1)"
+echo 0 > "$SHIM_COUNT"
+EC1113=0
+ERR1113="$(PATH="$SHIM_DIR:$PATH" GIT_HUNK_SHIM_FAIL=apply GIT_HUNK_SHIM_FAIL_ON=2 GIT_HUNK_SHIM_COUNT_FILE="$SHIM_COUNT" \
+    "$GIT_HUNK" commit "$SHA1113A" "$SHA1113B" -m "multi resync" 2>&1 >/dev/null)" || EC1113=$?
+[[ "$EC1113" -eq 0 ]] \
+    || fail "test 1113: expected exit 0, got $EC1113"
+[[ "$(git rev-list --count HEAD)" -eq "$((COMMITS1113 + 1))" ]] \
+    || fail "test 1113: commit should exist"
+echo "$ERR1113" | grep -q "index sync failed for 1 patch(es)" \
+    || fail "test 1113: expected sync failure warning, got: '$ERR1113'"
+echo "$ERR1113" | grep -qE "First failure: (alpha|beta).txt" \
+    || fail "test 1113: expected first-failure path in warning, got: '$ERR1113'"
+pass "test 1113: resync failure warning reports count and first path"
+
+# ============================================================================
+# Test 1114: --dry-run of a binary-only selection mutates nothing
+# ============================================================================
+new_repo
+printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00' > image.png
+git add image.png && git commit -q -m "add binary"
+printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\xff' > image.png
+COMMITS1114="$(git rev-list --count HEAD)"
+HUNKS1114="$("$GIT_HUNK" count)"
+SHA1114="$("$GIT_HUNK" list --porcelain --oneline --file image.png | head -1 | cut -f1)"
+OUT1114="$("$GIT_HUNK" commit --dry-run "$SHA1114" -m "preview" 2>/dev/null)" \
+    || fail "test 1114: binary dry-run should exit 0"
+echo "$OUT1114" | grep -q "would commit" \
+    || fail "test 1114: expected 'would commit' output, got: '$OUT1114'"
+[[ "$(git rev-list --count HEAD)" -eq "$COMMITS1114" ]] \
+    || fail "test 1114: dry-run created a commit"
+[[ "$("$GIT_HUNK" count)" -eq "$HUNKS1114" ]] \
+    || fail "test 1114: dry-run changed the hunk count"
+pass "test 1114: binary-only dry-run previews without mutating"
 
 report_results

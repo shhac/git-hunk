@@ -19,21 +19,12 @@ pub fn findHunkByShaPrefix(hunks: []const Hunk, prefix: []const u8, file_filter:
     return match orelse error.NotFound;
 }
 
-pub fn matchedHunkPatchOrder(_: void, a: MatchedHunk, b: MatchedHunk) bool {
+fn matchedHunkPatchOrder(_: void, a: MatchedHunk, b: MatchedHunk) bool {
     const path_order = std.mem.order(u8, a.hunk.file_path, b.hunk.file_path);
     if (path_order != .eq) return path_order == .lt;
     // Typechange: deleted file before new file (delete must apply first)
     if (a.hunk.is_deleted_file != b.hunk.is_deleted_file) return a.hunk.is_deleted_file;
     return a.hunk.old_start < b.hunk.old_start;
-}
-
-/// Compare hunks for sorting: by file path, then by old_start (line order within file).
-pub fn hunkPatchOrder(_: void, a: *const Hunk, b: *const Hunk) bool {
-    const path_order = std.mem.order(u8, a.file_path, b.file_path);
-    if (path_order != .eq) return path_order == .lt;
-    // Typechange: deleted file before new file (delete must apply first)
-    if (a.is_deleted_file != b.is_deleted_file) return a.is_deleted_file;
-    return a.old_start < b.old_start;
 }
 
 /// Collect unique file paths from matched hunks (preserving first-seen order).
@@ -116,7 +107,16 @@ pub fn partitionByKind(arena: Allocator, matches: []const MatchedHunk) !HunkPart
 /// Build one or more patches from matched hunks. Returns multiple patches when
 /// typechanges are present (same file with delete + create requires separate
 /// git-apply calls because git cannot apply both in a single patch).
-pub fn buildCombinedPatches(arena: Allocator, matches: []const MatchedHunk) ![]const []const u8 {
+/// Sort matches into patch order, then build the combined per-file patches.
+/// Sorting first is a correctness precondition of buildCombinedPatches
+/// (typechange deletions must precede creations); this keeps the pair
+/// inseparable at call sites.
+pub fn sortAndBuildPatches(arena: Allocator, matches: []MatchedHunk) ![]const []const u8 {
+    std.mem.sort(MatchedHunk, matches, {}, matchedHunkPatchOrder);
+    return buildCombinedPatches(arena, matches);
+}
+
+fn buildCombinedPatches(arena: Allocator, matches: []const MatchedHunk) ![]const []const u8 {
     var patches: std.ArrayList([]const u8) = .empty;
     var patch: std.ArrayList(u8) = .empty;
 
@@ -159,16 +159,6 @@ pub fn buildCombinedPatches(arena: Allocator, matches: []const MatchedHunk) ![]c
     }
 
     return patches.items;
-}
-
-/// Backwards-compatible wrapper returning a single patch. Only safe when
-/// typechanges are impossible (e.g. single-hunk callers). Asserts in debug
-/// mode if multiple patches would be needed.
-pub fn buildCombinedPatch(arena: Allocator, matches: []const MatchedHunk) ![]const u8 {
-    const patches = try buildCombinedPatches(arena, matches);
-    if (patches.len == 0) return "";
-    std.debug.assert(patches.len == 1);
-    return patches[0];
 }
 
 /// Build a filtered hunk patch containing only selected lines.
@@ -282,25 +272,6 @@ fn buildFilteredHunkPatch(arena: Allocator, h: *const Hunk, line_spec: LineSpec)
 const testMakeHunk = types.testMakeHunk;
 const computeHunkSha = types.computeHunkSha;
 
-test "hunkPatchOrder same file by line" {
-    const a = testMakeHunk("a.txt", 5, 3, 5, 3);
-    const b = testMakeHunk("a.txt", 10, 2, 10, 2);
-    try std.testing.expect(hunkPatchOrder({}, &a, &b));
-    try std.testing.expect(!hunkPatchOrder({}, &b, &a));
-}
-
-test "hunkPatchOrder different files" {
-    const a = testMakeHunk("a.txt", 100, 1, 100, 1);
-    const b = testMakeHunk("b.txt", 1, 1, 1, 1);
-    try std.testing.expect(hunkPatchOrder({}, &a, &b));
-    try std.testing.expect(!hunkPatchOrder({}, &b, &a));
-}
-
-test "hunkPatchOrder equal is not less" {
-    const a = testMakeHunk("a.txt", 5, 3, 5, 3);
-    try std.testing.expect(!hunkPatchOrder({}, &a, &a));
-}
-
 test "findHunkByShaPrefix exact match" {
     const sha = computeHunkSha("a.zig", 1, "+line");
     var h = testMakeHunk("a.zig", 1, 1, 1, 1);
@@ -353,88 +324,6 @@ test "findHunkByShaPrefix file filter matches any-of" {
     const filter = [_][]const u8{ "z.zig", "a.zig", "x.zig" };
     const found = try findHunkByShaPrefix(&hunks, sha[0..7], &filter);
     try std.testing.expectEqualStrings("a.zig", found.file_path);
-}
-
-test "buildCombinedPatch single hunk" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    var h = testMakeHunk("f.txt", 1, 1, 1, 1);
-    h.patch_header = "--- a/f.txt\n+++ b/f.txt\n";
-    h.raw_lines = "@@ -1 +1 @@\n-old\n+new\n";
-    const matches = [_]MatchedHunk{.{ .hunk = &h, .line_spec = null }};
-    const patch = try buildCombinedPatch(arena.allocator(), &matches);
-    try std.testing.expectEqualStrings(
-        "--- a/f.txt\n+++ b/f.txt\n@@ -1 +1 @@\n-old\n+new\n",
-        patch,
-    );
-}
-
-test "buildCombinedPatch same file deduplicates header" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const header = "--- a/f.txt\n+++ b/f.txt\n";
-    var h1 = testMakeHunk("f.txt", 1, 1, 1, 1);
-    h1.patch_header = header;
-    h1.raw_lines = "@@ -1 +1 @@\n-old1\n+new1\n";
-    var h2 = testMakeHunk("f.txt", 10, 1, 10, 1);
-    h2.patch_header = header;
-    h2.raw_lines = "@@ -10 +10 @@\n-old2\n+new2\n";
-    const matches = [_]MatchedHunk{
-        .{ .hunk = &h1, .line_spec = null },
-        .{ .hunk = &h2, .line_spec = null },
-    };
-    const patch = try buildCombinedPatch(arena.allocator(), &matches);
-    try std.testing.expectEqualStrings(
-        "--- a/f.txt\n+++ b/f.txt\n@@ -1 +1 @@\n-old1\n+new1\n@@ -10 +10 @@\n-old2\n+new2\n",
-        patch,
-    );
-}
-
-test "buildCombinedPatch multiple files" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    var h1 = testMakeHunk("a.txt", 1, 1, 1, 1);
-    h1.patch_header = "--- a/a.txt\n+++ b/a.txt\n";
-    h1.raw_lines = "@@ -1 +1 @@\n-a\n+A\n";
-    var h2 = testMakeHunk("b.txt", 1, 1, 1, 1);
-    h2.patch_header = "--- a/b.txt\n+++ b/b.txt\n";
-    h2.raw_lines = "@@ -1 +1 @@\n-b\n+B\n";
-    const matches = [_]MatchedHunk{
-        .{ .hunk = &h1, .line_spec = null },
-        .{ .hunk = &h2, .line_spec = null },
-    };
-    const patch = try buildCombinedPatch(arena.allocator(), &matches);
-    try std.testing.expectEqualStrings(
-        "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-a\n+A\n--- a/b.txt\n+++ b/b.txt\n@@ -1 +1 @@\n-b\n+B\n",
-        patch,
-    );
-}
-
-test "buildCombinedPatch adds trailing newline" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    var h = testMakeHunk("f.txt", 1, 1, 1, 1);
-    h.patch_header = "--- a/f.txt\n+++ b/f.txt\n";
-    h.raw_lines = "@@ -1 +1 @@\n-old\n+new"; // no trailing newline
-    const matches = [_]MatchedHunk{.{ .hunk = &h, .line_spec = null }};
-    const patch = try buildCombinedPatch(arena.allocator(), &matches);
-    try std.testing.expect(patch[patch.len - 1] == '\n');
-}
-
-test "buildCombinedPatch with line spec filter" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    var h = testMakeHunk("f.txt", 1, 3, 1, 3);
-    h.patch_header = "--- a/f.txt\n+++ b/f.txt\n";
-    h.raw_lines = "@@ -1,3 +1,3 @@\n ctx\n-old\n+new\n ctx2\n";
-    const ranges = [_]LineRange{.{ .start = 2, .end = 3 }};
-    const matches = [_]MatchedHunk{.{ .hunk = &h, .line_spec = .{ .ranges = &ranges } }};
-    const patch = try buildCombinedPatch(arena.allocator(), &matches);
-    // Selecting all changes produces same counts as original
-    try std.testing.expectEqualStrings(
-        "--- a/f.txt\n+++ b/f.txt\n@@ -1,3 +1,3 @@\n ctx\n-old\n+new\n ctx2\n",
-        patch,
-    );
 }
 
 test "buildFilteredHunkPatch select one addition" {

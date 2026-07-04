@@ -1,5 +1,4 @@
 const std = @import("std");
-const posix = std.posix;
 const types = @import("types.zig");
 const diff_mod = @import("diff.zig");
 const git = @import("git.zig");
@@ -791,8 +790,7 @@ fn applyTextAndBinary(
 ) !bool {
     var any_conflicts = false;
     if (text_matched.len > 0) {
-        std.mem.sort(MatchedHunk, text_matched, {}, patch_mod.matchedHunkPatchOrder);
-        const patches = try patch_mod.buildCombinedPatches(arena, text_matched);
+        const patches = try patch_mod.sortAndBuildPatches(arena, text_matched);
         const reverse = action == .unstage;
         const apply_opts = git.ApplyOptions{ .reverse = reverse, .target = .index, .three_way = three_way, .ref = ref };
         if (reverse) {
@@ -974,8 +972,7 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
     // Text hunks: reverse-apply patches to worktree
     var any_restore_conflicts = false;
     if (text_matched.len > 0) {
-        std.mem.sort(MatchedHunk, text_matched, {}, patch_mod.matchedHunkPatchOrder);
-        const patches = try patch_mod.buildCombinedPatches(arena, text_matched);
+        const patches = try patch_mod.sortAndBuildPatches(arena, text_matched);
         var i: usize = patches.len;
         while (i > 0) {
             i -= 1;
@@ -1140,7 +1137,7 @@ fn buildStashTree(
         owns = true;
     }
     if (partition.tracked_binary_paths.len > 0) {
-        const new_tree = try stash_mod.addBinaryFilesToTree(arena, allocator, tree, partition.tracked_binary_paths, env_map);
+        const new_tree = try stash_mod.addBinaryFilesToTree(allocator, tree, partition.tracked_binary_paths, env_map);
         if (owns) allocator.free(tree);
         tree = new_tree;
         owns = true;
@@ -1242,7 +1239,6 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
     try stash_mod.reportStashResults(stdout, opts, matched.items);
 }
 
-/// Restore the index from the backup (best-effort) and exit. Used when the
 /// Extract the first file path from a patch's leading `diff --git a/<path> b/<path>`
 /// line, for warning-message diagnostics. Returns null if the patch doesn't start
 /// with the expected header.
@@ -1254,9 +1250,21 @@ fn firstPatchPath(patch: []const u8) ?[]const u8 {
     return after[0..sp];
 }
 
-/// If a stale `index.hunk-backup` exists from a previously-interrupted commit,
-/// restore it over `index` and remove it. Exits on restore failure.
-fn recoverStaleIndexBackup(cwd: std.Io.Dir, io: std.Io, backup_path: []const u8, index_path: []const u8) void {
+/// If a stale `index.hunk-backup` exists from a commit interrupted under a
+/// pre-temp-index version of git-hunk, restore it over `index` and remove
+/// it. Exits on restore failure. Current versions never write this backup;
+/// this heals crashes from upgrades only.
+fn legacyRecoverIndexBackup(allocator: Allocator) !void {
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const git_dir = try git.runGitRevParseGitDir(allocator);
+    defer allocator.free(git_dir);
+    const index_path = try std.fmt.allocPrint(arena, "{s}/index", .{git_dir});
+    const backup_path = try std.fmt.allocPrint(arena, "{s}/index.hunk-backup", .{git_dir});
+    const io = defaultIo();
+    const cwd = std.Io.Dir.cwd();
+
     _ = cwd.statFile(io, backup_path, .{}) catch return;
     std.debug.print("warning: stale index backup found from interrupted commit -- restoring original index\n", .{});
     std.Io.Dir.copyFile(cwd, backup_path, cwd, index_path, io, .{}) catch {
@@ -1292,7 +1300,7 @@ fn runTempIndexCommit(ctx: CommitContext) ![]const u8 {
     const arena = arena_state.allocator();
 
     // 1. Temp index seeded from HEAD (or HEAD~1 for amend).
-    var tmp = try stash_mod.createTempIndex(arena, ctx.allocator, ctx.env_map, "commit-");
+    var tmp = try git.createTempIndex(ctx.allocator, ctx.env_map, "commit-");
     defer tmp.deinit();
     const read_tree_ref: []const u8 = if (ctx.amend) "HEAD~1" else "HEAD";
     try git.runGitReadTree(ctx.allocator, read_tree_ref, &tmp.env_map);
@@ -1308,7 +1316,7 @@ fn runTempIndexCommit(ctx: CommitContext) ![]const u8 {
         }
     }
     if (ctx.binary_paths.len > 0) {
-        try git.runGitAddFilesWithEnv(ctx.allocator, ctx.binary_paths, &tmp.env_map);
+        try git.runGitAddFilesLenient(ctx.allocator, ctx.binary_paths, &tmp.env_map);
     }
 
     // Snapshot the user's staged paths before HEAD moves: the hook-path
@@ -1318,12 +1326,28 @@ fn runTempIndexCommit(ctx: CommitContext) ![]const u8 {
 
     // 3. Commit from the temp index.
     const commit_output = try git.runGitCommit(ctx.allocator, .{ .message = ctx.message, .amend = ctx.amend, .env_map = &tmp.env_map });
-    errdefer ctx.allocator.free(commit_output);
 
-    // 4. Sync the real index with the new HEAD (text via patch, binary via
-    // git add). Mirror the --3way mode used to land the patches so the
-    // synced content matches the merged result. Continue past failures and
-    // report a per-patch summary -- the commit already succeeded.
+    // 4. Sync the real index with the new HEAD; warning-only, the commit
+    // already succeeded.
+    syncRealIndex(ctx);
+
+    // 5. Hook-created paths: files changed by the new commit that we didn't
+    // target and the user hadn't staged (i.e. a pre-commit hook `git add`ed
+    // them into the temp index). Without this they linger as phantom staged
+    // deletions, since the real index never learned about them. Point their
+    // index entries at the new HEAD. Best-effort cosmetic cleanup: any git
+    // failure here just skips it.
+    syncHookCreatedPaths(arena, ctx, user_staged_raw) catch {};
+
+    return commit_output;
+}
+
+/// Re-apply the committed patches (and re-add committed binaries) to the
+/// user's real index so it matches the new HEAD. Mirrors the --3way mode
+/// used to land the patches so the synced content matches the merged
+/// result. Continues past failures with a per-patch summary -- the commit
+/// already stands, so everything here downgrades to warnings.
+fn syncRealIndex(ctx: CommitContext) void {
     var failed_paths: std.ArrayList([]const u8) = .empty;
     defer failed_paths.deinit(ctx.allocator);
     for (ctx.patches) |p| {
@@ -1341,50 +1365,58 @@ fn runTempIndexCommit(ctx: CommitContext) ![]const u8 {
         std.debug.print("warning: commit succeeded but index sync failed for {d} patch(es) -- run 'git hunk add' to re-sync. First failure: {s}\n", .{ failed_paths.items.len, failed_paths.items[0] });
     }
     if (ctx.binary_paths.len > 0) {
-        git.runGitAddFilesLenient(ctx.allocator, ctx.binary_paths) catch {
+        git.runGitAddFilesLenient(ctx.allocator, ctx.binary_paths, null) catch {
             std.debug.print("warning: commit succeeded but binary file index sync failed -- run 'git add' to re-sync\n", .{});
         };
     }
-
-    // 5. Hook-created paths: files changed by the new commit that we didn't
-    // target and the user hadn't staged (i.e. a pre-commit hook `git add`ed
-    // them into the temp index). Without this they linger as phantom staged
-    // deletions, since the real index never learned about them. Point their
-    // index entries at the new HEAD. Best-effort cosmetic cleanup: any git
-    // failure here just skips it.
-    syncHookCreatedPaths(arena, ctx, user_staged_raw) catch {};
-
-    return commit_output;
 }
 
 fn syncHookCreatedPaths(arena: Allocator, ctx: CommitContext, user_staged_raw: ?[]const u8) !void {
     const changed_raw = try git.runGitDiffTreeNames(ctx.allocator);
     defer ctx.allocator.free(changed_raw);
+    const candidates = try computeHookCreatedPaths(arena, changed_raw, ctx.patches, ctx.binary_paths, user_staged_raw);
+    if (candidates.len > 0) {
+        try git.runGitResetFilesLenient(ctx.allocator, candidates);
+    }
+}
 
+/// True if `path` was a commit target (text patch or binary) or was staged
+/// by the user before the commit — i.e. anything that is NOT hook-created.
+fn isTargetOrUserStaged(path: []const u8, patches: []const []const u8, binary_paths: []const []const u8, user_staged_raw: ?[]const u8) bool {
+    for (patches) |p| {
+        const target = firstPatchPath(p) orelse continue;
+        if (std.mem.eql(u8, target, path)) return true;
+    }
+    for (binary_paths) |bp| {
+        if (std.mem.eql(u8, bp, path)) return true;
+    }
+    if (user_staged_raw) |raw| {
+        var it = std.mem.splitScalar(u8, raw, '\n');
+        while (it.next()) |staged| {
+            if (staged.len > 0 and std.mem.eql(u8, staged, path)) return true;
+        }
+    }
+    return false;
+}
+
+/// Pure core of the hook-created-path cleanup: from the newline list of
+/// paths changed by the new commit, keep only those that were neither
+/// commit targets nor user-staged. Results are arena-owned.
+fn computeHookCreatedPaths(
+    arena: Allocator,
+    changed_raw: []const u8,
+    patches: []const []const u8,
+    binary_paths: []const []const u8,
+    user_staged_raw: ?[]const u8,
+) ![]const []const u8 {
     var candidates: std.ArrayList([]const u8) = .empty;
-    defer candidates.deinit(arena);
-
     var it = std.mem.splitScalar(u8, changed_raw, '\n');
-    outer: while (it.next()) |path| {
+    while (it.next()) |path| {
         if (path.len == 0) continue;
-        for (ctx.patches) |p| {
-            const target = firstPatchPath(p) orelse continue;
-            if (std.mem.eql(u8, target, path)) continue :outer;
-        }
-        for (ctx.binary_paths) |bp| {
-            if (std.mem.eql(u8, bp, path)) continue :outer;
-        }
-        if (user_staged_raw) |raw| {
-            var sit = std.mem.splitScalar(u8, raw, '\n');
-            while (sit.next()) |staged| {
-                if (staged.len > 0 and std.mem.eql(u8, staged, path)) continue :outer;
-            }
-        }
+        if (isTargetOrUserStaged(path, patches, binary_paths, user_staged_raw)) continue;
         try candidates.append(arena, try arena.dupe(u8, path));
     }
-    if (candidates.items.len > 0) {
-        try git.runGitResetFilesLenient(ctx.allocator, candidates.items);
-    }
+    return candidates.toOwnedSlice(arena);
 }
 
 fn printCommitResults(stdout: *std.Io.Writer, opts: CommitOptions, matched: []const MatchedHunk, commit_output: []const u8) !void {
@@ -1401,18 +1433,10 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    // Locate git dir and construct backup paths.
-    const git_dir = try git.runGitRevParseGitDir(allocator);
-    defer allocator.free(git_dir);
-    const index_path = try std.fmt.allocPrint(arena, "{s}/index", .{git_dir});
-    const backup_path = try std.fmt.allocPrint(arena, "{s}/index.hunk-backup", .{git_dir});
-    const io = defaultIo();
-    const cwd = std.Io.Dir.cwd();
-
     // Don't run recovery during --dry-run: recovery rewrites the user's index
     // from a backup, which is a real mutation. A user expecting a read-only
     // preview would be surprised to find their index changed.
-    if (!opts.dry_run) recoverStaleIndexBackup(cwd, io, backup_path, index_path);
+    if (!opts.dry_run) try legacyRecoverIndexBackup(allocator);
 
     // Resolve hunks (same pattern as cmdApplyHunks/cmdRestore).
     var hunks: std.ArrayList(Hunk) = .empty;
@@ -1434,9 +1458,7 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
     const text_matched = try partition.combinedText(arena);
     const binary_paths = try partition.allBinaryPaths(arena);
 
-    std.mem.sort(MatchedHunk, text_matched, {}, patch_mod.matchedHunkPatchOrder);
-
-    const patches = try patch_mod.buildCombinedPatches(arena, text_matched);
+    const patches = try patch_mod.sortAndBuildPatches(arena, text_matched);
     if (patches.len == 0 and binary_paths.len == 0) {
         std.debug.print("error: no hunks to commit\n", .{});
         std.process.exit(1);
@@ -1469,7 +1491,7 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
         .env_map = env_map,
     }) catch |err| switch (err) {
         // git's own stderr has already been shown; exit without extra noise.
-        error.ReadTreeFailed, error.CommitFailed => std.process.exit(1),
+        error.ReadTreeFailed, error.CommitFailed, error.AddFailed => std.process.exit(1),
         else => return err,
     };
     defer allocator.free(commit_output);
@@ -1480,6 +1502,50 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
 // ============================================================================
 // Tests
 // ============================================================================
+
+test "computeHookCreatedPaths: hook-added path is a candidate" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const out = try computeHookCreatedPaths(arena, "hookfix.txt\n", &.{}, &.{}, null);
+    try std.testing.expectEqual(@as(usize, 1), out.len);
+    try std.testing.expectEqualStrings("hookfix.txt", out[0]);
+}
+
+test "computeHookCreatedPaths: text patch target is excluded" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const patch = "diff --git a/target.txt b/target.txt\n--- a/target.txt\n+++ b/target.txt\n";
+    const out = try computeHookCreatedPaths(arena, "target.txt\nhookfix.txt\n", &.{patch}, &.{}, null);
+    try std.testing.expectEqual(@as(usize, 1), out.len);
+    try std.testing.expectEqualStrings("hookfix.txt", out[0]);
+}
+
+test "computeHookCreatedPaths: binary target is excluded" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const out = try computeHookCreatedPaths(arena, "img.png\n", &.{}, &.{"img.png"}, null);
+    try std.testing.expectEqual(@as(usize, 0), out.len);
+}
+
+test "computeHookCreatedPaths: user-staged path is excluded (incl. staged deletion)" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const out = try computeHookCreatedPaths(arena, "keep.txt\nhookfix.txt\n", &.{}, &.{}, "keep.txt\nother.txt\n");
+    try std.testing.expectEqual(@as(usize, 1), out.len);
+    try std.testing.expectEqualStrings("hookfix.txt", out[0]);
+}
+
+test "computeHookCreatedPaths: empty input yields no candidates" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const out = try computeHookCreatedPaths(arena, "", &.{}, &.{}, null);
+    try std.testing.expectEqual(@as(usize, 0), out.len);
+}
 
 test "buildResultGroups simple 1-to-1 mapping" {
     const allocator = std.testing.allocator;

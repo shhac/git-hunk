@@ -95,42 +95,46 @@ local _gh_ret=1
     return
   fi
 
+  # Flags shared by every subcommand except count (which drops the output
+  # flags); per-arm flags are listed before it. Sets are drift-checked
+  # against src/spec.zig by `zig build docs`.
+  local -a common=(--file --porcelain --no-color --tracked-only --untracked-only -U --unified -v --verbose -q --quiet -h --help)
   local -a opts
   local hashmode=''
   case $sub in
     list)
-      opts=(--staged --oneline --ref --file --porcelain --no-color --tracked-only --untracked-only -U --unified -v --verbose -q --quiet -h --help)
+      opts=(--staged --oneline --ref $common)
       ;;
     diff)
-      opts=(--staged --ref --file --porcelain --no-color --tracked-only --untracked-only -U --unified -v --verbose -q --quiet -h --help)
+      opts=(--staged --ref $common)
       hashmode=auto
       ;;
     add)
-      opts=(--all --3way --ref --file --porcelain --no-color --tracked-only --untracked-only -U --unified -v --verbose -q --quiet -h --help)
+      opts=(--all --3way --ref $common)
       hashmode=unstaged
       ;;
     reset)
       # reset operates on staged hunks (see `git-hunk help reset`).
-      opts=(--all --3way --ref --file --porcelain --no-color --tracked-only --untracked-only -U --unified -v --verbose -q --quiet -h --help)
+      opts=(--all --3way --ref $common)
       hashmode=staged
       ;;
     restore)
-      opts=(--all --3way --force --dry-run --ref --file --porcelain --no-color --tracked-only --untracked-only -U --unified -v --verbose -q --quiet -h --help)
+      opts=(--all --3way --force --dry-run --ref $common)
       hashmode=unstaged
       ;;
     count)
       opts=(--staged --ref --file --tracked-only --untracked-only -U --unified -q --quiet -h --help)
       ;;
     check)
-      opts=(--staged --exclusive --allow-empty --ref --file --porcelain --no-color --tracked-only --untracked-only -U --unified -v --verbose -q --quiet -h --help)
+      opts=(--staged --exclusive --allow-empty --ref $common)
       hashmode=auto
       ;;
     stash)
-      opts=(--all --include-untracked -u -m --message --file --porcelain --no-color --tracked-only --untracked-only -U --unified -v --verbose -q --quiet -h --help)
+      opts=(--all --include-untracked -u -m --message $common)
       hashmode=unstaged
       ;;
     commit)
-      opts=(-m --message --amend --dry-run --all --3way --ref --file -U --unified --tracked-only --untracked-only --no-color --porcelain -v --verbose -q --quiet -h --help)
+      opts=(-m --message --amend --dry-run --all --3way --ref $common)
       hashmode=unstaged
       ;;
     *)

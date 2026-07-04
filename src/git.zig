@@ -117,6 +117,74 @@ fn runGitCapture(allocator: Allocator, argv: []const []const u8, opts: RunOpts, 
     return trimAndShrink(allocator, result.stdout);
 }
 
+/// Copy an environment map so a child-process-only variable (GIT_INDEX_FILE)
+/// can be added without mutating the parent environment.
+pub fn cloneEnvMap(allocator: Allocator, src: *const EnvMap) !EnvMap {
+    var dst: EnvMap = .{ .array_hash_map = .empty, .allocator = allocator };
+    errdefer dst.deinit();
+    var it = src.array_hash_map.iterator();
+    while (it.next()) |entry| {
+        try dst.put(entry.key_ptr.*, entry.value_ptr.*);
+    }
+    return dst;
+}
+
+/// A throwaway git index in /tmp pre-populated by GIT_INDEX_FILE in `env_map`.
+/// Owns everything it frees; use as
+/// `var tmp = try git.createTempIndex(...); defer tmp.deinit();`.
+pub const TempIndex = struct {
+    env_map: EnvMap,
+    path_z: [:0]const u8,
+    allocator: Allocator,
+
+    pub fn deinit(self: *TempIndex) void {
+        std.Io.Dir.cwd().deleteFile(types.getIo(), self.path_z) catch {};
+        self.env_map.deinit();
+        self.allocator.free(self.path_z);
+    }
+};
+
+/// Build a temporary git index file path under /tmp with a unique random
+/// suffix and return an env map (cloned from `parent_env`) that points
+/// GIT_INDEX_FILE at it. `prefix` becomes part of the filename for
+/// human-readable diagnostics.
+pub fn createTempIndex(allocator: Allocator, parent_env: *const EnvMap, prefix: []const u8) !TempIndex {
+    var random_bytes: [8]u8 = undefined;
+    std.Io.random(types.getIo(), &random_bytes);
+    const random_val = std.mem.readInt(u64, &random_bytes, .little);
+    var path_buf: [96]u8 = undefined;
+    const tmp_path = std.fmt.bufPrint(&path_buf, "/tmp/git-hunk-{s}idx.{x:0>16}", .{ prefix, random_val }) catch unreachable;
+    const path_z = try allocator.dupeZ(u8, tmp_path);
+    errdefer allocator.free(path_z);
+
+    var env_map = try cloneEnvMap(allocator, parent_env);
+    errdefer env_map.deinit();
+    try env_map.put("GIT_INDEX_FILE", path_z);
+    return .{ .env_map = env_map, .path_z = path_z, .allocator = allocator };
+}
+
+const CaptureErrOpts = struct {
+    /// Echo git's stderr on failure. Off for best-effort/cleanup callers
+    /// where git noise would only confuse (their failures are swallowed).
+    echo_stderr: bool = false,
+    trim: bool = true,
+};
+
+/// Error-returning counterpart to runGitCapture: same capture-and-check
+/// contract, but a non-zero exit returns `fail_err` (optionally echoing
+/// git's stderr first) instead of exiting the process. Every lenient
+/// helper is a one-liner over this.
+fn runGitCaptureErr(allocator: Allocator, argv: []const []const u8, run_opts: RunOpts, fail_err: anyerror, opts: CaptureErrOpts) ![]u8 {
+    const result = try runCommand(allocator, argv, run_opts);
+    defer allocator.free(result.stderr);
+    if (result.exit_code != 0) {
+        allocator.free(result.stdout);
+        if (opts.echo_stderr and result.stderr.len > 0) std.debug.print("{s}", .{result.stderr});
+        return fail_err;
+    }
+    return if (opts.trim) trimAndShrink(allocator, result.stdout) else result.stdout;
+}
+
 pub fn runGitDiff(allocator: Allocator, mode: DiffMode, ref: ?[]const u8, context: ?u32) ![]u8 {
     return runGitDiffFiles(allocator, mode, ref, context, &.{});
 }
@@ -248,34 +316,16 @@ pub fn runGitCheckoutFiles(allocator: Allocator, file_paths: []const []const u8)
     allocator.free(out);
 }
 
-/// Stage files by path with a custom environment (for temp index).
-pub fn runGitAddFilesWithEnv(allocator: Allocator, file_paths: []const []const u8, env_map: *const EnvMap) !void {
-    const out = try runGitFileCmd(allocator, &.{ "git", "add" }, file_paths, .{ .env_map = env_map }, "git add");
-    allocator.free(out);
-}
-
 /// Paths changed by HEAD relative to its first parent (newline-separated;
 /// --root covers parentless commits). Returns an error instead of fatal.
 pub fn runGitDiffTreeNames(allocator: Allocator) ![]u8 {
-    const result = try runCommand(allocator, &.{ "git", "diff-tree", "-r", "--name-only", "--no-commit-id", "--root", "HEAD" }, .{});
-    defer allocator.free(result.stderr);
-    if (result.exit_code != 0) {
-        allocator.free(result.stdout);
-        return error.DiffTreeFailed;
-    }
-    return result.stdout;
+    return runGitCaptureErr(allocator, &.{ "git", "diff-tree", "-r", "--name-only", "--no-commit-id", "--root", "HEAD" }, .{}, error.DiffTreeFailed, .{ .trim = false });
 }
 
 /// Paths with staged changes (`git diff --cached --name-only`),
 /// newline-separated. Returns an error instead of fatal.
 pub fn runGitDiffCachedNames(allocator: Allocator) ![]u8 {
-    const result = try runCommand(allocator, &.{ "git", "diff", "--cached", "--name-only" }, .{});
-    defer allocator.free(result.stderr);
-    if (result.exit_code != 0) {
-        allocator.free(result.stdout);
-        return error.DiffFailed;
-    }
-    return result.stdout;
+    return runGitCaptureErr(allocator, &.{ "git", "diff", "--cached", "--name-only" }, .{}, error.DiffFailed, .{ .trim = false });
 }
 
 /// Reset index entries to HEAD for the given paths, returning an error on
@@ -285,27 +335,20 @@ pub fn runGitResetFilesLenient(allocator: Allocator, file_paths: []const []const
     defer argv.deinit(allocator);
     try argv.appendSlice(allocator, &.{ "git", "reset", "-q", "HEAD", "--" });
     try argv.appendSlice(allocator, file_paths);
-    const result = try runCommand(allocator, argv.items, .{});
-    allocator.free(result.stdout);
-    allocator.free(result.stderr);
-    if (result.exit_code != 0) return error.ResetFailed;
+    const out = try runGitCaptureErr(allocator, argv.items, .{}, error.ResetFailed, .{ .trim = false });
+    allocator.free(out);
 }
 
 /// Stage files by path, returning an error on git failure instead of
 /// exiting the process. For post-commit index resync, where a failure
 /// must downgrade to a warning (the commit already succeeded).
-pub fn runGitAddFilesLenient(allocator: Allocator, file_paths: []const []const u8) !void {
+pub fn runGitAddFilesLenient(allocator: Allocator, file_paths: []const []const u8, env_map: ?*const EnvMap) !void {
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(allocator);
     try argv.appendSlice(allocator, &.{ "git", "add", "--" });
     try argv.appendSlice(allocator, file_paths);
-    const result = try runCommand(allocator, argv.items, .{});
-    defer allocator.free(result.stdout);
-    defer allocator.free(result.stderr);
-    if (result.exit_code != 0) {
-        if (result.stderr.len > 0) std.debug.print("{s}", .{result.stderr});
-        return error.AddFailed;
-    }
+    const out = try runGitCaptureErr(allocator, argv.items, .{ .env_map = env_map }, error.AddFailed, .{ .echo_stderr = true, .trim = false });
+    allocator.free(out);
 }
 
 /// Build argv as `prefix... -- file_paths...` and run via runGitCapture.
@@ -436,13 +479,10 @@ pub fn runGitRevParse(allocator: Allocator, ref: []const u8) ![]u8 {
 /// Run `git symbolic-ref --short HEAD` and return the branch name,
 /// or null if HEAD is detached (non-zero exit).
 pub fn runGitSymbolicRef(allocator: Allocator) !?[]u8 {
-    const result = try runCommand(allocator, &.{ "git", "symbolic-ref", "--short", "HEAD" }, .{});
-    allocator.free(result.stderr);
-    if (result.exit_code != 0) {
-        allocator.free(result.stdout);
-        return null;
-    }
-    return try trimAndShrink(allocator, result.stdout);
+    return runGitCaptureErr(allocator, &.{ "git", "symbolic-ref", "--short", "HEAD" }, .{}, error.NoSymbolicRef, .{}) catch |err| switch (err) {
+        error.NoSymbolicRef => null,
+        else => err,
+    };
 }
 
 /// Run `git log --oneline -1 HEAD` and return the trimmed output.
@@ -450,20 +490,9 @@ pub fn runGitLogOneline(allocator: Allocator) ![]u8 {
     return runGitCapture(allocator, &.{ "git", "log", "--oneline", "-1", "HEAD" }, .{}, "git log");
 }
 
-/// Run `git read-tree <sha>` with a custom environment map.
-pub fn runGitReadTreeWithEnv(allocator: Allocator, sha: []const u8, env_map: *const EnvMap) !void {
-    const out = try runGitCapture(allocator, &.{ "git", "read-tree", sha }, .{ .env_map = env_map }, "git read-tree");
-    allocator.free(out);
-}
-
-/// Run `git apply --cached --unidiff-zero` with patch on stdin and custom env.
-pub fn runGitApplyWithEnv(allocator: Allocator, patch: []const u8, env_map: *const EnvMap) !void {
-    const out = try runGitCapture(allocator, &.{ "git", "apply", "--cached", "--unidiff-zero" }, .{ .stdin_data = patch, .env_map = env_map }, "git apply");
-    allocator.free(out);
-}
-
-/// Run `git write-tree` with a custom environment map, return the trimmed tree SHA.
-pub fn runGitWriteTreeWithEnv(allocator: Allocator, env_map: *const EnvMap) ![]u8 {
+/// Run `git write-tree` (against `env_map`'s index when given) and return
+/// the trimmed tree SHA.
+pub fn runGitWriteTree(allocator: Allocator, env_map: ?*const EnvMap) ![]u8 {
     return runGitCapture(allocator, &.{ "git", "write-tree" }, .{ .env_map = env_map }, "git write-tree");
 }
 
@@ -514,13 +543,7 @@ pub fn runGitUpdateIndexCacheinfo(allocator: Allocator, mode: []const u8, blob_h
 
 /// Run `git rev-parse --show-toplevel` and return the trimmed repo root path.
 pub fn runGitToplevel(allocator: Allocator) ![]u8 {
-    const result = try runCommand(allocator, &.{ "git", "rev-parse", "--show-toplevel" }, .{});
-    defer allocator.free(result.stderr);
-    if (result.exit_code != 0) {
-        allocator.free(result.stdout);
-        return error.NotAGitRepo;
-    }
-    return trimAndShrink(allocator, result.stdout);
+    return runGitCaptureErr(allocator, &.{ "git", "rev-parse", "--show-toplevel" }, .{}, error.NotAGitRepo, .{});
 }
 
 // ─── Commit plumbing helpers ──────────────────────────────────────────
@@ -534,13 +557,8 @@ pub fn runGitRevParseGitDir(allocator: Allocator) ![]u8 {
 /// (GIT_INDEX_FILE temp index). Returns an error on failure instead of
 /// calling fatal, so callers can clean up.
 pub fn runGitReadTree(allocator: Allocator, treeish: []const u8, env_map: ?*const EnvMap) !void {
-    const result = try runCommand(allocator, &.{ "git", "read-tree", treeish }, .{ .env_map = env_map });
-    defer allocator.free(result.stdout);
-    defer allocator.free(result.stderr);
-    if (result.exit_code != 0) {
-        if (result.stderr.len > 0) std.debug.print("{s}", .{result.stderr});
-        return error.ReadTreeFailed;
-    }
+    const out = try runGitCaptureErr(allocator, &.{ "git", "read-tree", treeish }, .{ .env_map = env_map }, error.ReadTreeFailed, .{ .echo_stderr = true, .trim = false });
+    allocator.free(out);
 }
 
 /// Run `git commit -m <message> [--amend]` and return the commit output.

@@ -17,45 +17,6 @@ const rangesOverlap = types.rangesOverlap;
 
 const defaultIo = types.getIo;
 
-pub fn cloneEnvMap(allocator: Allocator, src: *const EnvMap) !EnvMap {
-    var dst: EnvMap = .{ .array_hash_map = .empty, .allocator = allocator };
-    errdefer dst.deinit();
-    var it = src.array_hash_map.iterator();
-    while (it.next()) |entry| {
-        try dst.put(entry.key_ptr.*, entry.value_ptr.*);
-    }
-    return dst;
-}
-
-/// A throwaway git index in /tmp pre-populated by GIT_INDEX_FILE in `env_map`.
-/// Use as `var tmp = try createTempIndex(...); defer tmp.deinit();`.
-pub const TempIndex = struct {
-    env_map: EnvMap,
-    path_z: [:0]const u8,
-
-    pub fn deinit(self: *TempIndex) void {
-        std.Io.Dir.cwd().deleteFile(defaultIo(), self.path_z) catch {};
-        self.env_map.deinit();
-    }
-};
-
-/// Build a temporary git index file under /tmp with a unique random suffix and
-/// return an env map (cloned from `parent_env`) that points GIT_INDEX_FILE at
-/// it. `prefix` becomes part of the filename for human-readable diagnostics.
-pub fn createTempIndex(arena: Allocator, allocator: Allocator, parent_env: *const EnvMap, prefix: []const u8) !TempIndex {
-    var random_bytes: [8]u8 = undefined;
-    std.Io.random(defaultIo(), &random_bytes);
-    const random_val = std.mem.readInt(u64, &random_bytes, .little);
-    var path_buf: [96]u8 = undefined;
-    const tmp_path = std.fmt.bufPrint(&path_buf, "/tmp/git-hunk-{s}idx.{x:0>16}", .{ prefix, random_val }) catch unreachable;
-    const path_z = try arena.dupeZ(u8, tmp_path);
-
-    var env_map = try cloneEnvMap(allocator, parent_env);
-    errdefer env_map.deinit();
-    try env_map.put("GIT_INDEX_FILE", path_z);
-    return .{ .env_map = env_map, .path_z = path_z };
-}
-
 /// Worktree line range [start, end] inclusive.
 const WorktreeRange = struct {
     start: u32,
@@ -354,8 +315,7 @@ pub fn buildTrackedStashTree(
     parent_env: *const EnvMap,
 ) !TrackedStashResult {
     // Sort and build INDEX_PATCHES (index-relative, for worktree reverse-apply)
-    std.mem.sort(MatchedHunk, tracked_matched, {}, patch_mod.matchedHunkPatchOrder);
-    const index_patches = try patch_mod.buildCombinedPatches(arena, tracked_matched);
+    const index_patches = try patch_mod.sortAndBuildPatches(arena, tracked_matched);
 
     // Collect unique file paths from tracked hunks for HEAD diff
     const tracked_file_paths = try patch_mod.collectUniqueFilePaths(arena, tracked_matched);
@@ -386,18 +346,17 @@ pub fn buildTrackedStashTree(
     // Sort and build HEAD_PATCH (for temp index apply)
     const head_matched_sorted = try arena.alloc(MatchedHunk, head_matched.len);
     @memcpy(head_matched_sorted, head_matched);
-    std.mem.sort(MatchedHunk, head_matched_sorted, {}, patch_mod.matchedHunkPatchOrder);
-    const head_patches = try patch_mod.buildCombinedPatches(arena, head_matched_sorted);
+    const head_patches = try patch_mod.sortAndBuildPatches(arena, head_matched_sorted);
 
-    var tmp = try createTempIndex(arena, allocator, parent_env, "");
+    var tmp = try git.createTempIndex(allocator, parent_env, "");
     defer tmp.deinit();
 
-    try git.runGitReadTreeWithEnv(allocator, head_tree, &tmp.env_map);
+    try git.runGitReadTree(allocator, head_tree, &tmp.env_map);
     for (head_patches) |hp| {
-        try git.runGitApplyWithEnv(allocator, hp, &tmp.env_map);
+        _ = try git.runGitApply(allocator, hp, .{ .target = .index, .env_map = &tmp.env_map });
     }
 
-    const stash_tree = try git.runGitWriteTreeWithEnv(allocator, &tmp.env_map);
+    const stash_tree = try git.runGitWriteTree(allocator, &tmp.env_map);
     return .{ .index_patches = index_patches, .stash_tree = stash_tree };
 }
 
@@ -412,7 +371,7 @@ pub fn buildUntrackedCommit(
     untracked_matched: []const MatchedHunk,
     parent_env: *const EnvMap,
 ) ![]const u8 {
-    var tmp = try createTempIndex(arena, allocator, parent_env, "ut-");
+    var tmp = try git.createTempIndex(allocator, parent_env, "ut-");
     defer tmp.deinit();
 
     // Hash each untracked file and add to temp index
@@ -438,7 +397,7 @@ pub fn buildUntrackedCommit(
         try git.runGitUpdateIndexCacheinfo(allocator, mode, blob_sha, m.hunk.file_path, &tmp.env_map);
     }
 
-    const untracked_tree = try git.runGitWriteTreeWithEnv(allocator, &tmp.env_map);
+    const untracked_tree = try git.runGitWriteTree(allocator, &tmp.env_map);
     defer allocator.free(untracked_tree);
 
     const ut_msg = try std.fmt.allocPrint(arena, "untracked files on {s}: {s}", .{ branch_name, head_msg });
@@ -479,19 +438,18 @@ pub fn cleanupWorktree(
 /// Add binary files to a stash tree via a temporary git index.
 /// Returns an allocator-owned tree SHA — caller must free.
 pub fn addBinaryFilesToTree(
-    arena: Allocator,
     allocator: Allocator,
     current_tree: []const u8,
     binary_paths: []const []const u8,
     parent_env: *const EnvMap,
 ) ![]const u8 {
-    var tmp = try createTempIndex(arena, allocator, parent_env, "bin-");
+    var tmp = try git.createTempIndex(allocator, parent_env, "bin-");
     defer tmp.deinit();
 
-    try git.runGitReadTreeWithEnv(allocator, current_tree, &tmp.env_map);
-    try git.runGitAddFilesWithEnv(allocator, binary_paths, &tmp.env_map);
+    try git.runGitReadTree(allocator, current_tree, &tmp.env_map);
+    try git.runGitAddFilesLenient(allocator, binary_paths, &tmp.env_map);
 
-    return git.runGitWriteTreeWithEnv(allocator, &tmp.env_map);
+    return git.runGitWriteTree(allocator, &tmp.env_map);
 }
 
 /// Print per-hunk stash results and summary to stdout/stderr.
@@ -960,7 +918,7 @@ test "cloneEnvMap empty parent" {
     const allocator = std.testing.allocator;
     var src: EnvMap = .{ .array_hash_map = .empty, .allocator = allocator };
     defer src.deinit();
-    var dst = try cloneEnvMap(allocator, &src);
+    var dst = try git.cloneEnvMap(allocator, &src);
     defer dst.deinit();
     try std.testing.expectEqual(@as(usize, 0), dst.array_hash_map.count());
 }
@@ -972,7 +930,7 @@ test "cloneEnvMap copies all entries" {
     try src.put("FOO", "1");
     try src.put("BAR", "2");
 
-    var dst = try cloneEnvMap(allocator, &src);
+    var dst = try git.cloneEnvMap(allocator, &src);
     defer dst.deinit();
     try std.testing.expectEqualStrings("1", dst.get("FOO").?);
     try std.testing.expectEqualStrings("2", dst.get("BAR").?);
@@ -984,7 +942,7 @@ test "cloneEnvMap mutating clone doesn't affect source" {
     defer src.deinit();
     try src.put("KEY", "src_value");
 
-    var dst = try cloneEnvMap(allocator, &src);
+    var dst = try git.cloneEnvMap(allocator, &src);
     defer dst.deinit();
     try dst.put("KEY", "dst_value");
 
