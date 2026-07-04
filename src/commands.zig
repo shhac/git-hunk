@@ -1245,7 +1245,20 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
 fn firstPatchPath(patch: []const u8) ?[]const u8 {
     const prefix = "diff --git a/";
     if (!std.mem.startsWith(u8, patch, prefix)) return null;
-    const after = patch[prefix.len..];
+    const line_end = std.mem.indexOfScalar(u8, patch, '\n') orelse patch.len;
+    const after = patch[prefix.len..line_end];
+    // Our patches always name the same path on both sides, so the header is
+    // exactly `<path> b/<path>` -- split symmetrically. This survives spaces
+    // (git does not quote them), unlike splitting on the first space.
+    if (after.len >= 3 and (after.len - 3) % 2 == 0) {
+        const plen = (after.len - 3) / 2;
+        if (std.mem.eql(u8, after[plen .. plen + 3], " b/") and
+            std.mem.eql(u8, after[0..plen], after[plen + 3 ..]))
+        {
+            return after[0..plen];
+        }
+    }
+    // Fallback for asymmetric headers (renames): first space.
     const sp = std.mem.indexOf(u8, after, " ") orelse return null;
     return after[0..sp];
 }
@@ -1502,6 +1515,25 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
 // ============================================================================
 // Tests
 // ============================================================================
+
+test "firstPatchPath plain path" {
+    const patch = "diff --git a/src/main.zig b/src/main.zig\n--- a/src/main.zig\n";
+    try std.testing.expectEqualStrings("src/main.zig", firstPatchPath(patch).?);
+}
+
+test "firstPatchPath path with spaces" {
+    const patch = "diff --git a/my file.txt b/my file.txt\n--- a/my file.txt\n";
+    try std.testing.expectEqualStrings("my file.txt", firstPatchPath(patch).?);
+}
+
+test "firstPatchPath path containing ' b/' splits symmetrically" {
+    const patch = "diff --git a/a b/c.txt b/a b/c.txt\n";
+    try std.testing.expectEqualStrings("a b/c.txt", firstPatchPath(patch).?);
+}
+
+test "firstPatchPath non-header returns null" {
+    try std.testing.expect(firstPatchPath("not a patch") == null);
+}
 
 test "computeHookCreatedPaths: hook-added path is a candidate" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);

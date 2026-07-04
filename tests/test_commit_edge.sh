@@ -506,4 +506,27 @@ echo "$OUT1114" | grep -q "would commit" \
     || fail "test 1114: dry-run changed the hunk count"
 pass "test 1114: binary-only dry-run previews without mutating"
 
+# ============================================================================
+# Test 1115: paths with spaces survive the hook-cleanup exclusion
+# (firstPatchPath used to truncate at the first space, which would have
+# made the hook cleanup treat the committed file itself as hook-created)
+# ============================================================================
+new_repo
+mkdir -p .git/hooks
+printf '#!/bin/sh\necho fixed > hookfix.txt\ngit add hookfix.txt\n' > .git/hooks/pre-commit
+chmod +x .git/hooks/pre-commit
+printf 'space content\n' > "my file.txt"
+SHA1115="$("$GIT_HUNK" list --porcelain --oneline | grep "my file.txt" | head -1 | cut -f1)"
+[[ -n "$SHA1115" ]] || fail "test 1115: no hunk found for spaced path"
+"$GIT_HUNK" commit "$SHA1115" -m "spaced path" >/dev/null 2>&1 \
+    || fail "test 1115: commit of spaced path failed"
+git show --name-only --pretty=format: HEAD | grep -q "^my file.txt$" \
+    || fail "test 1115: spaced path missing from commit"
+STATUS1115="$(git status --short)"
+echo "$STATUS1115" | grep -q "my file.txt" \
+    && fail "test 1115: spaced path not clean after commit, got: '$STATUS1115'"
+echo "$STATUS1115" | grep -q "hookfix.txt" \
+    && fail "test 1115: hook path not clean after commit, got: '$STATUS1115'"
+pass "test 1115: spaced-path commit stays clean through hook cleanup"
+
 report_results
