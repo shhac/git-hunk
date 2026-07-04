@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.16.0] - 2026-07-04
+
+### Changed
+- `git hunk commit` now builds the commit in a throwaway temp index (`GIT_INDEX_FILE`) instead of backing up, rewriting, and restoring the real index. Your staged work is never touched: a crash at any point mid-commit (verified with kill -9 fault injection) leaves the index byte-identical with no recovery needed — at worst a stray temp file in `/tmp`. Hooks still fire normally and see exactly the content being committed. Stale `.git/index.hunk-backup` files from commits interrupted under older versions are still restored automatically.
+- Internal structure pass over the commit/git-subprocess layer: one error-returning capture core replaces six hand-rolled helper bodies, the parallel `*WithEnv` helper family is gone, temp-index plumbing moved to the git layer with self-contained ownership, and the hook-path selection logic is a pure, unit-tested function.
+
+### Fixed
+- Pre-commit hooks that `git add` files (lint fixers etc.) no longer leave a phantom staged deletion plus untracked twin after the commit — hook-created paths are synced into the real index, while user-staged work (including staged deletions) is provably untouched.
+- A binary-add failure mid-commit no longer strands transaction state; it aborts cleanly with user state untouched.
+- Paths containing spaces are parsed correctly from patch headers; previously the hook-path cleanup could mistake a committed spaced path for hook-created, and resync diagnostics printed a truncated name.
+
+### Added
+- 16 commit edge-case integration tests: overlapping staged/unstaged regions in every flavor, `--3way` conflict escalation, git fault injection at each transaction step (via a PATH shim), kill -9 crash recovery, index-modifying hooks, binary-commit transactional invariants, and spaced-path handling.
+
 ## [0.15.3] - 2026-07-03
 
 ### Fixed
