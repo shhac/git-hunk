@@ -1,0 +1,13 @@
+name: Publish skill
+
+on:
+  push:
+    tags: ['v*', 'skill-v*']
+
+jobs:
+  publish-skill:
+    uses: shhac/agent-skills/.github/workflows/sync-skill.yml@main
+    with:
+      skill_name: git-hunk
+    secrets:
+      SKILLS_DEPLOY_KEY: ${{ secrets.SKILLS_DEPLOY_KEY }}
