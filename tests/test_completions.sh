@@ -50,7 +50,9 @@ complete() {
     local fdirs="$COMPLETIONS_DIR"
     [[ -n "$extra" ]] && fdirs="$COMPLETIONS_DIR:$extra"
     rm -f "$OUTDIR/$tag.buf"
-    zsh "$ZSH_HARNESS" "$CURRENT_REPO" "$input" "$OUTDIR/$tag.buf" "$OUTDIR/$tag.disp" "$fdirs" || true
+    if ! zsh "$ZSH_HARNESS" "$CURRENT_REPO" "$input" "$OUTDIR/$tag.buf" "$OUTDIR/$tag.disp" "$fdirs"; then
+        fail "test $tag: completion harness failed"
+    fi
     COMPLETED_BUFFER="$(cat "$OUTDIR/$tag.buf" 2>/dev/null || true)"
     COMPLETED_DISPLAY="$(tr -d '\r\0' < "$OUTDIR/$tag.disp" 2>/dev/null || true)"
 }
@@ -159,7 +161,9 @@ for f in a b c d e f; do
     echo x > "$f.txt"
 done
 rm -f "$OUTDIR/t1405.buf"
-zsh "$ZSH_HARNESS" "$CURRENT_REPO" "git-hunk add " "$OUTDIR/t1405.buf" "$OUTDIR/t1405.disp" "$COMPLETIONS_DIR" 220 || true
+if ! zsh "$ZSH_HARNESS" "$CURRENT_REPO" "git-hunk add " "$OUTDIR/t1405.buf" "$OUTDIR/t1405.disp" "$COMPLETIONS_DIR" 220; then
+    fail "test 1405: completion harness failed"
+fi
 DISP1405="$(perl -pe 's/\x1b\[[0-9;]*[A-Za-z]//g; s/\x00//g' "$OUTDIR/t1405.disp" 2>/dev/null || true)"
 N_SHAS="$(echo "$DISP1405" | grep -cE '[0-9a-f]{7}  ' || true)"
 N_DUAL="$(echo "$DISP1405" | grep -cE '([0-9a-f]{7}.*){2}' || true)"

@@ -28,6 +28,23 @@ drain() {
   print -r -- "$out"
 }
 
+# Ctrl-G invokes dumpbuf in the interactive shell.  Wait for that explicit
+# completion signal instead of assuming a fixed amount of PTY quiet time is
+# enough: a slow `git-hunk list` can otherwise leave the widget queued when
+# the PTY is torn down.
+wait_for_buffer() {
+  local chunk
+  integer attempts=0
+  while (( attempts < 50 )); do
+    [[ -f $bufout ]] && return 0
+    zpty -rt z chunk 2>/dev/null || true
+    (( attempts++ ))
+    sleep 0.1
+  done
+  print -ru2 -- "completion harness: timed out waiting for buffer capture"
+  return 1
+}
+
 # PATH is inherited from the (exported) caller environment; sending it
 # through the pty would exceed the tty input-line limit and wedge the
 # child shell in a quote-continuation prompt.
@@ -53,6 +70,8 @@ drain 6 >/dev/null
 zpty -wn z "${input}"$'\t'
 drain 15 >! "$dispout"
 zpty -wn z $'\C-g'
-drain 8 >/dev/null
+wait_for_buffer || {
+  zpty -d z 2>/dev/null
+  exit 1
+}
 zpty -d z 2>/dev/null
-[[ -f $bufout ]]
