@@ -797,4 +797,150 @@ git diff ctxreset.txt | grep -q "ADD-1" \
     || fail "test 237: ADD-1 should be back in the unstaged diff"
 pass "test 237: reset sha:N works at default context"
 
+# ============================================================================
+# Test 238: add --dry-run reports without touching the index
+# ============================================================================
+new_repo
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
+SHA238="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+[[ -n "$SHA238" ]] || fail "test 238: no hunk found"
+
+OUT238="$("$GIT_HUNK" add --dry-run --no-color "$SHA238")" \
+    || fail "test 238: add --dry-run should exit 0"
+echo "$OUT238" | grep -qE "^would stage $SHA238  alpha\.txt$" \
+    || fail "test 238: expected 'would stage' line, got: '$OUT238'"
+[[ -z "$(git diff --cached --name-only)" ]] \
+    || fail "test 238: --dry-run must leave the index untouched"
+COUNT238="$("$GIT_HUNK" count --file alpha.txt)"
+[[ "$COUNT238" == "1" ]] || fail "test 238: --dry-run must leave the worktree untouched"
+pass "test 238: add --dry-run does not modify the index"
+
+# ============================================================================
+# Test 239: add --dry-run --porcelain uses the would-stage verb
+# ============================================================================
+OUT239="$("$GIT_HUNK" add --dry-run --porcelain "$SHA238")"
+echo "$OUT239" | grep -q "^would-stage" \
+    || fail "test 239: expected 'would-stage' porcelain verb, got: '$OUT239'"
+pass "test 239: add --dry-run --porcelain uses would-stage verb"
+
+# ============================================================================
+# Test 240: add --dry-run with a line spec previews exactly that spec
+# The workaround this replaces was 'diff <sha>:<lines>' -- a different command
+# with different output, easy to preview one spec and then stage another.
+# ============================================================================
+new_repo
+cat > dryspec.txt <<'DRY_EOF'
+keep-A
+keep-B
+keep-C
+DRY_EOF
+git add dryspec.txt && git commit -m "dryspec setup" -q
+cat > dryspec.txt <<'DRY_EOF'
+keep-A
+ADD-1
+ADD-2
+keep-B
+ADD-3
+keep-C
+DRY_EOF
+SHA240="$("$GIT_HUNK" list --porcelain --oneline --file dryspec.txt | head -1 | cut -f1)"
+OUT240="$("$GIT_HUNK" add --dry-run --no-color "${SHA240}:2,5")"
+echo "$OUT240" | grep -qE "^would stage ${SHA240}:2,5  dryspec\.txt$" \
+    || fail "test 240: expected line spec echoed in dry-run output, got: '$OUT240'"
+[[ -z "$(git diff --cached --name-only)" ]] \
+    || fail "test 240: --dry-run with a line spec must not stage anything"
+# The real add must then stage exactly what the preview described.
+"$GIT_HUNK" add "${SHA240}:2,5" > /dev/null
+STAGED240="$(git diff --cached dryspec.txt)"
+echo "$STAGED240" | grep -q "ADD-1" || fail "test 240: ADD-1 should be staged"
+echo "$STAGED240" | grep -q "ADD-3" || fail "test 240: ADD-3 should be staged"
+if echo "$STAGED240" | grep -q "ADD-2"; then
+    fail "test 240: ADD-2 was not in the previewed spec and must not be staged"
+fi
+pass "test 240: add --dry-run previews exactly what add stages"
+
+# ============================================================================
+# Test 241: reset --dry-run reports without touching the index
+# ============================================================================
+new_repo
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
+git add alpha.txt
+SSHA241="$("$GIT_HUNK" list --staged --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+[[ -n "$SSHA241" ]] || fail "test 241: no staged hunk found"
+OUT241="$("$GIT_HUNK" reset --dry-run --no-color "$SSHA241")" \
+    || fail "test 241: reset --dry-run should exit 0"
+echo "$OUT241" | grep -q "^would unstage " \
+    || fail "test 241: expected 'would unstage' line, got: '$OUT241'"
+git diff --cached --name-only | grep -q "^alpha.txt$" \
+    || fail "test 241: --dry-run must leave the hunk staged"
+pass "test 241: reset --dry-run does not modify the index"
+
+# ============================================================================
+# Test 242: --files-from reads paths from a file
+# ============================================================================
+new_repo
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed beta./' beta.txt
+sed -i.bak '1s/.*/Changed gamma./' gamma.txt
+printf 'alpha.txt\ngamma.txt\n' > /tmp/git-hunk-files-242.txt
+"$GIT_HUNK" add --files-from /tmp/git-hunk-files-242.txt > /dev/null \
+    || fail "test 242: add --files-from failed"
+STAGED242="$(git diff --cached --name-only)"
+rm -f /tmp/git-hunk-files-242.txt
+echo "$STAGED242" | grep -q "^alpha.txt$" || fail "test 242: alpha.txt should be staged"
+echo "$STAGED242" | grep -q "^gamma.txt$" || fail "test 242: gamma.txt should be staged"
+if echo "$STAGED242" | grep -q "^beta.txt$"; then
+    fail "test 242: beta.txt was not listed and must not be staged"
+fi
+pass "test 242: --files-from reads paths from a file"
+
+# ============================================================================
+# Test 243: --files-from - reads paths from stdin, and composes with --file
+# ============================================================================
+new_repo
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed beta./' beta.txt
+sed -i.bak '1s/.*/Changed gamma./' gamma.txt
+printf 'alpha.txt\n' | "$GIT_HUNK" add --files-from - --file gamma.txt > /dev/null \
+    || fail "test 243: add --files-from - failed"
+STAGED243="$(git diff --cached --name-only)"
+echo "$STAGED243" | grep -q "^alpha.txt$" || fail "test 243: alpha.txt (stdin) should be staged"
+echo "$STAGED243" | grep -q "^gamma.txt$" || fail "test 243: gamma.txt (--file) should be staged"
+if echo "$STAGED243" | grep -q "^beta.txt$"; then
+    fail "test 243: beta.txt should not be staged"
+fi
+pass "test 243: --files-from - reads stdin and merges with --file"
+
+# ============================================================================
+# Test 244: --files-from auto-detects NUL separation (git ls-files -z)
+# Newline-separated input cannot represent a path containing a newline, which
+# is the reason -z exists; this pins the auto-detection.
+# ============================================================================
+new_repo
+WEIRD244="$(printf 'we\nird.txt')"
+echo "orig" > "$WEIRD244"
+git add -- "$WEIRD244" && git commit -q -m "weird path"
+echo "changed" > "$WEIRD244"
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
+git ls-files -z -- "$WEIRD244" | "$GIT_HUNK" add --files-from - > /dev/null \
+    || fail "test 244: add --files-from - with NUL input failed"
+STAGED244="$(git diff --cached --name-only)"
+[[ -n "$STAGED244" ]] || fail "test 244: newline-containing path should have been staged"
+if echo "$STAGED244" | grep -q "^alpha.txt$"; then
+    fail "test 244: alpha.txt was not listed and must not be staged"
+fi
+pass "test 244: --files-from auto-detects NUL-separated input"
+
+# ============================================================================
+# Test 245: --files-from on a missing file errors cleanly
+# ============================================================================
+new_repo
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
+if "$GIT_HUNK" add --files-from /nonexistent-list-245.txt > /dev/null 2>&1; then
+    fail "test 245: --files-from with a missing file should fail"
+fi
+[[ -z "$(git diff --cached --name-only)" ]] \
+    || fail "test 245: failed --files-from must not stage anything"
+pass "test 245: --files-from errors cleanly on a missing file"
+
 report_results

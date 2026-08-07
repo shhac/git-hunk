@@ -51,7 +51,7 @@ local _gh_ret=1
   # Locate the subcommand, skipping flags and their values.
   local sub=''
   integer j=2 subj=0
-  local -a valueflags=(--file --ref -U --unified -m --message)
+  local -a valueflags=(--file --files-from --ref -U --unified -m --message)
   while (( j < CURRENT )); do
     w=${words[j]}
     if (( $valueflags[(Ie)$w] )); then (( j += 2 )); continue; fi
@@ -98,7 +98,7 @@ local _gh_ret=1
   # Flags shared by every subcommand except count (which drops the output
   # flags); per-arm flags are listed before it. Sets are drift-checked
   # against src/spec.zig by `zig build docs`.
-  local -a common=(--file --porcelain --no-color --tracked-only --untracked-only -U --unified -v --verbose -q --quiet -h --help)
+  local -a common=(--file --files-from --porcelain --no-color --tracked-only --untracked-only -U --unified -v --verbose -q --quiet -h --help)
   local -a opts
   local hashmode=''
   case $sub in
@@ -110,12 +110,12 @@ local _gh_ret=1
       hashmode=auto
       ;;
     add)
-      opts=(--all --3way --ref $common)
+      opts=(--all --3way --dry-run --ref $common)
       hashmode=unstaged
       ;;
     reset)
       # reset operates on staged hunks (see `git-hunk help reset`).
-      opts=(--all --3way --ref $common)
+      opts=(--all --3way --dry-run --ref $common)
       hashmode=staged
       ;;
     restore)
@@ -123,7 +123,7 @@ local _gh_ret=1
       hashmode=unstaged
       ;;
     count)
-      opts=(--staged --ref --file --tracked-only --untracked-only -U --unified -q --quiet -h --help)
+      opts=(--staged --ref --file --files-from --tracked-only --untracked-only -U --unified -q --quiet -h --help)
       ;;
     check)
       opts=(--staged --exclusive --allow-empty --ref $common)

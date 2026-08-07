@@ -205,4 +205,28 @@ echo "$STAGED1111" | grep -q "^alpha.txt$" \
 cd /tmp && rm -rf "$SYM_REPO"
 pass "test 1111: chdirToRepoRoot handles symlinked /tmp toplevel (macOS realpath regression)"
 
+# ============================================================================
+# Test 1112: --files-from paths resolve relative to cwd, like --file
+# Path resolution rewrites filter entries in place. --files-from entries are
+# heap-owned (they come from file contents, not argv), so resolution must keep
+# them owned by the same allocator or the process frees the wrong pointer --
+# a crash that only reproduces when run from a subdirectory (prefix non-empty).
+# ============================================================================
+new_repo
+mkdir -p sub
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed beta./' beta.txt
+printf '../alpha.txt\n' > sub/list.txt
+
+(cd sub && "$GIT_HUNK" add --files-from list.txt > /dev/null) \
+    || fail "test 1112: add --files-from from a subdirectory failed"
+
+STAGED1112="$(git diff --cached --name-only)"
+echo "$STAGED1112" | grep -q "^alpha.txt$" \
+    || fail "test 1112: expected alpha.txt staged from subdir --files-from, got: '$STAGED1112'"
+if echo "$STAGED1112" | grep -q "^beta.txt$"; then
+    fail "test 1112: beta.txt was not listed and must not be staged"
+fi
+pass "test 1112: --files-from resolves paths relative to cwd"
+
 report_results

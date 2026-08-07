@@ -1,5 +1,6 @@
 const std = @import("std");
 const types = @import("types.zig");
+const path_mod = @import("path.zig");
 
 const Allocator = std.mem.Allocator;
 const LineRange = types.LineRange;
@@ -52,19 +53,31 @@ fn applyCommonFlags(allocator: Allocator, common: *CommonFlags, opts: anytype) !
     }
     if (comptime @hasField(@TypeOf(opts.*), "file_filter")) {
         opts.file_filter = common.file_filter.toOwnedSlice(allocator) catch |err| {
-            common.file_filter.deinit(allocator);
-            common.file_filter = .empty;
+            deinitCommonFileFilter(allocator, &common.file_filter);
             return err;
         };
     } else {
-        common.file_filter.deinit(allocator);
-        common.file_filter = .empty;
+        deinitCommonFileFilter(allocator, &common.file_filter);
     }
 }
 
-/// Free a file_filter slice if it was actually allocated (len > 0).
+/// Free an owned file_filter slice and every path in it.
+///
+/// Entries are owned copies rather than borrowed argv slices because
+/// `--files-from` synthesises paths from file contents, which do not outlive
+/// the read buffer. `--file` duplicates its argument so both sources free the
+/// same way.
 pub fn deinitFileFilter(allocator: Allocator, file_filter: []const []const u8) void {
+    for (file_filter) |p| allocator.free(p);
     if (file_filter.len > 0) allocator.free(file_filter);
+}
+
+/// Free a still-in-progress CommonFlags file filter (entries + list). Used on
+/// parser error paths, where ownership has not yet moved into the options struct.
+fn deinitCommonFileFilter(allocator: Allocator, list: *std.ArrayList([]const u8)) void {
+    for (list.items) |p| allocator.free(p);
+    list.deinit(allocator);
+    list.* = .empty;
 }
 
 /// Try to parse arg as a common flag shared across all parsers.
@@ -78,7 +91,14 @@ fn parseCommonFlag(allocator: Allocator, arg: []const u8, i: *usize, args: []con
     } else if (std.mem.eql(u8, arg, "--file")) {
         i.* += 1;
         if (i.* >= args.len) return error.MissingArgument;
-        try c.file_filter.append(allocator, args[i.*]);
+        const owned = try allocator.dupe(u8, args[i.*]);
+        errdefer allocator.free(owned);
+        try c.file_filter.append(allocator, owned);
+        return true;
+    } else if (std.mem.eql(u8, arg, "--files-from")) {
+        i.* += 1;
+        if (i.* >= args.len) return error.MissingArgument;
+        try appendPathsFromFile(allocator, args[i.*], &c.file_filter);
         return true;
     } else if (std.mem.eql(u8, arg, "--ref")) {
         i.* += 1;
@@ -152,7 +172,7 @@ fn validateRefStagedCombo(ref: ?[]const u8, mode: DiffMode) error{InvalidArgumen
 pub fn parseListArgs(allocator: Allocator, args: []const [:0]const u8) !ListOptions {
     var opts: ListOptions = .{};
     var common: CommonFlags = .{};
-    errdefer common.file_filter.deinit(allocator);
+    errdefer deinitCommonFileFilter(allocator, &common.file_filter);
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
@@ -180,13 +200,15 @@ pub fn parseAddResetArgs(allocator: Allocator, args: []const [:0]const u8) !AddR
     errdefer deinitShaArgs(allocator, &opts.sha_args);
 
     var common: CommonFlags = .{};
-    errdefer common.file_filter.deinit(allocator);
+    errdefer deinitCommonFileFilter(allocator, &common.file_filter);
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
         if (try parseCommonFlag(allocator, arg, &i, args, &common)) continue;
         if (std.mem.eql(u8, arg, "--all")) {
             opts.select_all = true;
+        } else if (std.mem.eql(u8, arg, "--dry-run")) {
+            opts.dry_run = true;
         } else if (std.mem.startsWith(u8, arg, "-")) {
             return unknownFlag(arg);
         } else {
@@ -213,7 +235,7 @@ pub fn parseDiffArgs(allocator: Allocator, args: []const [:0]const u8) !DiffOpti
     errdefer deinitShaArgs(allocator, &opts.sha_args);
 
     var common: CommonFlags = .{};
-    errdefer common.file_filter.deinit(allocator);
+    errdefer deinitCommonFileFilter(allocator, &common.file_filter);
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
@@ -246,7 +268,7 @@ pub fn parseDiffArgs(allocator: Allocator, args: []const [:0]const u8) !DiffOpti
 pub fn parseCountArgs(allocator: Allocator, args: []const [:0]const u8) !CountOptions {
     var opts: CountOptions = .{};
     var common: CommonFlags = .{};
-    errdefer common.file_filter.deinit(allocator);
+    errdefer deinitCommonFileFilter(allocator, &common.file_filter);
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
@@ -275,7 +297,7 @@ pub fn parseCheckArgs(allocator: Allocator, args: []const [:0]const u8) !CheckOp
     errdefer deinitShaArgs(allocator, &opts.sha_args);
 
     var common: CommonFlags = .{};
-    errdefer common.file_filter.deinit(allocator);
+    errdefer deinitCommonFileFilter(allocator, &common.file_filter);
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
@@ -319,7 +341,7 @@ pub fn parseRestoreArgs(allocator: Allocator, args: []const [:0]const u8) !Resto
     errdefer deinitShaArgs(allocator, &opts.sha_args);
 
     var common: CommonFlags = .{};
-    errdefer common.file_filter.deinit(allocator);
+    errdefer deinitCommonFileFilter(allocator, &common.file_filter);
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
@@ -381,7 +403,7 @@ pub fn parseStashArgs(allocator: Allocator, args: []const [:0]const u8) !StashOp
     }
 
     var common: CommonFlags = .{};
-    errdefer common.file_filter.deinit(allocator);
+    errdefer deinitCommonFileFilter(allocator, &common.file_filter);
     while (i < args.len) : (i += 1) {
         const arg = args[i];
         if (try parseCommonFlag(allocator, arg, &i, args, &common)) continue;
@@ -435,7 +457,7 @@ pub fn parseCommitArgs(allocator: Allocator, args: []const [:0]const u8) !Commit
     errdefer deinitShaArgs(allocator, &opts.sha_args);
 
     var common: CommonFlags = .{};
-    errdefer common.file_filter.deinit(allocator);
+    errdefer deinitCommonFileFilter(allocator, &common.file_filter);
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
@@ -534,6 +556,58 @@ fn isValidShaPrefix(arg: []const u8) bool {
         if (!isHexDigit(c)) return false;
     }
     return true;
+}
+
+/// Upper bound on a `--files-from` list. Generous for real repos while keeping
+/// a malformed/binary file from being slurped whole.
+const max_files_from_bytes: usize = 16 * 1024 * 1024;
+
+/// Read newline- or NUL-separated paths from `source` ("-" means stdin) and
+/// append owned copies to `list`.
+///
+/// The separator is detected rather than flagged: NUL is not a legal byte in a
+/// path, so its presence unambiguously means the producer used `-z`
+/// (`git ls-files -z`, `find -print0`). That keeps paths containing newlines
+/// safe without a second flag, and a newline-separated list is unaffected.
+fn appendPathsFromFile(allocator: Allocator, source: []const u8, list: *std.ArrayList([]const u8)) !void {
+    const io = types.getIo();
+    const limit: std.Io.Limit = .limited(max_files_from_bytes);
+    const content = blk: {
+        if (std.mem.eql(u8, source, "-")) {
+            var buf: [4096]u8 = undefined;
+            var r = std.Io.File.stdin().readerStreaming(io, &buf);
+            break :blk r.interface.allocRemaining(allocator, limit) catch {
+                std.debug.print("error: could not read paths from stdin\n", .{});
+                return error.InvalidArgument;
+            };
+        }
+        // The process has already chdir'd to the repo root, but the user typed
+        // this path from their own directory — resolve it the same way --file
+        // values are resolved. Absolute paths are used as given.
+        const prefix = types.getRepoPrefix();
+        const resolved = if (prefix.len == 0 or std.fs.path.isAbsolute(source))
+            source
+        else
+            try path_mod.resolveToRepoRelative(allocator, prefix, source);
+        defer if (resolved.ptr != source.ptr) allocator.free(resolved);
+
+        break :blk std.Io.Dir.cwd().readFileAlloc(io, resolved, allocator, limit) catch {
+            std.debug.print("error: could not read --files-from file '{s}'\n", .{source});
+            return error.InvalidArgument;
+        };
+    };
+    defer allocator.free(content);
+
+    const sep: u8 = if (std.mem.indexOfScalar(u8, content, 0) != null) 0 else '\n';
+    var it = std.mem.splitScalar(u8, content, sep);
+    while (it.next()) |raw| {
+        // Tolerate CRLF and stray trailing whitespace from hand-written lists.
+        const path = std.mem.trim(u8, raw, " \t\r\n");
+        if (path.len == 0) continue;
+        const owned = try allocator.dupe(u8, path);
+        errdefer allocator.free(owned);
+        try list.append(allocator, owned);
+    }
 }
 
 fn looksLikePathArg(arg: []const u8) bool {

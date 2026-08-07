@@ -57,7 +57,7 @@ _git_hunk()
             continue
         fi
         case $w in
-        --file | --ref | -U | --unified | -m | --message)
+        --file | --files-from | --ref | -U | --unified | -m | --message)
             skip_next=1
             ;;
         -*) ;;
@@ -71,7 +71,7 @@ _git_hunk()
 
     # Complete the value of an option that takes one.
     case $prev in
-    --file)
+    --file | --files-from)
         compopt -o filenames 2>/dev/null
         if declare -F _filedir >/dev/null 2>&1; then
             _filedir
@@ -100,39 +100,39 @@ _git_hunk()
     local opts="" hash_source=""
     case $subcommand in
     list)
-        opts="--staged --oneline --ref --file --porcelain --no-color --tracked-only --untracked-only -U --unified -v --verbose -q --quiet -h --help"
+        opts="--staged --oneline --ref --file --files-from --porcelain --no-color --tracked-only --untracked-only -U --unified -v --verbose -q --quiet -h --help"
         ;;
     diff)
-        opts="--staged -n --number --ref --file --porcelain --no-color --tracked-only --untracked-only -U --unified -v --verbose -q --quiet -h --help"
+        opts="--staged -n --number --ref --file --files-from --porcelain --no-color --tracked-only --untracked-only -U --unified -v --verbose -q --quiet -h --help"
         hash_source=auto
         ;;
     add)
-        opts="--all --3way --ref --file --porcelain --no-color --tracked-only --untracked-only -U --unified -v --verbose -q --quiet -h --help"
+        opts="--all --3way --dry-run --ref --file --files-from --porcelain --no-color --tracked-only --untracked-only -U --unified -v --verbose -q --quiet -h --help"
         hash_source=unstaged
         ;;
     reset)
-        opts="--all --3way --ref --file --porcelain --no-color --tracked-only --untracked-only -U --unified -v --verbose -q --quiet -h --help"
+        opts="--all --3way --dry-run --ref --file --files-from --porcelain --no-color --tracked-only --untracked-only -U --unified -v --verbose -q --quiet -h --help"
         hash_source=staged
         ;;
     restore)
-        opts="--all --3way --force --dry-run --ref --file --porcelain --no-color --tracked-only --untracked-only -U --unified -v --verbose -q --quiet -h --help"
+        opts="--all --3way --force --dry-run --ref --file --files-from --porcelain --no-color --tracked-only --untracked-only -U --unified -v --verbose -q --quiet -h --help"
         hash_source=unstaged
         ;;
     count)
-        opts="--staged --ref --file --tracked-only --untracked-only -U --unified -q --quiet -h --help"
+        opts="--staged --ref --file --files-from --tracked-only --untracked-only -U --unified -q --quiet -h --help"
         ;;
     check)
-        opts="--staged --exclusive --allow-empty --ref --file --porcelain --no-color --tracked-only --untracked-only -U --unified -v --verbose -q --quiet -h --help"
+        opts="--staged --exclusive --allow-empty --ref --file --files-from --porcelain --no-color --tracked-only --untracked-only -U --unified -v --verbose -q --quiet -h --help"
         hash_source=auto
         ;;
     stash)
         # `stash pop` takes no further flags or arguments.
         [[ ${words[sub_idx + 1]} == pop ]] && return
-        opts="--all --include-untracked -u -m --message --file --porcelain --no-color --tracked-only --untracked-only -U --unified -v --verbose -q --quiet -h --help"
+        opts="--all --include-untracked -u -m --message --file --files-from --porcelain --no-color --tracked-only --untracked-only -U --unified -v --verbose -q --quiet -h --help"
         hash_source=unstaged
         ;;
     commit)
-        opts="-m --message --amend --dry-run --all --3way --ref --file -U --unified --tracked-only --untracked-only --no-color --porcelain -v --verbose -q --quiet -h --help"
+        opts="-m --message --amend --dry-run --all --3way --ref --file --files-from -U --unified --tracked-only --untracked-only --no-color --porcelain -v --verbose -q --quiet -h --help"
         hash_source=unstaged
         ;;
     help)

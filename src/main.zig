@@ -56,12 +56,15 @@ fn run(init: std.process.Init) !void {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
     const prefix = path_mod.chdirToRepoRoot(arena) catch "";
+    // Parsing runs after the chdir, so anything that opens a user-supplied path
+    // during parsing (--files-from) needs the prefix to stay cwd-relative.
+    types.setRepoPrefix(prefix);
 
     if (std.mem.eql(u8, subcmd, "list")) {
         var opts = args_mod.parseListArgs(allocator, process_args[2..]) catch |err|
             handleParseError(stdout, err, .list);
         defer args_mod.deinitFileFilter(allocator, opts.file_filter);
-        try resolveFileFilter(arena, prefix, opts.file_filter);
+        try resolveFileFilter(allocator, arena, prefix, opts.file_filter);
         try expandRefShorthand(arena, &opts.ref, opts.mode == .staged);
         try commands.cmdList(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "add")) {
@@ -69,7 +72,7 @@ fn run(init: std.process.Init) !void {
             handleParseError(stdout, err, .add);
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
         defer args_mod.deinitFileFilter(allocator, opts.file_filter);
-        try resolveFileFilter(arena, prefix, opts.file_filter);
+        try resolveFileFilter(allocator, arena, prefix, opts.file_filter);
         try expandRefShorthand(arena, &opts.ref, false);
         try commands.cmdAdd(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "reset")) {
@@ -77,14 +80,14 @@ fn run(init: std.process.Init) !void {
             handleParseError(stdout, err, .reset);
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
         defer args_mod.deinitFileFilter(allocator, opts.file_filter);
-        try resolveFileFilter(arena, prefix, opts.file_filter);
+        try resolveFileFilter(allocator, arena, prefix, opts.file_filter);
         try expandRefShorthand(arena, &opts.ref, false);
         try commands.cmdReset(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "count")) {
         var opts = args_mod.parseCountArgs(allocator, process_args[2..]) catch |err|
             handleParseError(stdout, err, .count);
         defer args_mod.deinitFileFilter(allocator, opts.file_filter);
-        try resolveFileFilter(arena, prefix, opts.file_filter);
+        try resolveFileFilter(allocator, arena, prefix, opts.file_filter);
         try expandRefShorthand(arena, &opts.ref, opts.mode == .staged);
         try commands.cmdCount(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "check")) {
@@ -92,7 +95,7 @@ fn run(init: std.process.Init) !void {
             handleParseError(stdout, err, .check);
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
         defer args_mod.deinitFileFilter(allocator, opts.file_filter);
-        try resolveFileFilter(arena, prefix, opts.file_filter);
+        try resolveFileFilter(allocator, arena, prefix, opts.file_filter);
         try expandRefShorthand(arena, &opts.ref, opts.mode == .staged);
         try commands.cmdCheck(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "restore")) {
@@ -100,7 +103,7 @@ fn run(init: std.process.Init) !void {
             handleParseError(stdout, err, .restore);
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
         defer args_mod.deinitFileFilter(allocator, opts.file_filter);
-        try resolveFileFilter(arena, prefix, opts.file_filter);
+        try resolveFileFilter(allocator, arena, prefix, opts.file_filter);
         try expandRefShorthand(arena, &opts.ref, false);
         try commands.cmdRestore(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "diff")) {
@@ -108,7 +111,7 @@ fn run(init: std.process.Init) !void {
             handleParseError(stdout, err, .diff);
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
         defer args_mod.deinitFileFilter(allocator, opts.file_filter);
-        try resolveFileFilter(arena, prefix, opts.file_filter);
+        try resolveFileFilter(allocator, arena, prefix, opts.file_filter);
         try expandRefShorthand(arena, &opts.ref, opts.mode == .staged);
         try commands.cmdDiff(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "stash")) {
@@ -116,7 +119,7 @@ fn run(init: std.process.Init) !void {
             handleParseError(stdout, err, .stash);
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
         defer args_mod.deinitFileFilter(allocator, opts.file_filter);
-        try resolveFileFilter(arena, prefix, opts.file_filter);
+        try resolveFileFilter(allocator, arena, prefix, opts.file_filter);
         try expandRefShorthand(arena, &opts.ref, false);
         try commands.cmdStash(allocator, stdout, opts, init.environ_map);
     } else if (std.mem.eql(u8, subcmd, "commit")) {
@@ -124,7 +127,7 @@ fn run(init: std.process.Init) !void {
             handleParseError(stdout, err, .commit);
         defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
         defer args_mod.deinitFileFilter(allocator, opts.file_filter);
-        try resolveFileFilter(arena, prefix, opts.file_filter);
+        try resolveFileFilter(allocator, arena, prefix, opts.file_filter);
         try expandRefShorthand(arena, &opts.ref, false);
         try commands.cmdCommit(allocator, stdout, opts, init.environ_map);
     } else if (std.mem.eql(u8, subcmd, "--version") or std.mem.eql(u8, subcmd, "-V")) {
@@ -151,13 +154,20 @@ fn run(init: std.process.Init) !void {
     try stdout.flush();
 }
 
-/// Resolve each --file filter entry from cwd-relative to repo-relative using the prefix.
-/// The slice spine is rewritten in place; new path strings are arena-allocated.
-fn resolveFileFilter(arena: std.mem.Allocator, prefix: []const u8, filter: []const []const u8) !void {
+/// Rewrite each `--file`/`--files-from` path to be repo-relative, in place.
+///
+/// Entries stay owned by `allocator` (see `args.deinitFileFilter`): the
+/// resolved path is copied back onto the same allocator and the old entry
+/// freed, so the caller's `deinitFileFilter` remains correct. `arena` holds
+/// only the short-lived resolution scratch.
+fn resolveFileFilter(allocator: std.mem.Allocator, arena: std.mem.Allocator, prefix: []const u8, filter: []const []const u8) !void {
     if (prefix.len == 0) return;
     const spine: [][]const u8 = @constCast(filter);
     for (spine) |*entry| {
-        entry.* = try path_mod.resolveToRepoRelative(arena, prefix, entry.*);
+        const resolved = try path_mod.resolveToRepoRelative(arena, prefix, entry.*);
+        const owned = try allocator.dupe(u8, resolved);
+        allocator.free(entry.*);
+        entry.* = owned;
     }
 }
 

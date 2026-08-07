@@ -114,6 +114,7 @@ _git-hunk() {
   local -a base_opts output_opts
   base_opts=(
     '*--file[restrict to hunks in the given file]: :_files'
+    '*--files-from[read file paths from a file, one per line (- for stdin)]: :_files'
     '(--tracked-only --untracked-only)--tracked-only[only include hunks from tracked files]'
     '(--tracked-only --untracked-only)--untracked-only[only include hunks from untracked files]'
     '(-U --unified)'{-U+,--unified=}'[lines of diff context]: :_guard "[0-9]#" "number of context lines"'
@@ -143,6 +144,7 @@ _git-hunk() {
       _arguments $base_opts $output_opts $ref_opt \
         '--all[stage all unstaged hunks]' \
         '--3way[fall back to a 3-way merge on context drift]' \
+        '--dry-run[show what would be staged without touching the index]' \
         '*: :__git-hunk_hashes' && ret=0
       ;;
     reset)
@@ -150,6 +152,7 @@ _git-hunk() {
       _arguments $base_opts $output_opts $ref_opt \
         '--all[unstage all staged hunks]' \
         '--3way[fall back to a 3-way merge on context drift]' \
+        '--dry-run[show what would be unstaged without touching the index]' \
         '*: :__git-hunk_staged_hashes' && ret=0
       ;;
     restore)

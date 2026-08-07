@@ -104,6 +104,11 @@ pub const f_staged: Flag = .{
     .help_desc = &.{"List hunks from the staged (index) diff instead of worktree"},
 };
 
+pub const f_dry_run: Flag = .{
+    .long = "--dry-run",
+    .help_desc = &.{"Show what would happen without making changes"},
+};
+
 pub const f_number: Flag = .{
     .long = "--number",
     .short = "-n",
@@ -126,6 +131,15 @@ pub const f_file: Flag = .{
     .long = "--file",
     .placeholder = "<path>",
     .help_desc = &.{"Restrict to hunks in the given file (repeatable)"},
+};
+
+pub const f_files_from: Flag = .{
+    .long = "--files-from",
+    .placeholder = "<path>",
+    .help_desc = &.{
+        "Read file paths from <path>, one per line ('-' for stdin).",
+        "NUL-separated input (git ls-files -z) is detected automatically.",
+    },
 };
 
 pub const f_porcelain: Flag = .{
@@ -208,6 +222,7 @@ pub const commands = [_]CommandSpec{
                 "Restrict output to hunks in the given file",
                 "(repeatable: pass multiple --file flags to match any of them)",
             }),
+            f_files_from,
             f_porcelain.withHelp(&.{"Machine-readable output (tab-separated fields)"}),
             f_oneline,
             f_no_color,
@@ -246,6 +261,7 @@ pub const commands = [_]CommandSpec{
             f_number,
             f_ref,
             f_file,
+            f_files_from,
             f_porcelain,
             f_no_color,
             f_tracked_only.withHelp(&.{"Only show hunks from tracked files"}),
@@ -288,6 +304,8 @@ pub const commands = [_]CommandSpec{
                 "(passes --3way to git apply; useful with --ref <past-commit>).",
             }),
             f_file.withHelp(&.{"Stage all hunks in the given file (repeatable)"}),
+            f_files_from,
+            f_dry_run.withHelp(&.{"Show what would be staged without touching the index"}),
             f_porcelain,
             f_no_color,
             f_tracked_only,
@@ -303,6 +321,7 @@ pub const commands = [_]CommandSpec{
             .{ .cmd = "git-hunk add --all", .desc = "Stage all unstaged hunks" },
             .{ .cmd = "git-hunk add --file src/main.zig", .desc = "Stage all hunks in a file" },
             .{ .cmd = "git-hunk add a3f7:3-5,8", .desc = "Stage specific lines from a hunk" },
+            .{ .cmd = "git-hunk add --dry-run a3f7:3-5,8", .desc = "Preview a partial stage first" },
         },
     },
     .{
@@ -326,6 +345,8 @@ pub const commands = [_]CommandSpec{
             f_all.withHelp(&.{"Unstage all staged hunks"}),
             f_3way,
             f_file.withHelp(&.{"Unstage all hunks in the given file (repeatable)"}),
+            f_files_from,
+            f_dry_run.withHelp(&.{"Show what would be unstaged without touching the index"}),
             f_porcelain,
             f_no_color,
             f_tracked_only,
@@ -339,6 +360,7 @@ pub const commands = [_]CommandSpec{
             .{ .cmd = "git-hunk reset a3f7c21", .desc = "Unstage a single hunk" },
             .{ .cmd = "git-hunk reset --all", .desc = "Unstage all staged hunks" },
             .{ .cmd = "git-hunk reset --file src/main.zig", .desc = "Unstage all hunks in a file" },
+            .{ .cmd = "git-hunk reset --dry-run --all", .desc = "Preview what would be unstaged" },
         },
     },
     .{
@@ -365,6 +387,7 @@ pub const commands = [_]CommandSpec{
                 "(useful for \"undo this hunk from history\" when surrounding lines drifted).",
             }),
             f_file.withHelp(&.{"Restore all hunks in the given file (repeatable)"}),
+            f_files_from,
             .{
                 .long = "--force",
                 .help_desc = &.{"Required to restore untracked files (deletes them permanently)"},
@@ -411,6 +434,7 @@ pub const commands = [_]CommandSpec{
             f_staged.withHelp(&.{"Count staged hunks instead of unstaged"}),
             f_ref,
             f_file.withHelp(&.{"Count hunks in the given file only (repeatable)"}),
+            f_files_from,
             f_porcelain.withHelp(&.{"No effect (output is already machine-readable)"}).hidden(),
             f_no_color.withHelp(&.{"No effect (output is never colored)"}).hidden(),
             f_tracked_only.withHelp(&.{"Only count hunks from tracked files"}),
@@ -450,6 +474,7 @@ pub const commands = [_]CommandSpec{
                 .help_desc = &.{"Allow zero SHA arguments (useful with --exclusive to assert no hunks)"},
             },
             f_file.withHelp(&.{"Restrict check to hunks in the given file (repeatable)"}),
+            f_files_from,
             f_porcelain,
             f_no_color,
             f_tracked_only.withHelp(&.{"Only check hunks from tracked files"}),
@@ -505,6 +530,7 @@ pub const commands = [_]CommandSpec{
                 .help_desc = &.{"Include untracked files (use with --all)"},
             },
             f_file.withHelp(&.{"Stash all hunks in the given file (repeatable)"}),
+            f_files_from,
             .{
                 .long = "--message",
                 .short = "-m",
@@ -571,6 +597,7 @@ pub const commands = [_]CommandSpec{
             f_all.withHelp(&.{"Commit all unstaged hunks"}),
             f_3way,
             f_file.withHelp(&.{"Commit all hunks in a file (repeatable)"}),
+            f_files_from,
             f_ref_no_staged,
             f_unified,
             f_tracked_only,

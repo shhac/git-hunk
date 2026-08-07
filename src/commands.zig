@@ -870,6 +870,42 @@ fn renderApplyResults(
     }
 }
 
+/// Validate what `add`/`reset` would do and report it, leaving the index and
+/// worktree untouched. `git apply --check` rejects `--3way`, so 3-way fallback
+/// is not simulated — a dry run that would only succeed via 3-way still reports
+/// failure here, same as `restore --dry-run` and `commit --dry-run`.
+fn dryRunApplyHunks(
+    allocator: Allocator,
+    arena: Allocator,
+    stdout: *std.Io.Writer,
+    opts: AddResetOptions,
+    action: ApplyAction,
+    text_matched: []MatchedHunk,
+    matched: []const MatchedHunk,
+) !void {
+    const reverse = action == .unstage;
+    if (text_matched.len > 0) {
+        const patches = try patch_mod.sortAndBuildPatches(arena, text_matched, if (reverse) .reverse else .forward);
+        var i: usize = patches.len;
+        while (i > 0) {
+            i -= 1;
+            _ = try git.runGitApply(allocator, patches[i], .{
+                .reverse = reverse,
+                .target = .index,
+                .check_only = true,
+                .ref = opts.ref,
+            });
+        }
+    }
+
+    const verbs: struct { human: []const u8, porcelain: []const u8 } = switch (action) {
+        .stage => .{ .human = "would stage", .porcelain = "would-stage" },
+        .unstage => .{ .human = "would unstage", .porcelain = "would-unstage" },
+    };
+    const use_color = format.shouldUseColor(opts.output, opts.no_color);
+    _ = try format.printMatchedHunks(stdout, matched, verbs.human, verbs.porcelain, use_color, opts.output, opts.verbosity);
+}
+
 fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOptions, action: ApplyAction) !void {
     // For staging: diff unstaged hunks (index vs worktree)
     // For unstaging: diff staged hunks (HEAD vs index)
@@ -899,6 +935,15 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
     const text_matched = try partition.combinedText(arena);
     const binary_paths = try partition.allBinaryPaths(arena);
     const binary_matched = try partition.combinedBinary(arena);
+
+    // Dry-run: validate the patch against the target without writing to it.
+    // Reports the INPUT hunks, not result hashes: a result hash only exists
+    // once the patch has been applied and the target re-diffed, which is
+    // exactly what a dry run must not do. Matches restore --dry-run.
+    if (opts.dry_run) {
+        try dryRunApplyHunks(allocator, arena, stdout, opts, action, text_matched, matched.items);
+        return;
+    }
 
     // Capture target-side hunks BEFORE and AFTER applying so buildResultGroups
     // can detect merges and map applied hunks to their post-apply hashes.

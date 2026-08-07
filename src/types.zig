@@ -19,6 +19,20 @@ pub fn getIoOrNull() ?std.Io {
     return g_io;
 }
 
+var g_repo_prefix: []const u8 = "";
+
+/// Record where the user invoked us from, as a repo-root-relative prefix
+/// ("" at the root). Set once at startup, right after the chdir to the repo
+/// root, so later code can still interpret paths the user typed as
+/// cwd-relative even though the process has since moved.
+pub fn setRepoPrefix(prefix: []const u8) void {
+    g_repo_prefix = prefix;
+}
+
+pub fn getRepoPrefix() []const u8 {
+    return g_repo_prefix;
+}
+
 /// Set the process-wide environment map. Must be called once at startup.
 pub fn setEnvMap(env: *const std.process.Environ.Map) void {
     g_env_map = env;
@@ -108,6 +122,9 @@ pub const AddResetOptions = struct {
     select_all: bool = false,
     /// Pass `--3way` to git apply: fall back to a 3-way merge if context drifted.
     three_way: bool = false,
+    /// Validate the patch against the index and report what would happen,
+    /// touching neither the index nor the worktree.
+    dry_run: bool = false,
     verbosity: Verbosity = .normal,
     output: OutputMode = .human,
     no_color: bool = false,

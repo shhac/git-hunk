@@ -35,7 +35,7 @@ function __git_hunk_subcommand
             continue
         end
         switch $t
-            case --file --ref -U --unified -m --message
+            case --file --files-from --ref -U --unified -m --message
                 set skip 1
             case '-*'
             case '*'
@@ -61,7 +61,7 @@ end
 function __git_hunk_option_pending
     set -l toks (__git_hunk_tokens)
     test (count $toks) -ge 1
-    and contains -- $toks[-1] --file --ref -U --unified -m --message
+    and contains -- $toks[-1] --file --files-from --ref -U --unified -m --message
 end
 
 # True when completing the token right after `stash` (push/pop position).
@@ -141,6 +141,7 @@ __git_hunk_complete -f -n __git_hunk_needs_command -s V -l version -d 'Show vers
 # Flags common to every command
 for cmd in $all_cmds
     __git_hunk_complete -n "__git_hunk_using_command $cmd" -l file -r -F -d 'Restrict to hunks in the given file'
+    __git_hunk_complete -n "__git_hunk_using_command $cmd" -l files-from -r -F -d 'Read file paths from a file (- for stdin)'
     __git_hunk_complete -f -n "__git_hunk_using_command $cmd" -s U -l unified -x -d 'Lines of diff context'
     __git_hunk_complete -f -n "__git_hunk_using_command $cmd" -l tracked-only -d 'Only include hunks from tracked files'
     __git_hunk_complete -f -n "__git_hunk_using_command $cmd" -l untracked-only -d 'Only include hunks from untracked files'
@@ -182,6 +183,8 @@ __git_hunk_complete -f -n '__git_hunk_using_command check' -l exclusive -d 'Asse
 __git_hunk_complete -f -n '__git_hunk_using_command check' -l allow-empty -d 'Allow zero sha arguments'
 __git_hunk_complete -f -n '__git_hunk_using_command restore' -l force -d 'Required to restore untracked files (deletes them)'
 __git_hunk_complete -f -n '__git_hunk_using_command restore' -l dry-run -d 'Preview without making changes'
+__git_hunk_complete -f -n '__git_hunk_using_command add' -l dry-run -d 'Preview without touching the index'
+__git_hunk_complete -f -n '__git_hunk_using_command reset' -l dry-run -d 'Preview without touching the index'
 __git_hunk_complete -f -n '__git_hunk_using_command stash' -s u -l include-untracked -d 'Include untracked files (with --all)'
 __git_hunk_complete -f -n '__git_hunk_using_command stash' -s m -l message -x -d 'Set the stash message'
 __git_hunk_complete -f -n '__git_hunk_using_command commit' -s m -l message -x -d 'Commit message'
