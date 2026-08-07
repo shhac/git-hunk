@@ -103,7 +103,7 @@ _git_hunk()
         opts="--staged --oneline --ref --file --porcelain --no-color --tracked-only --untracked-only -U --unified -v --verbose -q --quiet -h --help"
         ;;
     diff)
-        opts="--staged --ref --file --porcelain --no-color --tracked-only --untracked-only -U --unified -v --verbose -q --quiet -h --help"
+        opts="--staged -n --number --ref --file --porcelain --no-color --tracked-only --untracked-only -U --unified -v --verbose -q --quiet -h --help"
         hash_source=auto
         ;;
     add)

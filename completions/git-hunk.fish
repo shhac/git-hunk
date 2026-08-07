@@ -177,6 +177,7 @@ end
 
 # Command-specific flags
 __git_hunk_complete -f -n '__git_hunk_using_command list' -l oneline -d 'One hunk per line'
+__git_hunk_complete -f -n '__git_hunk_using_command diff' -s n -l number -d 'Number hunk body lines (context included)'
 __git_hunk_complete -f -n '__git_hunk_using_command check' -l exclusive -d 'Assert these are the only hunks in the diff'
 __git_hunk_complete -f -n '__git_hunk_using_command check' -l allow-empty -d 'Allow zero sha arguments'
 __git_hunk_complete -f -n '__git_hunk_using_command restore' -l force -d 'Required to restore untracked files (deletes them)'

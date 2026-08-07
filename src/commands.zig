@@ -1026,6 +1026,12 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
     }
 }
 
+/// A selects-nothing LineSpec when `on`, else null. Lets `-n` reuse the
+/// line-spec renderer so the two can never number lines differently.
+fn emptyLineSpecIf(on: bool) ?types.LineSpec {
+    return if (on) .{ .ranges = &.{} } else null;
+}
+
 pub fn cmdDiff(allocator: Allocator, stdout: *std.Io.Writer, opts: DiffOptions) !void {
     var arena_state = std.heap.ArenaAllocator.init(allocator);
     defer arena_state.deinit();
@@ -1060,7 +1066,9 @@ pub fn cmdDiff(allocator: Allocator, stdout: *std.Io.Writer, opts: DiffOptions) 
                         if (m.line_spec != null) {
                             std.debug.print("(empty file — no lines to select)\n", .{});
                         }
-                    } else if (m.line_spec) |ls| {
+                    } else if (m.line_spec orelse emptyLineSpecIf(opts.number)) |ls| {
+                        // -n and a line spec share this renderer; an empty spec
+                        // selects nothing, so -n alone numbers without markers.
                         try format.printRawLinesWithLineNumbers(stdout, m.hunk.raw_lines, ls, use_color);
                     } else {
                         try format.printRawLinesHuman(stdout, m.hunk.raw_lines, use_color);

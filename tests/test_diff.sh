@@ -329,4 +329,92 @@ OUT923="$("$GIT_HUNK" diff --no-color --file alpha.txt --file gamma.txt "$SHA923
 echo "$OUT923" | grep -q "alpha.txt" || fail "test 923: alpha.txt missing in diff with multi-file filter"
 pass "test 923: diff --file a --file c finds SHA from a"
 
+# ============================================================================
+# Test 924: diff -n numbers body lines, counting context lines
+# The numbers exist so a :lines spec can be read off instead of counted; the
+# gutter must therefore agree with what add/reset/restore actually select.
+# ============================================================================
+new_repo
+cat > numbered.txt <<'NUM_EOF'
+keep-A
+keep-B
+keep-C
+NUM_EOF
+git add numbered.txt && git commit -m "numbered setup" -q
+cat > numbered.txt <<'NUM_EOF'
+keep-A
+ADD-1
+ADD-2
+keep-B
+ADD-3
+keep-C
+NUM_EOF
+
+SHA924="$("$GIT_HUNK" list --porcelain --oneline --file numbered.txt | head -1 | cut -f1)"
+[[ -n "$SHA924" ]] || fail "test 924: no hunk found"
+OUT924="$("$GIT_HUNK" diff --no-color -n "$SHA924")"
+# Line 1 is the keep-A CONTEXT line, so ADD-1 is line 2 — the exact off-by-one
+# this flag exists to prevent.
+echo "$OUT924" | grep -qE '^ 1: keep-A$' || fail "test 924: expected ' 1: keep-A', got: '$OUT924'"
+echo "$OUT924" | grep -qE '^ 2:\+ADD-1$' || fail "test 924: expected ' 2:+ADD-1', got: '$OUT924'"
+echo "$OUT924" | grep -qE '^ 4: keep-B$' || fail "test 924: expected ' 4: keep-B', got: '$OUT924'"
+echo "$OUT924" | grep -qE '^ 6: keep-C$' || fail "test 924: expected ' 6: keep-C', got: '$OUT924'"
+# Without a spec nothing is marked selected.
+if echo "$OUT924" | grep -q '^>'; then
+    fail "test 924: -n without a line spec must not mark any line selected"
+fi
+pass "test 924: diff -n numbers body lines including context"
+
+# ============================================================================
+# Test 925: --number is a synonym for -n
+# ============================================================================
+OUT925="$("$GIT_HUNK" diff --no-color --number "$SHA924")"
+[[ "$OUT925" == "$OUT924" ]] || fail "test 925: --number and -n should produce identical output"
+pass "test 925: --number is a synonym for -n"
+
+# ============================================================================
+# Test 926: diff -n with a line spec keeps the > selection markers
+# ============================================================================
+OUT926="$("$GIT_HUNK" diff --no-color -n "${SHA924}:2,5")"
+echo "$OUT926" | grep -qE '^>2:\+ADD-1$' || fail "test 926: expected '>2:+ADD-1', got: '$OUT926'"
+echo "$OUT926" | grep -qE '^>5:\+ADD-3$' || fail "test 926: expected '>5:+ADD-3', got: '$OUT926'"
+echo "$OUT926" | grep -qE '^ 3:\+ADD-2$' || fail "test 926: unselected line 3 should have no marker, got: '$OUT926'"
+pass "test 926: diff -n with a line spec keeps > markers"
+
+# ============================================================================
+# Test 927: the -n gutter agrees with what `add` actually stages
+# Pins the flag to its purpose: numbers read off the gutter must select the
+# lines the gutter showed. Guards against the two drifting apart.
+# ============================================================================
+"$GIT_HUNK" add "${SHA924}:2,5" > /dev/null \
+    || fail "test 927: add with spec read off the -n gutter failed"
+STAGED927="$(git diff --cached numbered.txt)"
+echo "$STAGED927" | grep -q "ADD-1" || fail "test 927: line 2 (ADD-1) should be staged"
+echo "$STAGED927" | grep -q "ADD-3" || fail "test 927: line 5 (ADD-3) should be staged"
+if echo "$STAGED927" | grep -q "ADD-2"; then
+    fail "test 927: line 3 (ADD-2) was not selected and must not be staged"
+fi
+pass "test 927: -n gutter numbers match what add stages"
+
+# ============================================================================
+# Test 928: diff without -n is unnumbered (default output preserved)
+# ============================================================================
+new_repo
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
+SHA928="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+OUT928="$("$GIT_HUNK" diff --no-color "$SHA928")"
+if echo "$OUT928" | grep -qE '^[ >][0-9]+:'; then
+    fail "test 928: plain diff must not be numbered, got: '$OUT928'"
+fi
+pass "test 928: diff without -n stays unnumbered"
+
+# ============================================================================
+# Test 929: --porcelain ignores -n (documented no-op, not a new field)
+# ============================================================================
+PORC929_PLAIN="$("$GIT_HUNK" diff --porcelain "$SHA928")"
+PORC929_N="$("$GIT_HUNK" diff --porcelain -n "$SHA928")"
+[[ "$PORC929_PLAIN" == "$PORC929_N" ]] \
+    || fail "test 929: --porcelain output should be unaffected by -n"
+pass "test 929: --porcelain ignores -n"
+
 report_results

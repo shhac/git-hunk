@@ -136,6 +136,7 @@ _git-hunk() {
     diff)
       _arguments $base_opts $output_opts $ref_opt \
         '--staged[show hunks from the staged diff]' \
+        '(-n --number)'{-n,--number}'[number hunk body lines (context included)]' \
         '*: :__git-hunk_hashes_auto' && ret=0
       ;;
     add)

@@ -7,7 +7,9 @@
 - `git hunk commit --dry-run` no longer requires `-m`. The message check ran ahead of the dry-run branch, so the behaviour documented in `--help` ("required unless `--dry-run`") — and already allowed by the argument parser — was unreachable.
 
 ### Added
+- `git hunk diff -n` / `--number` numbers a hunk's body lines without requiring a line spec, so the numbers a `:lines` spec expects can be read off the screen instead of counted by hand. The numbered gutter already existed but was reachable only by passing a spec — i.e. only once you knew the answer. `-n` and a spec share one renderer, so their numbering cannot drift; with both, selected lines keep their `>` markers. Human output only, a deliberate no-op under `--porcelain`; plain `diff` output is unchanged byte-for-byte.
 - Regression tests for line specs at default context on `reset` (test 237) and `restore` (tests 525–527, covering insertions, deletions, and a mixed add+delete hunk), plus `commit --dry-run` without `-m` (tests 1020–1021). The previously existing line-spec tests for these commands all passed `--unified 0`, which is why the bug survived; the new tests deliberately do not.
+- `diff -n` tests (924–929), including one that stages a spec read straight off the gutter to pin the numbering to what `add` actually selects.
 
 ## [0.16.0] - 2026-07-04
 

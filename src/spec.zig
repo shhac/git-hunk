@@ -104,6 +104,15 @@ pub const f_staged: Flag = .{
     .help_desc = &.{"List hunks from the staged (index) diff instead of worktree"},
 };
 
+pub const f_number: Flag = .{
+    .long = "--number",
+    .short = "-n",
+    .help_desc = &.{
+        "Number hunk body lines, so the numbers a :lines spec expects",
+        "can be read off directly (context lines are counted too).",
+    },
+};
+
 pub const f_ref: Flag = .{
     .long = "--ref",
     .placeholder = "<refspec>",
@@ -234,6 +243,7 @@ pub const commands = [_]CommandSpec{
         }},
         .flags = &.{
             f_staged.withHelp(&.{"Show hunks from the staged diff instead of worktree"}),
+            f_number,
             f_ref,
             f_file,
             f_porcelain,
@@ -249,6 +259,7 @@ pub const commands = [_]CommandSpec{
             .{ .cmd = "git-hunk diff a3f7c21", .desc = "Show a hunk by full hash" },
             .{ .cmd = "git-hunk diff a3f7 b82e", .desc = "Show multiple hunks by prefix" },
             .{ .cmd = "git-hunk diff a3f7c21 --staged", .desc = "Show a staged hunk" },
+            .{ .cmd = "git-hunk diff -n a3f7", .desc = "Show a hunk with numbered lines" },
             .{ .cmd = "git-hunk diff a3f7:3-5,8", .desc = "Show specific lines of a hunk" },
             .{ .cmd = "git-hunk diff --ref HEAD~1 a3f7", .desc = "Show a hunk from the last commit" },
         },

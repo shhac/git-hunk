@@ -53,7 +53,7 @@ git-hunk list --no-color                         # disable color output
 Show the full diff content of specific hunks.
 
 ```
-git-hunk diff <sha[:lines]>... [--staged] [--file <path>] [--porcelain] [--unified <n>] [--no-color]
+git-hunk diff <sha[:lines]>... [--staged] [-n] [--file <path>] [--porcelain] [--unified <n>] [--no-color]
 ```
 
 ### Arguments
@@ -67,6 +67,7 @@ git-hunk diff <sha[:lines]>... [--staged] [--file <path>] [--porcelain] [--unifi
 | Flag | Description |
 |------|-------------|
 | `--staged` | Show hunks from staged diff (HEAD vs index) instead of unstaged (index vs worktree) |
+| `--number` / `-n` | Number each hunk body line, so the numbers a `:lines` spec expects can be read off rather than counted by hand. Numbering counts **every** body line, context lines included — line 1 of a hunk is often a context line, not the first change. Passing a `:lines` spec turns the same gutter on automatically and marks selected lines with `>`. Human output only; ignored under `--porcelain`. |
 | `--file <path>` | Restrict hash matching to hunks in this file. May be repeated to match any of several files. |
 | `--ref <refspec>` | Source the diff from a git ref. **Single ref** (e.g. `HEAD~1`, `abc1234`) is shorthand for `<ref>^..<ref>` — that commit's diff (`git show` semantics). **Range** (e.g. `main..HEAD`) is the literal diff between two refs. Initial commits (no parent) diff against the empty tree. Combines with `--staged` for ref vs index comparison. |
 | `--porcelain` | Machine-readable output: metadata header line + raw diff lines + blank separator. |
@@ -81,6 +82,7 @@ git-hunk diff <sha[:lines]>... [--staged] [--file <path>] [--porcelain] [--unifi
 
 ```bash
 git-hunk diff a3f7c21                            # show one hunk's diff
+git-hunk diff -n a3f7c21                         # ...with numbered lines, to write a spec from
 git-hunk diff a3f7 b82e                          # show multiple hunks
 git-hunk diff a3f7c21 --staged                   # show a staged hunk
 git-hunk diff a3f7 --file src/main.zig           # restrict to file

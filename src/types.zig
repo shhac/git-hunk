@@ -124,6 +124,9 @@ pub const DiffOptions = struct {
     no_color: bool = false,
     context: ?u32 = null,
     verbosity: Verbosity = .normal,
+    /// Number hunk body lines in human output. A line spec already implies the
+    /// numbered gutter; this requests it without one.
+    number: bool = false,
 };
 
 pub const CountOptions = struct {

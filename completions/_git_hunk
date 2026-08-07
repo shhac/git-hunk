@@ -106,7 +106,7 @@ local _gh_ret=1
       opts=(--staged --oneline --ref $common)
       ;;
     diff)
-      opts=(--staged --ref $common)
+      opts=(--staged -n --number --ref $common)
       hashmode=auto
       ;;
     add)

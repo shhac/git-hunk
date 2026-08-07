@@ -220,6 +220,8 @@ pub fn parseDiffArgs(allocator: Allocator, args: []const [:0]const u8) !DiffOpti
         if (try parseCommonFlag(allocator, arg, &i, args, &common)) continue;
         if (std.mem.eql(u8, arg, "--staged")) {
             opts.mode = .staged;
+        } else if (std.mem.eql(u8, arg, "--number") or std.mem.eql(u8, arg, "-n")) {
+            opts.number = true;
         } else if (std.mem.startsWith(u8, arg, "-")) {
             return unknownFlag(arg);
         } else {
@@ -946,6 +948,24 @@ test "parseDiffArgs staged flag" {
     var opts = try parseDiffArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expectEqual(DiffMode.staged, opts.mode);
+}
+
+test "parseDiffArgs number flag short and long" {
+    const allocator = std.testing.allocator;
+    for ([_][:0]const u8{ "-n", "--number" }) |flag| {
+        const args_arr = [_][:0]const u8{ "abcd1234", flag };
+        var opts = try parseDiffArgs(allocator, &args_arr);
+        defer deinitShaArgs(allocator, &opts.sha_args);
+        try std.testing.expect(opts.number);
+    }
+}
+
+test "parseDiffArgs number defaults off" {
+    const allocator = std.testing.allocator;
+    const args_arr = [_][:0]const u8{"abcd1234"};
+    var opts = try parseDiffArgs(allocator, &args_arr);
+    defer deinitShaArgs(allocator, &opts.sha_args);
+    try std.testing.expect(!opts.number);
 }
 
 test "parseDiffArgs porcelain flag" {
