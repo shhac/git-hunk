@@ -85,10 +85,50 @@ The hash is computed from: file path, stable line number (worktree side for unst
 HEAD side for staged), and diff content (`+`/`-` lines only). Staged and unstaged
 hashes for the same hunk differ -- use `add`'s `->` output to track the mapping.
 
+## Line specs (`sha:3-5,8`)
+
+`add`, `reset`, `commit`, and `restore` accept `<sha>:<lines>` to operate on part
+of a hunk.
+
+**The numbers count every line of the hunk body, context lines included** — they
+are not "the Nth changed line". Line 1 is frequently a context line and selects
+nothing:
+
+```
+@@ -1,3 +1,6 @@
+ keep-A      <- 1  (context)
++ADD-1       <- 2
++ADD-2       <- 3
+ keep-B      <- 4  (context)
++ADD-3       <- 5
+ keep-C      <- 6  (context)
+```
+
+- `:1,3` stages **only `ADD-2`** (line 1 is context, so it contributes nothing)
+- `:2,5` stages **`ADD-1` and `ADD-3`**
+
+Do not count these by hand — `git hunk diff -n <sha>` prints the numbers:
+
+```bash
+git hunk diff -n a3f7c21      # numbered gutter, no selection
+git hunk diff a3f7c21:2,5     # same gutter, selected lines marked with >
+```
+
+A spec that selects only context lines is an error (`no changes in selected lines
+of hunk <sha>`, exit 1). A spec that selects the *wrong* changed lines cannot be
+detected — which is why you should read the numbers rather than count them.
+
+`-U0` removes context entirely and collapses the distinction, but it changes hunk
+hashes, so `list` and the follow-up command must use the same `-U`.
+
 ## New, deleted, and untracked files
 
 Untracked files appear automatically in `list` output alongside tracked changes.
 Use `--tracked-only` or `--untracked-only` to filter.
+
+Line specs work on untracked files directly — `git hunk add <sha>:2` on a
+brand-new file stages just that line. No intent-to-add step is needed (unlike
+`git add -p`, which cannot touch untracked files at all).
 
 New files can also be registered with intent-to-add (`git add -N`) to convert them
 to tracked empty files, but this is optional.

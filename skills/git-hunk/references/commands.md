@@ -1,5 +1,66 @@
 # Command Reference
 
+## Line specs
+
+`add`, `reset`, `commit`, and `restore` accept a `<sha>:<lines>` suffix to
+operate on part of a hunk. `diff` accepts the same suffix to preview it.
+
+Numbering is over **all lines of the hunk body, context lines included** — not
+over the changed lines only. Line 1 is often a context line, in which case
+selecting it contributes nothing.
+
+```
+@@ -1,3 +1,6 @@
+ keep-A      <- 1  (context)
++ADD-1       <- 2
++ADD-2       <- 3
+ keep-B      <- 4  (context)
++ADD-3       <- 5
+ keep-C      <- 6  (context)
+```
+
+| Spec | Selects |
+|------|---------|
+| `:1,3` | `ADD-2` only — line 1 is context and contributes nothing |
+| `:2,5` | `ADD-1` and `ADD-3` |
+| `:2-3` | `ADD-1` and `ADD-2` |
+
+Ranges (`2-5`) and comma-separated lists (`2,5`) may be combined: `:1-47,54-159`.
+
+### Read the numbers, don't count them
+
+`git hunk diff -n <sha>` prints the gutter these specs are written against:
+
+```bash
+git hunk diff -n a3f7c21      # numbered, nothing selected
+git hunk diff a3f7c21:2,5     # same gutter, selected lines marked with >
+```
+
+Both use the same renderer, so the numbers shown are always the numbers a spec
+will select.
+
+### Failure modes
+
+A spec selecting only context lines fails loudly:
+
+```
+error: no changes in selected lines of hunk a3f7c21
+```
+
+(exit 1, nothing staged). A spec selecting the *wrong* changed lines **cannot**
+be detected — changes were selected, just not the intended ones. This is the
+reason to read the numbers off `diff -n` rather than count them by hand.
+
+### Interaction with `--unified`
+
+`-U0` removes context entirely, so every change becomes its own hunk and the
+context-vs-change distinction collapses. It also changes hunk hashes, so `list`
+and the follow-up command must pass the same `-U` value.
+
+### Untracked files
+
+Line specs work on untracked files directly; no `git add -N` is required.
+
 ## git-hunk list
 
 List diff hunks with content hashes.
@@ -60,7 +121,7 @@ git-hunk diff <sha[:lines]>... [--staged] [-n] [--file <path>] [--porcelain] [--
 
 | Argument | Description |
 |----------|-------------|
-| `<sha[:lines]>...` | One or more SHA hex prefixes (minimum 4 characters). Prefix matching is supported. Optional `:lines` suffix selects specific hunk-relative lines (e.g., `a3f7:3-5,8`). |
+| `<sha[:lines]>...` | One or more SHA hex prefixes (minimum 4 characters). Prefix matching is supported. Optional `:lines` suffix selects specific hunk-relative lines (e.g., `a3f7:3-5,8`). Numbering counts every hunk body line, **context lines included** — see [Line specs](#line-specs). |
 
 ### Flags
 
@@ -127,7 +188,7 @@ git-hunk add [<sha[:lines]>...] [--file <path>] [--all] [--porcelain] [--unified
 
 | Argument | Description |
 |----------|-------------|
-| `<sha[:lines]>...` | One or more SHA hex prefixes (minimum 4 characters). Prefix matching is supported. Optional `:lines` suffix stages specific hunk-relative lines (e.g., `a3f7:3-5,8`). Optional when `--all` or `--file` is used. |
+| `<sha[:lines]>...` | One or more SHA hex prefixes (minimum 4 characters). Prefix matching is supported. Optional `:lines` suffix stages specific hunk-relative lines (e.g., `a3f7:3-5,8`). Numbering counts every hunk body line, **context lines included** — see [Line specs](#line-specs). Optional when `--all` or `--file` is used. |
 
 ### Flags
 
@@ -199,7 +260,7 @@ git-hunk commit [<sha[:lines]>...] -m <message> [--file <path>] [--all] [--amend
 
 | Argument | Description |
 |----------|-------------|
-| `<sha[:lines]>...` | One or more SHA hex prefixes (minimum 4 characters). Prefix matching is supported. Optional `:lines` suffix commits specific hunk-relative lines (e.g., `a3f7:3-5,8`). Optional when `--all` or `--file` is used. |
+| `<sha[:lines]>...` | One or more SHA hex prefixes (minimum 4 characters). Prefix matching is supported. Optional `:lines` suffix commits specific hunk-relative lines (e.g., `a3f7:3-5,8`). Numbering counts every hunk body line, **context lines included** — see [Line specs](#line-specs). Optional when `--all` or `--file` is used. |
 
 ### Flags
 
@@ -330,7 +391,7 @@ git-hunk restore [<sha[:lines]>...] [--file <path>] [--all] [--dry-run] [--porce
 
 | Argument | Description |
 |----------|-------------|
-| `<sha[:lines]>...` | One or more SHA hex prefixes (minimum 4 characters). Prefix matching is supported. Optional `:lines` suffix restores specific hunk-relative lines (e.g., `a3f7:3-5,8`). Optional when `--all` or `--file` is used. |
+| `<sha[:lines]>...` | One or more SHA hex prefixes (minimum 4 characters). Prefix matching is supported. Optional `:lines` suffix restores specific hunk-relative lines (e.g., `a3f7:3-5,8`). Numbering counts every hunk body line, **context lines included** — see [Line specs](#line-specs). Optional when `--all` or `--file` is used. |
 
 ### Flags
 
