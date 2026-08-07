@@ -757,4 +757,44 @@ pass "test 235: add --3way fails with clear message when 3-way produces conflict
 # The action-aware error message is a single `switch (action)` in cmdApplyHunks
 # — covered by inspection plus test 235's stage-side path.
 
+# ============================================================================
+# Test 237: reset sha:N at DEFAULT context (regression)
+# Test 221 passes --unified 0, which isolates every added line in its own hunk
+# and so never leaves a deselected '+' inside one. reset reverse-applies its
+# patch, so at default context deselected additions must be emitted as context
+# lines or git rejects the patch with "patch does not apply".
+# ============================================================================
+new_repo
+cat > ctxreset.txt <<'CTXR_EOF'
+keep-A
+keep-B
+keep-C
+CTXR_EOF
+git add ctxreset.txt && git commit -m "ctxreset setup" -q
+cat > ctxreset.txt <<'CTXR_EOF'
+keep-A
+ADD-1
+ADD-2
+keep-B
+ADD-3
+keep-C
+CTXR_EOF
+git add ctxreset.txt
+
+STAGED_SHA237="$("$GIT_HUNK" list --staged --porcelain --oneline --file ctxreset.txt | head -1 | cut -f1)"
+[[ -n "$STAGED_SHA237" ]] || fail "test 237: no staged hunk found"
+# Body line 2 is ADD-1 (line 1 is the keep-A context line).
+"$GIT_HUNK" reset --no-color "${STAGED_SHA237}:2" > /dev/null \
+    || fail "test 237: reset with line spec failed at default context"
+
+STAGED237="$(git diff --cached ctxreset.txt)"
+if echo "$STAGED237" | grep -q "ADD-1"; then
+    fail "test 237: ADD-1 should be unstaged after reset"
+fi
+echo "$STAGED237" | grep -q "ADD-2" || fail "test 237: ADD-2 should remain staged"
+echo "$STAGED237" | grep -q "ADD-3" || fail "test 237: ADD-3 should remain staged"
+git diff ctxreset.txt | grep -q "ADD-1" \
+    || fail "test 237: ADD-1 should be back in the unstaged diff"
+pass "test 237: reset sha:N works at default context"
+
 report_results

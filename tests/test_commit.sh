@@ -356,4 +356,41 @@ git log --oneline | grep -q "would conflict" \
     && fail "test 1019: commit should have been aborted on conflict" || true
 pass "test 1019: commit --3way fails clearly when 3-way produces conflicts"
 
+# ============================================================================
+# Test 1020: commit --dry-run does not require -m (regression)
+# Every other dry-run test passes a message, so the message gate running ahead
+# of the dry-run branch went unnoticed. --help documents -m as "required unless
+# --dry-run"; this pins that down.
+# ============================================================================
+new_repo
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
+SHA1020="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+[[ -n "$SHA1020" ]] || fail "test 1020: no hunk found"
+COMMITS1020_BEFORE="$(git log --oneline | wc -l)"
+
+OUT1020="$("$GIT_HUNK" commit --dry-run --no-color "$SHA1020")" \
+    || fail "test 1020: commit --dry-run without -m should succeed"
+echo "$OUT1020" | grep -q "would commit" \
+    || fail "test 1020: expected 'would commit' output, got: '$OUT1020'"
+
+COMMITS1020_AFTER="$(git log --oneline | wc -l)"
+[[ "$COMMITS1020_BEFORE" == "$COMMITS1020_AFTER" ]] \
+    || fail "test 1020: --dry-run must not create a commit"
+[[ -z "$(git diff --cached --name-only)" ]] \
+    || fail "test 1020: --dry-run must leave the index untouched"
+pass "test 1020: commit --dry-run does not require -m"
+
+# ============================================================================
+# Test 1021: commit without -m and without --dry-run still errors
+# Guards the fix above from over-reaching into the real commit path.
+# ============================================================================
+new_repo
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
+SHA1021="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+[[ -n "$SHA1021" ]] || fail "test 1021: no hunk found"
+if "$GIT_HUNK" commit "$SHA1021" > /dev/null 2>&1; then
+    fail "test 1021: commit without -m should fail"
+fi
+pass "test 1021: commit without -m still errors when not a dry run"
+
 report_results

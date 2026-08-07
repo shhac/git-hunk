@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- Line specs now work on `reset` and `restore` at any context width. Both commands reverse-apply their patch, but the filtered patch was built for forward apply only: deselected `+` lines were dropped instead of kept as context, so the patch's new side no longer matched the index/worktree and git rejected it with "patch does not apply". `git hunk reset <sha>:2` and `git hunk restore <sha>:2` failed on any hunk containing more than one change. Only `--unified 0` worked, because zero context puts every change in its own hunk and leaves nothing deselected to mishandle. Deselected lines are now kept on whichever side the apply direction matches against, mirrored per direction.
+- `git hunk commit --dry-run` no longer requires `-m`. The message check ran ahead of the dry-run branch, so the behaviour documented in `--help` ("required unless `--dry-run`") — and already allowed by the argument parser — was unreachable.
+
+### Added
+- Regression tests for line specs at default context on `reset` (test 237) and `restore` (tests 525–527, covering insertions, deletions, and a mixed add+delete hunk), plus `commit --dry-run` without `-m` (tests 1020–1021). The previously existing line-spec tests for these commands all passed `--unified 0`, which is why the bug survived; the new tests deliberately do not.
+
 ## [0.16.0] - 2026-07-04
 
 ### Changed

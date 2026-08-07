@@ -315,7 +315,7 @@ pub fn buildTrackedStashTree(
     parent_env: *const EnvMap,
 ) !TrackedStashResult {
     // Sort and build INDEX_PATCHES (index-relative, for worktree reverse-apply)
-    const index_patches = try patch_mod.sortAndBuildPatches(arena, tracked_matched);
+    const index_patches = try patch_mod.sortAndBuildPatches(arena, tracked_matched, .reverse);
 
     // Collect unique file paths from tracked hunks for HEAD diff
     const tracked_file_paths = try patch_mod.collectUniqueFilePaths(arena, tracked_matched);
@@ -346,7 +346,7 @@ pub fn buildTrackedStashTree(
     // Sort and build HEAD_PATCH (for temp index apply)
     const head_matched_sorted = try arena.alloc(MatchedHunk, head_matched.len);
     @memcpy(head_matched_sorted, head_matched);
-    const head_patches = try patch_mod.sortAndBuildPatches(arena, head_matched_sorted);
+    const head_patches = try patch_mod.sortAndBuildPatches(arena, head_matched_sorted, .forward);
 
     var tmp = try git.createTempIndex(allocator, parent_env, "");
     defer tmp.deinit();

@@ -467,4 +467,102 @@ grep -qE "(buggy line|<<<<<<<)" buggy.txt && \
     || fail "test 521: post-undo state should preserve unrelated edits"
 pass "test 521: e2e undo-hunk-from-history preserves unrelated worktree edits"
 
+# ============================================================================
+# Test 525: restore sha:N at DEFAULT context (regression)
+# Tests 515/516 pass --unified 0, which gives every added line its own hunk and
+# so never produces a deselected '+' inside a hunk. At default context the
+# reverse-apply patch has to keep deselected additions as context lines or git
+# rejects it with "patch does not apply".
+# ============================================================================
+new_repo
+cat > ctxspec.txt <<'CTX_EOF'
+keep-A
+keep-B
+keep-C
+CTX_EOF
+git add ctxspec.txt && git commit -m "ctxspec setup" -q
+cat > ctxspec.txt <<'CTX_EOF'
+keep-A
+ADD-1
+ADD-2
+keep-B
+ADD-3
+keep-C
+CTX_EOF
+
+SHA525="$("$GIT_HUNK" list --porcelain --oneline --file ctxspec.txt | head -1 | cut -f1)"
+[[ -n "$SHA525" ]] || fail "test 525: no hunk found"
+# Body line 2 is ADD-1 (line 1 is the keep-A context line).
+"$GIT_HUNK" restore --no-color "${SHA525}:2" > /dev/null \
+    || fail "test 525: restore with line spec failed at default context"
+
+if grep -q "ADD-1" ctxspec.txt; then fail "test 525: ADD-1 should have been restored away"; fi
+grep -q "ADD-2" ctxspec.txt || fail "test 525: ADD-2 should remain in worktree"
+grep -q "ADD-3" ctxspec.txt || fail "test 525: ADD-3 should remain in worktree"
+pass "test 525: restore sha:N works at default context"
+
+# ============================================================================
+# Test 526: restore sha:N at default context, deletion hunk (regression)
+# Mirror of 525 for removals: a deselected '-' must be dropped from the
+# reverse-apply patch, not turned into a context line.
+# ============================================================================
+new_repo
+cat > delspec.txt <<'DEL_EOF'
+keep-A
+DEL-1
+DEL-2
+keep-B
+DEL-3
+keep-C
+DEL_EOF
+git add delspec.txt && git commit -m "delspec setup" -q
+cat > delspec.txt <<'DEL_EOF'
+keep-A
+keep-B
+keep-C
+DEL_EOF
+
+SHA526="$("$GIT_HUNK" list --porcelain --oneline --file delspec.txt | head -1 | cut -f1)"
+[[ -n "$SHA526" ]] || fail "test 526: no hunk found"
+# Body line 2 is the '-DEL-1' line; restoring it puts DEL-1 back.
+"$GIT_HUNK" restore --no-color "${SHA526}:2" > /dev/null \
+    || fail "test 526: restore of a removal failed at default context"
+
+grep -q "DEL-1" delspec.txt || fail "test 526: DEL-1 should have been restored"
+if grep -q "DEL-2" delspec.txt; then fail "test 526: DEL-2 should stay deleted"; fi
+if grep -q "DEL-3" delspec.txt; then fail "test 526: DEL-3 should stay deleted"; fi
+pass "test 526: restore sha:N of a removal works at default context"
+
+# ============================================================================
+# Test 527: restore mixed add+delete hunk with a partial spec (regression)
+# Exercises both filtering rules in one patch: a deselected '-' must be dropped
+# while a deselected '+' must become context.
+# ============================================================================
+new_repo
+cat > mixspec.txt <<'MIX_EOF'
+ctx
+OLD-1
+OLD-2
+ctx2
+MIX_EOF
+git add mixspec.txt && git commit -m "mixspec setup" -q
+cat > mixspec.txt <<'MIX_EOF'
+ctx
+NEW-1
+NEW-2
+ctx2
+MIX_EOF
+
+SHA527="$("$GIT_HUNK" list --porcelain --oneline --file mixspec.txt | head -1 | cut -f1)"
+[[ -n "$SHA527" ]] || fail "test 527: no hunk found"
+# Body lines: 1=' ctx' 2='-OLD-1' 3='-OLD-2' 4='+NEW-1' 5='+NEW-2' 6=' ctx2'
+"$GIT_HUNK" restore --no-color "${SHA527}:2,4" > /dev/null \
+    || fail "test 527: restore of mixed hunk failed at default context"
+
+grep -q "OLD-1" mixspec.txt || fail "test 527: OLD-1 should have been restored"
+if grep -q "NEW-1" mixspec.txt; then fail "test 527: NEW-1 should have been restored away"; fi
+if grep -q "OLD-2" mixspec.txt; then fail "test 527: OLD-2 should stay deleted"; fi
+grep -q "NEW-2" mixspec.txt || fail "test 527: NEW-2 should remain"
+pass "test 527: restore mixed add+delete hunk with partial spec"
+
 report_results

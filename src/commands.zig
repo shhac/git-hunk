@@ -790,8 +790,8 @@ fn applyTextAndBinary(
 ) !bool {
     var any_conflicts = false;
     if (text_matched.len > 0) {
-        const patches = try patch_mod.sortAndBuildPatches(arena, text_matched);
         const reverse = action == .unstage;
+        const patches = try patch_mod.sortAndBuildPatches(arena, text_matched, if (reverse) .reverse else .forward);
         const apply_opts = git.ApplyOptions{ .reverse = reverse, .target = .index, .three_way = three_way, .ref = ref };
         if (reverse) {
             var i: usize = patches.len;
@@ -972,7 +972,7 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
     // Text hunks: reverse-apply patches to worktree
     var any_restore_conflicts = false;
     if (text_matched.len > 0) {
-        const patches = try patch_mod.sortAndBuildPatches(arena, text_matched);
+        const patches = try patch_mod.sortAndBuildPatches(arena, text_matched, .reverse);
         var i: usize = patches.len;
         while (i > 0) {
             i -= 1;
@@ -1471,18 +1471,14 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
     const text_matched = try partition.combinedText(arena);
     const binary_paths = try partition.allBinaryPaths(arena);
 
-    const patches = try patch_mod.sortAndBuildPatches(arena, text_matched);
+    const patches = try patch_mod.sortAndBuildPatches(arena, text_matched, .forward);
     if (patches.len == 0 and binary_paths.len == 0) {
         std.debug.print("error: no hunks to commit\n", .{});
         std.process.exit(1);
     }
 
-    const message = opts.message orelse {
-        std.debug.print("error: -m <message> is required\n", .{});
-        std.process.exit(1);
-    };
-
     // Dry-run: validate patches against the index (without modifying it) and show what would be committed.
+    // Checked before the message requirement — a preview has nothing to write a message onto.
     if (opts.dry_run) {
         for (patches) |p| {
             // git apply rejects --3way + --check; we pass plain --check for dry-run.
@@ -1492,6 +1488,11 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
         _ = try format.printMatchedHunks(stdout, matched.items, "would commit", "would-commit", use_color, opts.output, opts.verbosity);
         return;
     }
+
+    const message = opts.message orelse {
+        std.debug.print("error: -m <message> is required\n", .{});
+        std.process.exit(1);
+    };
 
     const commit_output = runTempIndexCommit(.{
         .allocator = allocator,

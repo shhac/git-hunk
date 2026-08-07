@@ -104,6 +104,12 @@ pub fn partitionByKind(arena: Allocator, matches: []const MatchedHunk) !HunkPart
     };
 }
 
+/// How the caller will hand the resulting patch to `git apply`. Line-spec
+/// filtering is direction-sensitive: a forward apply matches the patch's old
+/// side against the target, a reverse apply matches its new side, so each
+/// direction must keep a different set of deselected lines as context.
+pub const ApplyDirection = enum { forward, reverse };
+
 /// Build one or more patches from matched hunks. Returns multiple patches when
 /// typechanges are present (same file with delete + create requires separate
 /// git-apply calls because git cannot apply both in a single patch).
@@ -111,12 +117,12 @@ pub fn partitionByKind(arena: Allocator, matches: []const MatchedHunk) !HunkPart
 /// Sorting first is a correctness precondition of buildCombinedPatches
 /// (typechange deletions must precede creations); this keeps the pair
 /// inseparable at call sites.
-pub fn sortAndBuildPatches(arena: Allocator, matches: []MatchedHunk) ![]const []const u8 {
+pub fn sortAndBuildPatches(arena: Allocator, matches: []MatchedHunk, direction: ApplyDirection) ![]const []const u8 {
     std.mem.sort(MatchedHunk, matches, {}, matchedHunkPatchOrder);
-    return buildCombinedPatches(arena, matches);
+    return buildCombinedPatches(arena, matches, direction);
 }
 
-fn buildCombinedPatches(arena: Allocator, matches: []const MatchedHunk) ![]const []const u8 {
+fn buildCombinedPatches(arena: Allocator, matches: []const MatchedHunk, direction: ApplyDirection) ![]const []const u8 {
     var patches: std.ArrayList([]const u8) = .empty;
     var patch: std.ArrayList(u8) = .empty;
 
@@ -143,7 +149,7 @@ fn buildCombinedPatches(arena: Allocator, matches: []const MatchedHunk) ![]const
         try seen.put(arena, m.hunk.file_path, {});
 
         if (m.line_spec) |ls| {
-            const filtered = try buildFilteredHunkPatch(arena, m.hunk, ls);
+            const filtered = try buildFilteredHunkPatch(arena, m.hunk, ls, direction);
             try patch.appendSlice(arena, filtered);
         } else {
             try patch.appendSlice(arena, m.hunk.raw_lines);
@@ -162,9 +168,18 @@ fn buildCombinedPatches(arena: Allocator, matches: []const MatchedHunk) ![]const
 }
 
 /// Build a filtered hunk patch containing only selected lines.
-/// Deselected '-' lines become context; deselected '+' lines are dropped.
 /// Returns new raw_lines with a rewritten @@ header.
-fn buildFilteredHunkPatch(arena: Allocator, h: *const Hunk, line_spec: LineSpec) ![]const u8 {
+///
+/// Deselected lines must survive on whichever side `git apply` will match
+/// against the target, and vanish from the other:
+///   - forward: the old side is matched, so a deselected '-' (a line the target
+///     still has) becomes context and a deselected '+' is dropped.
+///   - reverse: the new side is matched, so the mirror holds — a deselected '+'
+///     (a line the target already has) becomes context and a deselected '-' is
+///     dropped.
+/// Getting this backwards produces a patch whose matched side disagrees with
+/// the target, which git rejects with "patch does not apply".
+fn buildFilteredHunkPatch(arena: Allocator, h: *const Hunk, line_spec: LineSpec, direction: ApplyDirection) ![]const u8 {
     var result: std.ArrayList(u8) = .empty;
     var filtered_body: std.ArrayList(u8) = .empty;
 
@@ -214,16 +229,21 @@ fn buildFilteredHunkPatch(arena: Allocator, h: *const Hunk, line_spec: LineSpec)
                 try filtered_body.append(arena, '\n');
                 new_old_count += 1;
                 has_changes = true;
-            } else {
-                // Deselected removal: convert to context line
+                prev_kept = true;
+            } else if (direction == .forward) {
+                // Deselected removal, forward: still present on the matched old
+                // side, so keep it as context.
                 try filtered_body.append(arena, ' ');
                 try filtered_body.appendSlice(arena, line[1..]);
                 try filtered_body.append(arena, '\n');
                 new_old_count += 1;
                 new_new_count += 1;
+                prev_kept = true;
+            } else {
+                // Deselected removal, reverse: absent from the matched new side.
+                prev_kept = false;
             }
             line_num += 1;
-            prev_kept = true;
         } else if (first == '+') {
             if (line_spec.containsLine(line_num)) {
                 // Selected addition: keep as +
@@ -232,8 +252,17 @@ fn buildFilteredHunkPatch(arena: Allocator, h: *const Hunk, line_spec: LineSpec)
                 new_new_count += 1;
                 has_changes = true;
                 prev_kept = true;
+            } else if (direction == .reverse) {
+                // Deselected addition, reverse: already present on the matched
+                // new side, so keep it as context.
+                try filtered_body.append(arena, ' ');
+                try filtered_body.appendSlice(arena, line[1..]);
+                try filtered_body.append(arena, '\n');
+                new_old_count += 1;
+                new_new_count += 1;
+                prev_kept = true;
             } else {
-                // Deselected addition: drop entirely
+                // Deselected addition, forward: absent from the matched old side.
                 prev_kept = false;
             }
             line_num += 1;
@@ -332,7 +361,7 @@ test "buildFilteredHunkPatch select one addition" {
     var h = testMakeHunk("f.txt", 1, 3, 1, 3);
     h.raw_lines = "@@ -1,3 +1,3 @@\n context\n-removed\n+added\n context2\n";
     const ranges = [_]LineRange{.{ .start = 3, .end = 3 }}; // select only +added
-    const result = try buildFilteredHunkPatch(arena.allocator(), &h, .{ .ranges = &ranges });
+    const result = try buildFilteredHunkPatch(arena.allocator(), &h, .{ .ranges = &ranges }, .forward);
     // -removed becomes context, +added stays
     // old: context(1) + removed-as-context(2) + context2(3) = 3
     // new: context(1) + removed-as-context(2) + added(3) + context2(4) = 4
@@ -348,12 +377,62 @@ test "buildFilteredHunkPatch select one removal" {
     var h = testMakeHunk("f.txt", 1, 3, 1, 3);
     h.raw_lines = "@@ -1,3 +1,3 @@\n context\n-removed\n+added\n context2\n";
     const ranges = [_]LineRange{.{ .start = 2, .end = 2 }}; // select only -removed
-    const result = try buildFilteredHunkPatch(arena.allocator(), &h, .{ .ranges = &ranges });
+    const result = try buildFilteredHunkPatch(arena.allocator(), &h, .{ .ranges = &ranges }, .forward);
     // -removed stays, +added dropped
     // old: context(1) + removed(2) + context2(3) = 3
     // new: context(1) + context2(2) = 2
     try std.testing.expectEqualStrings(
         "@@ -1,3 +1,2 @@\n context\n-removed\n context2\n",
+        result,
+    );
+}
+
+test "buildFilteredHunkPatch reverse keeps deselected additions as context" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var h = testMakeHunk("f.txt", 1, 3, 1, 3);
+    h.raw_lines = "@@ -1,3 +1,3 @@\n context\n-removed\n+added\n context2\n";
+    const ranges = [_]LineRange{.{ .start = 2, .end = 2 }}; // select only -removed
+    const result = try buildFilteredHunkPatch(arena.allocator(), &h, .{ .ranges = &ranges }, .reverse);
+    // Mirror of the forward case: the reverse apply matches the NEW side against
+    // the target, so +added (which the target has) must survive as context.
+    // old: context(1) + removed(2) + added-as-context(3) + context2(4) = 4
+    // new: context(1) + added-as-context(2) + context2(3) = 3
+    try std.testing.expectEqualStrings(
+        "@@ -1,4 +1,3 @@\n context\n-removed\n added\n context2\n",
+        result,
+    );
+}
+
+test "buildFilteredHunkPatch reverse drops deselected removals" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var h = testMakeHunk("f.txt", 1, 3, 1, 3);
+    h.raw_lines = "@@ -1,3 +1,3 @@\n context\n-removed\n+added\n context2\n";
+    const ranges = [_]LineRange{.{ .start = 3, .end = 3 }}; // select only +added
+    const result = try buildFilteredHunkPatch(arena.allocator(), &h, .{ .ranges = &ranges }, .reverse);
+    // -removed is absent from the target's (new-side) content, so it must be
+    // dropped rather than emitted as context.
+    // old: context(1) + added(2) + context2(3) = 3
+    // new: context(1) + context2(2) = 2 ... plus the +added line on the new side
+    try std.testing.expectEqualStrings(
+        "@@ -1,2 +1,3 @@\n context\n+added\n context2\n",
+        result,
+    );
+}
+
+test "buildFilteredHunkPatch reverse partial select over multiple additions" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var h = testMakeHunk("f.txt", 1, 3, 1, 6);
+    // The regression shape: pure insertions at default context.
+    h.raw_lines = "@@ -1,3 +1,6 @@\n keep-A\n+ADD-1\n+ADD-2\n keep-B\n+ADD-3\n keep-C\n";
+    const ranges = [_]LineRange{.{ .start = 2, .end = 2 }}; // select only +ADD-1
+    const result = try buildFilteredHunkPatch(arena.allocator(), &h, .{ .ranges = &ranges }, .reverse);
+    // ADD-2 and ADD-3 stay as context so the new side (6 lines) matches the
+    // worktree exactly; the old side (5) is that minus the reverted ADD-1.
+    try std.testing.expectEqualStrings(
+        "@@ -1,5 +1,6 @@\n keep-A\n+ADD-1\n ADD-2\n keep-B\n ADD-3\n keep-C\n",
         result,
     );
 }
@@ -364,7 +443,7 @@ test "buildFilteredHunkPatch select replacement pair" {
     var h = testMakeHunk("f.txt", 1, 3, 1, 3);
     h.raw_lines = "@@ -1,3 +1,3 @@\n context\n-old\n+new\n";
     const ranges = [_]LineRange{.{ .start = 2, .end = 3 }}; // select both - and +
-    const result = try buildFilteredHunkPatch(arena.allocator(), &h, .{ .ranges = &ranges });
+    const result = try buildFilteredHunkPatch(arena.allocator(), &h, .{ .ranges = &ranges }, .forward);
     // Both kept: old = context(1) + old(2) = 2, new = context(1) + new(2) = 2
     try std.testing.expectEqualStrings(
         "@@ -1,2 +1,2 @@\n context\n-old\n+new\n",
@@ -379,7 +458,7 @@ test "buildFilteredHunkPatch preserves func context" {
     h.context = "fn main()";
     h.raw_lines = "@@ -10,3 +10,3 @@ fn main()\n context\n-old\n+new\n";
     const ranges = [_]LineRange{.{ .start = 2, .end = 3 }};
-    const result = try buildFilteredHunkPatch(arena.allocator(), &h, .{ .ranges = &ranges });
+    const result = try buildFilteredHunkPatch(arena.allocator(), &h, .{ .ranges = &ranges }, .forward);
     try std.testing.expect(std.mem.startsWith(u8, result, "@@ -10,2 +10,2 @@ fn main()\n"));
 }
 
@@ -390,7 +469,7 @@ test "buildFilteredHunkPatch multiple changes partial select" {
     h.raw_lines = "@@ -1,5 +1,5 @@\n ctx1\n-rem1\n+add1\n ctx2\n-rem2\n+add2\n";
     // Select only first replacement (lines 2-3), not second (lines 5-6)
     const ranges = [_]LineRange{.{ .start = 2, .end = 3 }};
-    const result = try buildFilteredHunkPatch(arena.allocator(), &h, .{ .ranges = &ranges });
+    const result = try buildFilteredHunkPatch(arena.allocator(), &h, .{ .ranges = &ranges }, .forward);
     // rem1 kept as -, add1 kept as +, rem2 becomes context, add2 dropped
     // old: ctx1(1) + rem1(2) + ctx2(3) + rem2-as-ctx(4) = 4
     // new: ctx1(1) + add1(2) + ctx2(3) + rem2-as-ctx(4) = 4
@@ -408,7 +487,7 @@ test "buildFilteredHunkPatch no-newline marker with partial select" {
     h.raw_lines = "@@ -1,2 +1,2 @@\n-old1\n+new1\n-old2\n+new2\n\\ No newline at end of file\n";
     // Select only lines 1-2 (first pair), deselect lines 3-4 (second pair)
     const ranges = [_]LineRange{.{ .start = 1, .end = 2 }};
-    const result = try buildFilteredHunkPatch(arena.allocator(), &h, .{ .ranges = &ranges });
+    const result = try buildFilteredHunkPatch(arena.allocator(), &h, .{ .ranges = &ranges }, .forward);
     // old2 becomes context, new2 is dropped, "\ No newline" follows the dropped + so it's dropped too
     try std.testing.expect(std.mem.indexOf(u8, result, "\\ No newline") == null);
     try std.testing.expect(std.mem.indexOf(u8, result, "-old1") != null);
@@ -434,7 +513,7 @@ test "buildCombinedPatches typechange splits into two patches" {
         .{ .hunk = &h1, .line_spec = null },
         .{ .hunk = &h2, .line_spec = null },
     };
-    const patches = try buildCombinedPatches(arena.allocator(), &matches);
+    const patches = try buildCombinedPatches(arena.allocator(), &matches, .forward);
     try std.testing.expectEqual(@as(usize, 2), patches.len);
     // First patch: deletion
     try std.testing.expect(std.mem.startsWith(u8, patches[0], "diff --git a/b.txt b/b.txt\ndeleted file mode"));
@@ -455,7 +534,7 @@ test "buildCombinedPatches normal case returns single patch" {
         .{ .hunk = &h1, .line_spec = null },
         .{ .hunk = &h2, .line_spec = null },
     };
-    const patches = try buildCombinedPatches(arena.allocator(), &matches);
+    const patches = try buildCombinedPatches(arena.allocator(), &matches, .forward);
     try std.testing.expectEqual(@as(usize, 1), patches.len);
 }
 
@@ -482,7 +561,7 @@ test "buildCombinedPatches typechange with other files" {
         .{ .hunk = &h_del, .line_spec = null },
         .{ .hunk = &h_new, .line_spec = null },
     };
-    const patches = try buildCombinedPatches(arena.allocator(), &matches);
+    const patches = try buildCombinedPatches(arena.allocator(), &matches, .forward);
     try std.testing.expectEqual(@as(usize, 2), patches.len);
     // First patch: a.txt + b.txt deletion
     try std.testing.expect(std.mem.indexOf(u8, patches[0], "a/a.txt") != null);
