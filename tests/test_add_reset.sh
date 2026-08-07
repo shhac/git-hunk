@@ -882,11 +882,12 @@ new_repo
 sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 sed -i.bak '1s/.*/Changed beta./' beta.txt
 sed -i.bak '1s/.*/Changed gamma./' gamma.txt
-printf 'alpha.txt\ngamma.txt\n' > /tmp/git-hunk-files-242.txt
-"$GIT_HUNK" add --files-from /tmp/git-hunk-files-242.txt > /dev/null \
+LIST242="$(mktemp "${TMPDIR:-/tmp}/git-hunk-files-242.XXXXXX")"
+printf 'alpha.txt\ngamma.txt\n' > "$LIST242"
+"$GIT_HUNK" add --files-from "$LIST242" > /dev/null \
     || fail "test 242: add --files-from failed"
 STAGED242="$(git diff --cached --name-only)"
-rm -f /tmp/git-hunk-files-242.txt
+rm -f "$LIST242"
 echo "$STAGED242" | grep -q "^alpha.txt$" || fail "test 242: alpha.txt should be staged"
 echo "$STAGED242" | grep -q "^gamma.txt$" || fail "test 242: gamma.txt should be staged"
 if echo "$STAGED242" | grep -q "^beta.txt$"; then

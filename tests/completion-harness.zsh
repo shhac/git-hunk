@@ -28,21 +28,50 @@ drain() {
   print -r -- "$out"
 }
 
-# Ctrl-G invokes dumpbuf in the interactive shell.  Wait for that explicit
-# completion signal instead of assuming a fixed amount of PTY quiet time is
-# enough: a slow `git-hunk list` can otherwise leave the widget queued when
-# the PTY is torn down.
-wait_for_buffer() {
-  local chunk
-  integer attempts=0
-  while (( attempts < 50 )); do
-    [[ -f $bufout ]] && return 0
-    zpty -rt z chunk 2>/dev/null || true
-    (( attempts++ ))
+# Capture everything the PTY emits for one completion, ending on an explicit
+# signal rather than a guess about how long the widget takes.
+#
+# Ctrl-G invokes dumpbuf in the interactive shell. ZLE processes queued keys
+# in order, so once dumpbuf has written $bufout the TAB widget has necessarily
+# finished and everything it printed is already in the PTY.
+#
+# A fixed quiet period cannot do this job: zsh echoes the typed characters as
+# soon as TAB is sent, so the quiet counter starts running while the completion
+# function is still off running `git-hunk list` in a subprocess. On a loaded
+# machine that outlasts the window, and the listing is silently truncated --
+# the buffer assertions still pass (the buffer is captured separately) while
+# the display assertions fail, which is exactly how this presented.
+capture_until_buffer() {
+  local out='' chunk
+  integer idle=0 quiet=0
+  # Read continuously; only count idle time, and stop once dumpbuf has landed.
+  while (( idle < 300 )); do
+    if zpty -rt z chunk 2>/dev/null; then
+      out+="$chunk"
+      idle=0
+      continue
+    fi
+    [[ -f $bufout ]] && break
+    (( idle++ ))
     sleep 0.1
   done
-  print -ru2 -- "completion harness: timed out waiting for buffer capture"
-  return 1
+  if [[ ! -f $bufout ]]; then
+    print -r -- "$out"
+    print -ru2 -- "completion harness: timed out waiting for buffer capture"
+    return 1
+  fi
+  # Trailing drain: the tail of the listing can still be in flight when
+  # dumpbuf writes.
+  while (( quiet < 5 )); do
+    if zpty -rt z chunk 2>/dev/null; then
+      out+="$chunk"
+      quiet=0
+    else
+      (( quiet++ ))
+      sleep 0.1
+    fi
+  done
+  print -r -- "$out"
 }
 
 # PATH is inherited from the (exported) caller environment; sending it
@@ -67,10 +96,11 @@ fi
 zpty -w z "dumpbuf() { print -r -- \$BUFFER >! ${(qq)bufout}; zle kill-whole-line }; zle -N dumpbuf; bindkey '^G' dumpbuf"
 drain 6 >/dev/null
 
+# Queue the completion and the end-of-completion signal together, then capture
+# until the signal lands. Both keys are processed in order by ZLE.
 zpty -wn z "${input}"$'\t'
-drain 15 >! "$dispout"
 zpty -wn z $'\C-g'
-wait_for_buffer || {
+capture_until_buffer >! "$dispout" || {
   zpty -d z 2>/dev/null
   exit 1
 }
