@@ -674,6 +674,21 @@ fn resolveMatchedHunks(
     for (sha_args) |sha_arg| {
         const hunk = patch_mod.findHunkByShaPrefix(hunks, sha_arg.prefix, file_filter) catch |err| switch (err) {
             error.NotFound => {
+                // A --file filter scopes hash lookup as well as bulk selection,
+                // so a live hash in an unlisted file reports as "no hunk
+                // matching" — which reads as a stale hash and sends people
+                // hunting for the wrong problem. Re-resolve without the filter
+                // to say which it actually was.
+                if (file_filter.len > 0) {
+                    if (patch_mod.findHunkByShaPrefix(hunks, sha_arg.prefix, &.{})) |outside| {
+                        std.debug.print(
+                            "error: no hunk matching '{s}' in the --file selection (it is in '{s}')\n" ++
+                                "hint: --file also scopes which hunks a hash can match; stage the files and the hashes in two commands\n",
+                            .{ sha_arg.prefix, outside.file_path },
+                        );
+                        std.process.exit(1);
+                    } else |_| {}
+                }
                 std.debug.print("error: no hunk matching '{s}'\n", .{sha_arg.prefix});
                 std.process.exit(1);
             },

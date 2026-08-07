@@ -13,6 +13,11 @@
 - Regression tests for line specs at default context on `reset` (test 237) and `restore` (tests 525–527, covering insertions, deletions, and a mixed add+delete hunk), plus `commit --dry-run` without `-m` (tests 1020–1021). The previously existing line-spec tests for these commands all passed `--unified 0`, which is why the bug survived; the new tests deliberately do not.
 - `diff -n` tests (924–929), including one that stages a spec read straight off the gutter to pin the numbering to what `add` actually selects.
 
+### Changed
+- A hash that `--file` excluded now says so instead of reporting as missing: `no hunk matching 'da35d28' in the --file selection (it is in 'internal/cli/root.go')`, plus a hint to run the file and hash selections as separate commands. `--file` scopes which hunks a hash may match (this is also how an ambiguous prefix is disambiguated), so passing hashes alongside it reads as a union but behaves as a filter — and the old message was indistinguishable from a stale hash, sending people to look for the wrong problem. A genuinely unknown hash keeps the original wording.
+- Docs: `--file` is described as scoping rather than addition on every command that takes hashes, with the two-command idiom for "whole files plus specific hunks" written out; and the staging workflow now warns that a build which skips test files (`go build`, and equivalents) cannot verify a commit produced by splitting an implementation from its tests.
+- Test harness: completion display capture ends on the explicit dumpbuf signal rather than a fixed quiet period, fixing an intermittent `test_completions` failure (~1 run in 10 under load, measured 5/5 → 0/6 across the change). `run-all.sh` and one test no longer use fixed `/tmp` paths that collide between concurrent runs.
+
 ## [0.16.0] - 2026-07-04
 
 ### Changed

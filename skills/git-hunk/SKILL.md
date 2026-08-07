@@ -39,6 +39,37 @@ Do not run multiple staging commands in parallel. Git index writes contend on
 `.git/index.lock`; collect the intended hashes and pass them to one
 `git hunk add <hash>...` command.
 
+### Whole files plus specific hunks: use two commands
+
+`--file` **scopes which hunks a hash is allowed to match**, it does not add to
+them. So this does not mean "these hashes plus everything in these files" — it
+means "these hashes, but only if they live in these files", and any hash
+elsewhere fails to resolve:
+
+```bash
+git hunk add a3f7c21 --file src/parser.zig   # a3f7c21 must be IN parser.zig
+```
+
+Run the two selections as separate commands instead. Hashes stay stable across
+the first call, so the second still resolves:
+
+```bash
+git hunk add --file src/parser.zig --file README.md   # whole files
+git hunk add a3f7c21 b82e0f4:1-73                     # specific hunks
+```
+
+`--file` is also how you disambiguate a hash prefix that matches hunks in more
+than one file — that is the same scoping behaviour, used deliberately.
+
+### After splitting: verify with something that compiles tests
+
+Splitting an implementation from its tests is an easy mis-slice, and many
+toolchains do not compile test files during an ordinary build — so a commit
+holding only the tests can build clean and still be broken. After a split,
+verify with a step that typechecks tests too: `go vet ./...` (Go's build skips
+`_test.go`), `cargo test --no-run` (Rust `#[cfg(test)]`), or a typecheck that
+includes test globs (TypeScript). "It builds" is not sufficient.
+
 ## NEVER use `git add <file>` — use `git hunk add` instead
 
 `git add <file>` stages the entire file, which can include unreviewed changes.

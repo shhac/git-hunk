@@ -944,4 +944,37 @@ fi
     || fail "test 245: failed --files-from must not stage anything"
 pass "test 245: --files-from errors cleanly on a missing file"
 
+# ============================================================================
+# Test 246: a hash excluded by --file says so, and names the file
+# --file scopes hash lookup as well as bulk selection, so a live hash in an
+# unlisted file used to report as "no hunk matching" -- indistinguishable from
+# a stale hash, which sends people hunting for the wrong problem.
+# ============================================================================
+new_repo
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
+sed -i.bak '1s/.*/Changed beta./' beta.txt
+SHA246="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+[[ -n "$SHA246" ]] || fail "test 246: no hunk found"
+
+ERR246="$("$GIT_HUNK" add "$SHA246" --file beta.txt --no-color 2>&1 || true)"
+echo "$ERR246" | grep -q -- "--file selection" \
+    || fail "test 246: error should mention the --file selection, got: '$ERR246'"
+echo "$ERR246" | grep -q "alpha.txt" \
+    || fail "test 246: error should name the file the hash is in, got: '$ERR246'"
+[[ -z "$(git diff --cached --name-only)" ]] \
+    || fail "test 246: nothing should be staged when the hash is excluded"
+pass "test 246: hash excluded by --file reports why and where"
+
+# ============================================================================
+# Test 247: a genuinely stale hash keeps the plain message
+# Guards against blaming --file for every miss.
+# ============================================================================
+ERR247="$("$GIT_HUNK" add deadbeef --file beta.txt --no-color 2>&1 || true)"
+echo "$ERR247" | grep -q "no hunk matching 'deadbeef'" \
+    || fail "test 247: stale hash should keep the plain error, got: '$ERR247'"
+if echo "$ERR247" | grep -q -- "--file selection"; then
+    fail "test 247: a stale hash must not be blamed on --file, got: '$ERR247'"
+fi
+pass "test 247: genuinely stale hash keeps the plain error"
+
 report_results
