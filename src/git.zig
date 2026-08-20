@@ -185,6 +185,28 @@ fn runGitCaptureErr(allocator: Allocator, argv: []const []const u8, run_opts: Ru
     return if (opts.trim) trimAndShrink(allocator, result.stdout) else result.stdout;
 }
 
+/// Flags that pin git's diff output to the machine-readable form this tool
+/// parses, regardless of the user's config or environment.
+///
+/// `--no-ext-diff` defeats `diff.external` and `GIT_EXTERNAL_DIFF`, which
+/// otherwise hand the diff to a third-party program and leave git's stdout
+/// **empty with exit 0** — indistinguishable from a clean tree.
+/// `--no-textconv` defeats a `diff.<driver>.textconv` filter, which emits a
+/// human-readable rendering of the blob that cannot be applied back to it.
+/// `--src-prefix`/`--dst-prefix` pin the path prefixes against
+/// `diff.noprefix` and `diff.mnemonicPrefix`; `--no-relative` pins paths to
+/// the repo root against `diff.relative`; `--no-color` against `color.ui` /
+/// `color.diff`; `--full-index` keeps blob ids intact for `--3way`.
+const diff_hygiene_flags: []const []const u8 = &.{
+    "--no-ext-diff",   "--no-textconv",
+    "--no-color",      "--no-relative",
+    "--src-prefix=a/", "--dst-prefix=b/",
+};
+
+/// The subset of `diff_hygiene_flags` that applies to name-only listings,
+/// where prefixes and blob ids are not emitted at all.
+const name_only_hygiene_flags: []const []const u8 = &.{ "--no-ext-diff", "--no-textconv", "--no-color", "--no-relative" };
+
 pub fn runGitDiff(allocator: Allocator, mode: DiffMode, ref: ?[]const u8, context: ?u32) ![]u8 {
     return runGitDiffFiles(allocator, mode, ref, context, &.{});
 }
@@ -207,7 +229,8 @@ pub fn runGitDiffFiles(allocator: Allocator, mode: DiffMode, ref: ?[]const u8, c
     if (context) |ctx| {
         try argv.append(allocator, std.fmt.bufPrint(&context_buf, "-U{d}", .{ctx}) catch "-U0");
     }
-    try argv.appendSlice(allocator, &.{ "--src-prefix=a/", "--dst-prefix=b/", "--no-color", "--full-index" });
+    try argv.appendSlice(allocator, diff_hygiene_flags);
+    try argv.append(allocator, "--full-index");
     if (file_paths.len > 0) {
         try argv.append(allocator, "--");
         try argv.appendSlice(allocator, file_paths);
@@ -319,13 +342,22 @@ pub fn runGitCheckoutFiles(allocator: Allocator, file_paths: []const []const u8)
 /// Paths changed by HEAD relative to its first parent (newline-separated;
 /// --root covers parentless commits). Returns an error instead of fatal.
 pub fn runGitDiffTreeNames(allocator: Allocator) ![]u8 {
-    return runGitCaptureErr(allocator, &.{ "git", "diff-tree", "-r", "--name-only", "--no-commit-id", "--root", "HEAD" }, .{}, error.DiffTreeFailed, .{ .trim = false });
+    var argv: std.ArrayList([]const u8) = .empty;
+    defer argv.deinit(allocator);
+    try argv.appendSlice(allocator, &.{ "git", "diff-tree", "-r", "--name-only", "--no-commit-id" });
+    try argv.appendSlice(allocator, name_only_hygiene_flags);
+    try argv.appendSlice(allocator, &.{ "--root", "HEAD" });
+    return runGitCaptureErr(allocator, argv.items, .{}, error.DiffTreeFailed, .{ .trim = false });
 }
 
 /// Paths with staged changes (`git diff --cached --name-only`),
 /// newline-separated. Returns an error instead of fatal.
 pub fn runGitDiffCachedNames(allocator: Allocator) ![]u8 {
-    return runGitCaptureErr(allocator, &.{ "git", "diff", "--cached", "--name-only" }, .{}, error.DiffFailed, .{ .trim = false });
+    var argv: std.ArrayList([]const u8) = .empty;
+    defer argv.deinit(allocator);
+    try argv.appendSlice(allocator, &.{ "git", "diff", "--cached", "--name-only" });
+    try argv.appendSlice(allocator, name_only_hygiene_flags);
+    return runGitCaptureErr(allocator, argv.items, .{}, error.DiffFailed, .{ .trim = false });
 }
 
 /// Reset index entries to HEAD for the given paths, returning an error on
@@ -406,13 +438,13 @@ fn diffSingleUntrackedFile(allocator: Allocator, file_path: []const u8) ![]u8 {
         return diff;
     }
 
-    const argv: []const []const u8 = &.{
-        "git",             "diff",            "--no-index",
-        "--src-prefix=a/", "--dst-prefix=b/", "--no-color",
-        "--",              "/dev/null",       file_path,
-    };
+    var argv: std.ArrayList([]const u8) = .empty;
+    defer argv.deinit(allocator);
+    try argv.appendSlice(allocator, &.{ "git", "diff", "--no-index" });
+    try argv.appendSlice(allocator, diff_hygiene_flags);
+    try argv.appendSlice(allocator, &.{ "--", "/dev/null", file_path });
 
-    const result = runCommand(allocator, argv, .{ .max_bytes = 10 * 1024 * 1024 }) catch |err| {
+    const result = runCommand(allocator, argv.items, .{ .max_bytes = 10 * 1024 * 1024 }) catch |err| {
         if (err == error.AbnormalTermination) return try allocator.alloc(u8, 0);
         return err;
     };
