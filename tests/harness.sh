@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
 # Shared test utilities sourced by each test_*.sh script.
 # Usage: source "$(dirname "$0")/harness.sh" "$1"
-set -euo pipefail
+#
+# Deliberately no `pipefail`. The suite is built on `echo "$OUT" | grep -q X`
+# and `... | head -1`, where the consumer exits on its first match and the
+# producer then dies of SIGPIPE with status 141. Under pipefail that 141
+# becomes the pipeline's status, so a passing assertion fails at random --
+# observed on Ubuntu as one grep in a pair failing while its neighbour passed.
+# The status these pipelines want is the consumer's, which is what the
+# pipeline returns without pipefail.
+set -eu
 
 # An inherited git environment must not be able to redirect the suite at some
 # other repository. Every test builds its own repo and cds into it; a stray

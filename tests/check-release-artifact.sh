@@ -41,7 +41,7 @@ REQUIRED=(
 
 LISTING="$(tar -tzf "$TARBALL" | sed 's|^\./||')"
 for entry in "${REQUIRED[@]}"; do
-    printf '%s\n' "$LISTING" | grep -qxF "$entry" \
+    grep -qxF "$entry" <<< "$LISTING" \
         || fail "tarball is missing '$entry'"
 done
 [[ "$FAIL_COUNT" -eq 0 ]] && pass "tarball contains all ${#REQUIRED[@]} required entries"
