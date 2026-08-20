@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.18.1] - 2026-08-20
+
+### Fixed
+- `git hunk list` now names an unknown flag (`error: unknown flag '--badflag'`) instead of printing the whole usage banner. `parseListArgs` returned a bare error where every other parser routes through the shared `unknownFlag` helper, so `list` was the only command that never told you which flag was wrong.
+- `zig build test` ran 175 of 391 unit tests. A module's tests are discovered only if `main.zig`'s comptime block imports it, and `args.zig` (175 tests, the whole CLI argument parser) and `commands.zig` (41) were absent — so their tests were skipped silently rather than reported. Two had rotted undetected in the meantime: one referenced a struct field that had been renamed and no longer compiled, and one freed string literals and aborted. Both fixed; all 391 now run.
+
+### Changed
+- `commands.zig` is split from 2385 lines into three files. The result-group machinery — mapping applied hunks onto their post-apply result hashes, which is pure set arithmetic over two hunk snapshots — moves to `result_groups.zig`, and the temp-index commit transaction moves to `commit.zig`, each taking its own tests. `cmdCommit` stays alongside the other subcommand entry points so all nine still dispatch through one surface. No behaviour or interface change.
+- Test suites share `first_sha`, `bytes_of`, `blob_bytes` and `want_bytes` from `harness.sh` rather than redefining them per file.
+
 ## [0.18.0] - 2026-08-20
 
 ### Fixed
