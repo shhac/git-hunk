@@ -46,6 +46,10 @@ const FileHeaderState = struct {
     is_binary: bool = false,
     is_submodule: bool = false,
     is_symlink: bool = false,
+    /// An `old mode`/`new mode` pair was present. The mode change itself is
+    /// never representable as a hunk, whether or not the file also has
+    /// content changes.
+    has_mode_change: bool = false,
     file_mode: []const u8 = "100644",
     rename_from: ?[]const u8 = null,
     rename_to: ?[]const u8 = null,
@@ -82,8 +86,10 @@ fn parseExtendedHeaders(cursor: *DiffCursor) FileHeaderState {
                 state.is_symlink = true;
             }
         } else if (std.mem.startsWith(u8, line, "old mode ") or
-            std.mem.startsWith(u8, line, "new mode ") or
-            std.mem.startsWith(u8, line, "similarity index ") or
+            std.mem.startsWith(u8, line, "new mode "))
+        {
+            state.has_mode_change = true;
+        } else if (std.mem.startsWith(u8, line, "similarity index ") or
             std.mem.startsWith(u8, line, "copy from ") or
             std.mem.startsWith(u8, line, "copy to "))
         {
@@ -270,6 +276,74 @@ fn parseHunkBody(arena: Allocator, cursor: *DiffCursor, diff: []const u8, hunk_h
         .diff_lines = diff_lines_buf.items,
         .raw_lines = diff[sliceStart(diff, hunk_header_line)..last_line_end],
     };
+}
+
+/// Why a changed path produced no hunk. Each corresponds to a documented
+/// skip in `parseDiff`.
+pub const SkipReason = enum {
+    submodule,
+    mode_only,
+    rename_only,
+    other,
+
+    /// Subject of the note: what about this path has no hunk.
+    pub fn describe(self: SkipReason) []const u8 {
+        return switch (self) {
+            .submodule => "submodule pointer change",
+            .mode_only => "mode change",
+            .rename_only => "rename with no content change",
+            .other => "change",
+        };
+    }
+};
+
+pub const SkippedPath = struct {
+    file_path: []const u8,
+    reason: SkipReason,
+};
+
+/// Paths that `diff` reports as changed but that `parseDiff` produces no hunk
+/// for. git considers these files dirty; git-hunk has no hash to address them
+/// by, so without this they read as a clean tree.
+///
+/// Derived from the same text `parseDiff` consumed rather than from a parallel
+/// set of skip rules, so a new skip cannot go unreported.
+pub fn collectSkippedPaths(
+    arena: Allocator,
+    diff: []const u8,
+    hunks: []const Hunk,
+    out: *std.ArrayList(SkippedPath),
+) !void {
+    var cursor = DiffCursor.init(diff);
+    while (cursor.peek()) |outer_line| {
+        cursor.advance();
+        if (!std.mem.startsWith(u8, outer_line, "diff --git ")) continue;
+
+        const state = parseExtendedHeaders(&cursor);
+        const file_path = (try extractPathFromDiffGitLine(arena, outer_line)) orelse continue;
+
+        var has_hunk = false;
+        for (hunks) |h| {
+            if (std.mem.eql(u8, h.file_path, file_path)) {
+                has_hunk = true;
+                break;
+            }
+        }
+
+        // A mode change is unrepresentable even when the same file also has
+        // content hunks, so it is reported either way.
+        if (has_hunk and !state.has_mode_change) continue;
+
+        const reason: SkipReason = if (state.has_mode_change)
+            .mode_only
+        else if (state.is_submodule)
+            .submodule
+        else if (state.rename_from != null)
+            .rename_only
+        else
+            .other;
+        try out.append(arena, .{ .file_path = file_path, .reason = reason });
+    }
 }
 
 pub fn parseDiff(arena: Allocator, diff: []const u8, mode: DiffMode, hunks: *std.ArrayList(Hunk)) !void {
@@ -1334,6 +1408,109 @@ test "parseExtendedHeaders: deleted file mode 120000 sets is_symlink" {
     const state = parseExtendedHeaders(&cursor);
     try std.testing.expect(state.is_deleted_file);
     try std.testing.expect(state.is_symlink);
+}
+
+test "collectSkippedPaths: submodule pointer bump" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const diff =
+        \\diff --git a/sub b/sub
+        \\index df697a8..1eeb846 160000
+        \\--- a/sub
+        \\+++ b/sub
+        \\@@ -1 +1 @@
+        \\-Subproject commit df697a83ef08ce65e9182be309f7766d72fddadf
+        \\+Subproject commit 1eeb8464791fd87c90a3a5b5b7801ab7c43347c4
+        \\
+    ;
+    var hunks: std.ArrayList(Hunk) = .empty;
+    try parseDiff(arena, diff, .unstaged, &hunks);
+    try std.testing.expectEqual(@as(usize, 0), hunks.items.len);
+
+    var skipped: std.ArrayList(SkippedPath) = .empty;
+    try collectSkippedPaths(arena, diff, hunks.items, &skipped);
+    try std.testing.expectEqual(@as(usize, 1), skipped.items.len);
+    try std.testing.expectEqualStrings("sub", skipped.items[0].file_path);
+    try std.testing.expectEqual(SkipReason.submodule, skipped.items[0].reason);
+}
+
+test "collectSkippedPaths: mode-only change" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const diff =
+        \\diff --git a/run.sh b/run.sh
+        \\old mode 100644
+        \\new mode 100755
+        \\
+    ;
+    var hunks: std.ArrayList(Hunk) = .empty;
+    try parseDiff(arena, diff, .unstaged, &hunks);
+    try std.testing.expectEqual(@as(usize, 0), hunks.items.len);
+
+    var skipped: std.ArrayList(SkippedPath) = .empty;
+    try collectSkippedPaths(arena, diff, hunks.items, &skipped);
+    try std.testing.expectEqual(@as(usize, 1), skipped.items.len);
+    try std.testing.expectEqualStrings("run.sh", skipped.items[0].file_path);
+    try std.testing.expectEqual(SkipReason.mode_only, skipped.items[0].reason);
+}
+
+test "collectSkippedPaths: mode change alongside content still reported" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const diff =
+        \\diff --git a/run.sh b/run.sh
+        \\old mode 100644
+        \\new mode 100755
+        \\index f0f2307..7c30781
+        \\--- a/run.sh
+        \\+++ b/run.sh
+        \\@@ -1,3 +1,3 @@
+        \\ l1
+        \\-l2
+        \\+CHANGED
+        \\ l3
+        \\
+    ;
+    var hunks: std.ArrayList(Hunk) = .empty;
+    try parseDiff(arena, diff, .unstaged, &hunks);
+    try std.testing.expectEqual(@as(usize, 1), hunks.items.len);
+
+    var skipped: std.ArrayList(SkippedPath) = .empty;
+    try collectSkippedPaths(arena, diff, hunks.items, &skipped);
+    try std.testing.expectEqual(@as(usize, 1), skipped.items.len);
+    try std.testing.expectEqual(SkipReason.mode_only, skipped.items[0].reason);
+}
+
+test "collectSkippedPaths: an ordinary edit is not reported" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const diff =
+        \\diff --git a/f.txt b/f.txt
+        \\index f0f2307..7c30781 100644
+        \\--- a/f.txt
+        \\+++ b/f.txt
+        \\@@ -1,3 +1,3 @@
+        \\ l1
+        \\-l2
+        \\+CHANGED
+        \\ l3
+        \\
+    ;
+    var hunks: std.ArrayList(Hunk) = .empty;
+    try parseDiff(arena, diff, .unstaged, &hunks);
+    try std.testing.expectEqual(@as(usize, 1), hunks.items.len);
+
+    var skipped: std.ArrayList(SkippedPath) = .empty;
+    try collectSkippedPaths(arena, diff, hunks.items, &skipped);
+    try std.testing.expectEqual(@as(usize, 0), skipped.items.len);
 }
 
 test "parseExtendedHeaders: index ... 160000 sets is_submodule" {

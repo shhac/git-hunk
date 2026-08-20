@@ -644,7 +644,10 @@ pub const top_common_options = [_]Flag{
     f_untracked_only.withHelp(&.{"Only include hunks from untracked files"}),
     f_porcelain.withHelp(&.{"Machine-readable tab-separated output"}),
     f_no_color.withHelp(&.{"Disable colored output"}),
-    f_verbose.withHelp(&.{"Show summary counts and hints"}),
+    f_verbose.withHelp(&.{
+        "Show summary counts and hints, and name changed paths that",
+        "have no hunk (submodule pointer bumps, mode changes)",
+    }),
     f_quiet.withHelp(&.{"Suppress all output except errors"}),
     .{ .long = "--version", .short = "-V", .help_desc = &.{"Show version"} },
     f_help.withHelp(&.{"Show help for a command"}),
@@ -692,7 +695,10 @@ pub const man_global_options = [_]ManOption{
         "Machine\\-readable tab\\-separated output.",
     } },
     .{ .header = ".BR \\-v \", \" \\-\\-verbose", .lines = &.{
-        "Show summary counts and hints.",
+        "Show summary counts and hints. Also names changed paths that produced no hunk \\(em",
+        "a submodule pointer bump, a mode change, or a rename with no content change \\(em",
+        "so a tree git considers dirty is never reported here as having nothing to stage.",
+        "These paths have no hash; stage them with \\fBgit add \\fI<path>\\fR.",
     } },
     .{ .header = ".BR \\-q \", \" \\-\\-quiet", .lines = &.{
         "Suppress all output (exit code only).",

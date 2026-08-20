@@ -7,6 +7,12 @@
 - A `diff.<driver>.textconv` filter no longer leaks converted text into the hunk listing. Hunks on such a path showed the driver's rendering of the blob rather than its real content, and the patch rebuilt from that rendering was rejected by `git apply` ("patch does not apply") — `add`, `reset`, `restore` and `commit` all failed on those paths. Diff calls now pass `--no-textconv`, so textconv paths behave like any other.
 - Redirecting stdout to a regular file no longer overwrites what preceded it. The stdout writer was positional and started at offset 0, ignoring the offset the shell had already put on the descriptor, so `git hunk list >> log` truncated the log and `{ echo header; git hunk list; } > out` overwrote the header. Output is now streamed.
 
+### Added
+- `list --verbose` and `count --verbose` now name changed paths that produced no hunk, with the reason and the `git add <path>` that stages them. A submodule pointer bump, a mode change and a rename with no content change are all deliberate skips — they have no line-level content for a hash to address — but the skip was silent, so a tree whose only change was one of them read here as having nothing to stage. A mode change is reported even when the same file also has content hunks, since the mode is unstageable either way. Derived from the diff text the parser consumed rather than a parallel copy of the skip rules, so a future skip cannot go unreported.
+
+### Changed
+- Test coverage for classes that were previously unpinned: the `\ No newline at end of file` marker end to end (all four positions across add, reset, restore, commit, stash, and line-spec selection, asserting file and blob bytes); non-UTF-8 file *content* as distinct from filenames; line-ending normalisation under `core.autocrlf` true/input, `core.eol` with `text=auto`, and none — each pinned against git's own answer (`git add`, `git checkout --`) rather than against the pre-edit bytes; submodule and mode-change skips; and stdout redirected to a regular file.
+
 ## [0.17.0] - 2026-08-07
 
 ### Fixed

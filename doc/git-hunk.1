@@ -74,7 +74,10 @@ Restrict to hunks in a specific file. May be repeated to match any of several fi
 Machine\-readable tab\-separated output.
 .TP
 .BR \-v ", " \-\-verbose
-Show summary counts and hints.
+Show summary counts and hints. Also names changed paths that produced no hunk \(em
+a submodule pointer bump, a mode change, or a rename with no content change \(em
+so a tree git considers dirty is never reported here as having nothing to stage.
+These paths have no hash; stage them with \fBgit add \fI<path>\fR.
 .TP
 .BR \-q ", " \-\-quiet
 Suppress all output (exit code only).

@@ -75,6 +75,25 @@ fn getDiffWithUntracked(
     return .{ .tracked = diff_output, .untracked = try allocator.alloc(u8, 0) };
 }
 
+/// Print a note naming changed paths that produced no hunk, so a tree git
+/// considers dirty is never reported as having nothing to stage. Verbose only:
+/// these paths have no hash, so there is nothing an ordinary listing could say
+/// about them, and `git add <path>` is the answer for all of them.
+fn reportSkippedPaths(arena: Allocator, tracked_diff: []const u8, hunks: []const Hunk, file_filter: []const []const u8) !void {
+    if (tracked_diff.len == 0) return;
+
+    var skipped: std.ArrayList(diff_mod.SkippedPath) = .empty;
+    try diff_mod.collectSkippedPaths(arena, tracked_diff, hunks, &skipped);
+
+    for (skipped.items) |sk| {
+        if (!types.matchesFileFilter(sk.file_path, file_filter)) continue;
+        std.debug.print(
+            "note: {s}: {s} has no hunk — use 'git add {s}'\n",
+            .{ sk.file_path, sk.reason.describe(), sk.file_path },
+        );
+    }
+}
+
 pub fn cmdList(allocator: Allocator, stdout: *std.Io.Writer, opts: ListOptions) !void {
     // Use arena for all hunk-related allocations
     var arena_state = std.heap.ArenaAllocator.init(allocator);
@@ -87,6 +106,10 @@ pub fn cmdList(allocator: Allocator, stdout: *std.Io.Writer, opts: ListOptions) 
     const diffs = try getDiffWithUntracked(allocator, arena, opts.mode, opts.ref, opts.context, opts.file_filter, opts.diff_filter, &hunks);
     defer allocator.free(diffs.tracked);
     defer allocator.free(diffs.untracked);
+
+    if (opts.verbosity == .verbose) {
+        try reportSkippedPaths(arena, diffs.tracked, hunks.items, opts.file_filter);
+    }
 
     if (hunks.items.len == 0) return;
 
@@ -154,6 +177,10 @@ pub fn cmdCount(allocator: Allocator, stdout: *std.Io.Writer, opts: CountOptions
     for (hunks.items) |h| {
         if (!types.matchesFileFilter(h.file_path, opts.file_filter)) continue;
         count += 1;
+    }
+
+    if (opts.verbosity == .verbose) {
+        try reportSkippedPaths(arena, diffs.tracked, hunks.items, opts.file_filter);
     }
 
     if (opts.verbosity != .quiet) {
