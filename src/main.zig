@@ -6,8 +6,13 @@ const commands = @import("commands.zig");
 const help = @import("help.zig");
 const path_mod = @import("path.zig");
 
-// Import modules to ensure their tests are discovered by `zig build test`
+// Import modules to ensure their tests are discovered by `zig build test`.
+// A module missing here has its tests silently skipped, not reported — every
+// module carrying `test` blocks must be listed, including ones already
+// imported above for their symbols.
 comptime {
+    _ = @import("args.zig");
+    _ = @import("commands.zig");
     _ = @import("diff.zig");
     _ = @import("format.zig");
     _ = @import("git.zig");

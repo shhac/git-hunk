@@ -1479,7 +1479,7 @@ test "parseStashArgs valid sha" {
     var opts = try parseStashArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expectEqual(@as(usize, 1), opts.sha_args.items.len);
-    try std.testing.expect(std.mem.startsWith(u8, &opts.sha_args.items[0].sha_hex, "abcd1234"));
+    try std.testing.expect(std.mem.startsWith(u8, opts.sha_args.items[0].prefix, "abcd1234"));
     try std.testing.expect(!opts.pop);
 }
 
@@ -1921,9 +1921,11 @@ test "deinitFileFilter no-op on empty slice" {
 
 test "deinitFileFilter frees an allocated spine" {
     const allocator = std.testing.allocator;
+    // Entries must be owned copies: deinitFileFilter frees each one, and
+    // freeing a string literal aborts.
     const spine = try allocator.alloc([]const u8, 2);
-    spine[0] = "a.txt";
-    spine[1] = "b.txt";
+    spine[0] = try allocator.dupe(u8, "a.txt");
+    spine[1] = try allocator.dupe(u8, "b.txt");
     deinitFileFilter(allocator, spine);
 }
 
