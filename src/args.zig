@@ -182,7 +182,7 @@ pub fn parseListArgs(allocator: Allocator, args: []const [:0]const u8) !ListOpti
         } else if (std.mem.eql(u8, arg, "--oneline")) {
             opts.oneline = true;
         } else {
-            return error.UnknownFlag;
+            return unknownFlag(arg);
         }
     }
     try applyCommonFlags(allocator, &common, &opts);

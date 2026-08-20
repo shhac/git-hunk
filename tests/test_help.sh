@@ -102,4 +102,20 @@ echo "$ERR608C" | grep -q "not supported for this subcommand" \
     || fail "test 608: stash --3way should error 'not supported'; got: '$ERR608C'"
 pass "test 608: --3way rejected on commands that don't apply patches"
 
+# ============================================================================
+# Test 609: every command names an unknown flag rather than dumping usage
+#
+# `list` used to return a bare error.UnknownFlag instead of routing through
+# args.zig's unknownFlag() helper, so it printed the whole usage banner and
+# never said which flag was wrong. Covering all eight commands keeps the set
+# consistent as new ones are added.
+# ============================================================================
+new_repo
+for CMD in list count add reset diff check restore stash commit; do
+    ERR609="$("$GIT_HUNK" "$CMD" --definitely-not-a-flag 2>&1 || true)"
+    echo "$ERR609" | grep -q "unknown flag '--definitely-not-a-flag'" \
+        || fail "test 609: $CMD should name the unknown flag; got: '$(echo "$ERR609" | head -1)'"
+done
+pass "test 609: all commands name an unknown flag"
+
 report_results
