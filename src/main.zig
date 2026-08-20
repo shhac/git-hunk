@@ -13,12 +13,14 @@ const path_mod = @import("path.zig");
 comptime {
     _ = @import("args.zig");
     _ = @import("commands.zig");
+    _ = @import("commit.zig");
     _ = @import("diff.zig");
     _ = @import("format.zig");
     _ = @import("git.zig");
     _ = @import("help.zig");
     _ = @import("patch.zig");
     _ = @import("path.zig");
+    _ = @import("result_groups.zig");
     _ = @import("stash.zig");
 }
 
