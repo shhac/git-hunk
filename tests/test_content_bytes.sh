@@ -9,11 +9,6 @@ source "$(dirname "$0")/harness.sh" "$1"
 # deliberately rewrites between blob and worktree.
 # ============================================================================
 
-bytes_of() { od -An -c "$1" | tr -s ' \n' ' '; }
-blob_bytes() { git cat-file -p "$1" | od -An -c | tr -s ' \n' ' '; }
-want_bytes() { printf "$1" | od -An -c | tr -s ' \n' ' '; }
-first_sha() { "$GIT_HUNK" list --porcelain "$@" 2>/dev/null | grep -oE '^[0-9a-f]{7}' | head -1; }
-
 # Latin-1 and lone high bytes. Not valid UTF-8 in any position, but git still
 # treats the file as text (no NUL byte), so it goes through the normal
 # line-oriented diff path rather than the binary path.

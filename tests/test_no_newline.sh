@@ -9,13 +9,6 @@ source "$(dirname "$0")/harness.sh" "$1"
 # below compares the resulting file/blob bytes, not just an exit code.
 # ============================================================================
 
-# Byte-exact rendering of a file, for comparison and for failure messages.
-bytes_of() { od -An -c "$1" | tr -s ' \n' ' '; }
-# Byte-exact rendering of an index or HEAD blob. $1 is a git object spec.
-blob_bytes() { git cat-file -p "$1" | od -An -c | tr -s ' \n' ' '; }
-# Byte-exact rendering of a printf format string, as the expected value.
-want_bytes() { printf "$1" | od -An -c | tr -s ' \n' ' '; }
-
 # Build a one-file repo: $1 committed content, $2 worktree content (printf fmts).
 nl_repo() {
     new_repo
@@ -23,8 +16,6 @@ nl_repo() {
     git add nl.txt && git commit -q -m "commit nl.txt"
     printf "$2" > nl.txt
 }
-
-first_sha() { "$GIT_HUNK" list --porcelain "$@" 2>/dev/null | grep -oE '^[0-9a-f]{7}' | head -1; }
 
 # The four sides of the cross-product. `NL` = trailing newline present.
 #   OLD_NL_NEW_NONL : marker appears only on the new side

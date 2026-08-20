@@ -74,6 +74,27 @@ new_repo() {
     cd "$CURRENT_REPO"
 }
 
+# ── Shared assertion helpers ──────────────────────────────────────────
+#
+# Byte-exact renderings, for comparisons and for failure messages. `od -An -c`
+# makes a trailing-newline difference and a high byte both visible, which a
+# bare string comparison hides.
+
+# Bytes of a worktree file.
+bytes_of() { od -An -c "$1" | tr -s ' \n' ' '; }
+
+# Bytes of a git object: `blob_bytes :path` for the index, `blob_bytes HEAD:path`
+# for a commit.
+blob_bytes() { git cat-file -p "$1" | od -An -c | tr -s ' \n' ' '; }
+
+# Bytes a printf format string would produce, as the expected value.
+want_bytes() { printf "$1" | od -An -c | tr -s ' \n' ' '; }
+
+# The first hunk hash from `list`, with any extra flags passed through
+# (e.g. `first_sha --staged --file f.txt`). Empty when there are no hunks;
+# callers assert on that rather than relying on an exit status.
+first_sha() { "$GIT_HUNK" list --porcelain "$@" 2>/dev/null | grep -oE '^[0-9a-f]{7}' | head -1; }
+
 # Call at end of each test script:
 report_results() {
     if [[ "$FAIL_COUNT" -gt 0 ]]; then

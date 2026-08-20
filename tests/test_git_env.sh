@@ -15,8 +15,6 @@ source "$(dirname "$0")/harness.sh" "$1"
 # answer.
 # ============================================================================
 
-first_sha() { "$GIT_HUNK" list --porcelain "$@" 2>/dev/null | grep -oE '^[0-9a-f]{7}' | head -1; }
-
 # Two independent hunks so "only the selected one moved" is provable.
 env_repo() {
     new_repo

@@ -156,7 +156,7 @@ pass "test 1812: --verbose reports mode changes, including alongside content"
 # Test 1813: staging the content hunk of a mode+content file leaves the mode
 # change unstaged
 # ============================================================================
-SHA1813="$("$GIT_HUNK" list --porcelain --file beta.txt 2>/dev/null | grep -oE '^[0-9a-f]{7}' | head -1)"
+SHA1813="$(first_sha --file beta.txt)"
 [[ -n "$SHA1813" ]] || fail "test 1813: no content hunk for beta.txt"
 "$GIT_HUNK" add "$SHA1813" > /dev/null 2>&1 || fail "test 1813: add failed"
 RAW1813="$(git diff --cached --raw -- beta.txt)"
@@ -174,9 +174,9 @@ pass "test 1813: staging content leaves the mode change unstaged"
 # ============================================================================
 new_repo
 sed -i.bak '5s/.*/Changed beta line five./' beta.txt
-PLAIN1814="$("$GIT_HUNK" list --porcelain --file beta.txt 2>/dev/null | grep -oE '^[0-9a-f]{7}' | head -1)"
+PLAIN1814="$(first_sha --file beta.txt)"
 chmod +x beta.txt
-CHMOD1814="$("$GIT_HUNK" list --porcelain --file beta.txt 2>/dev/null | grep -oE '^[0-9a-f]{7}' | head -1)"
+CHMOD1814="$(first_sha --file beta.txt)"
 [[ -n "$PLAIN1814" && "$PLAIN1814" == "$CHMOD1814" ]] \
     || fail "test 1814: hash changed with the mode ('$PLAIN1814' → '$CHMOD1814')"
 pass "test 1814: a mode change does not alter the content hunk's hash"
@@ -190,9 +190,9 @@ new_repo
 chmod +x beta.txt
 git update-index --chmod=+x beta.txt
 sed -i.bak '5s/.*/Changed beta line five./' beta.txt
-SHA1815="$("$GIT_HUNK" list --porcelain --file beta.txt 2>/dev/null | grep -oE '^[0-9a-f]{7}' | head -1)"
+SHA1815="$(first_sha --file beta.txt)"
 "$GIT_HUNK" add "$SHA1815" > /dev/null 2>&1 || fail "test 1815: add failed"
-STAGED1815="$("$GIT_HUNK" list --staged --porcelain --file beta.txt 2>/dev/null | grep -oE '^[0-9a-f]{7}' | head -1)"
+STAGED1815="$(first_sha --staged --file beta.txt)"
 "$GIT_HUNK" reset "$STAGED1815" > /dev/null 2>&1 || fail "test 1815: reset failed"
 RAW1815="$(git ls-files --stage -- beta.txt | cut -d' ' -f1)"
 [[ "$RAW1815" == "100755" ]] \
@@ -203,7 +203,7 @@ pass "test 1815: reset of a content hunk preserves the staged mode"
 # Test 1816: restore of the content hunk leaves the worktree mode alone
 # ============================================================================
 mode_repo
-SHA1816="$("$GIT_HUNK" list --porcelain --file beta.txt 2>/dev/null | grep -oE '^[0-9a-f]{7}' | head -1)"
+SHA1816="$(first_sha --file beta.txt)"
 "$GIT_HUNK" restore "$SHA1816" > /dev/null 2>&1 || fail "test 1816: restore failed"
 [[ -x beta.txt ]] || fail "test 1816: restore cleared the executable bit"
 git diff --no-ext-diff -- beta.txt | grep -q "new mode 100755" \
@@ -214,7 +214,7 @@ pass "test 1816: restore of a content hunk preserves the worktree mode"
 # Test 1817: commit of the content hunk does not carry the mode change
 # ============================================================================
 mode_repo
-SHA1817="$("$GIT_HUNK" list --porcelain --file beta.txt 2>/dev/null | grep -oE '^[0-9a-f]{7}' | head -1)"
+SHA1817="$(first_sha --file beta.txt)"
 "$GIT_HUNK" commit "$SHA1817" -m "beta content only" > /dev/null 2>&1 \
     || fail "test 1817: commit failed"
 MODE1817="$(git ls-tree HEAD -- beta.txt | cut -d' ' -f1)"
