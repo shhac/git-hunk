@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.18.0] - 2026-08-20
 
 ### Fixed
 - A configured external diff driver no longer makes a dirty tree look clean. With `diff.external` set, or `GIT_EXTERNAL_DIFF` exported, git hands the diff to that program and writes **nothing** to stdout while exiting 0 — so `list` showed no hunks, `count` returned 0, and `check` passed vacuously. Not a crash and not a parse error: a wrong answer shaped exactly like a clean tree, which an agent has no way to distinguish. Every `git diff` call site now passes `--no-ext-diff` (which defeats both the config key and the environment variable), including the `--no-index` path used for untracked files.
