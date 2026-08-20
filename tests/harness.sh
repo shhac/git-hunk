@@ -17,20 +17,24 @@ unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
 # shim would exec itself forever.
 GIT_BIN="$(command -v git)"
 
-# Tests observe the repo with plain git. Diff-reshaping config — an external
+# Tests observe the repo with plain git. Output-reshaping config — an external
 # diff driver, a textconv filter, forced colour — must not reach the observer:
 # under it, an assertion that something *is* present fails while its negation
 # passes vacuously, which is the wrong answer in both directions. The tool
 # under test pins these flags for itself; this pins them for the observer.
 #
+# The colour keys are listed individually rather than relying on color.ui,
+# because a more specific key (color.status, color.diff) overrides it.
+GIT_OBSERVE=(-c color.ui=false -c color.status=false -c color.diff=false -c color.branch=false)
+
 # Calls go straight to $GIT_BIN, so a test that has put a shim on PATH for the
 # tool under test still observes through the real git.
 git() {
     case "${1:-}" in
         diff | diff-tree | diff-files | diff-index | show | log | whatchanged)
-            "$GIT_BIN" "$1" --no-ext-diff --no-textconv --no-color "${@:2}" ;;
+            "$GIT_BIN" "${GIT_OBSERVE[@]}" "$1" --no-ext-diff --no-textconv --no-color "${@:2}" ;;
         *)
-            "$GIT_BIN" "$@" ;;
+            "$GIT_BIN" "${GIT_OBSERVE[@]}" "$@" ;;
     esac
 }
 
