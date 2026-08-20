@@ -68,6 +68,7 @@ pub fn build(b: *std.Build) void {
     const docs_step = b.step("docs", "Regenerate man page sections and check doc/completion drift (-- --check for CI)");
     const run_docs = b.addRunArtifact(gen_docs);
     run_docs.addArg(b.build_root.path orelse ".");
+    run_docs.addArg(version_option);
     if (b.args) |args| run_docs.addArgs(args);
     // Doc targets change out-of-band; never cache this run.
     run_docs.has_side_effects = true;

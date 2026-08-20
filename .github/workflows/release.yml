@@ -44,13 +44,16 @@ jobs:
       - name: Build for ${{ matrix.platform }}
         run: zig build -Doptimize=ReleaseFast -Dtarget=${{ matrix.target }} -Dversion=${{ steps.version.outputs.VERSION }}
 
+      # The man page carries the version in its .TH line, so it is regenerated
+      # against the tag rather than against whatever build.zig.zon last said.
+      - name: Stamp docs with the tag version
+        run: zig build docs -Dversion=${{ steps.version.outputs.VERSION }}
+
       - name: Create tarball
-        run: |
-          cp doc/git-hunk.1 zig-out/bin/
-          cp -R completions zig-out/bin/completions
-          cd zig-out/bin
-          tar -czf ../../git-hunk-${{ matrix.platform }}.tar.gz git-hunk git-hunk.1 completions
-          cd ../..
+        run: tools/package-release.sh ${{ matrix.platform }}
+
+      - name: Verify tarball contents
+        run: tests/check-release-artifact.sh git-hunk-${{ matrix.platform }}.tar.gz ${{ steps.version.outputs.VERSION }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -63,6 +66,10 @@ jobs:
     runs-on: macos-latest
     needs: build-release
     steps:
+      # Needed for tests/check-release-artifact.sh below.
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
       - name: Download x86_64 artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -80,10 +87,17 @@ jobs:
           tar -xzf git-hunk-aarch64-macos.tar.gz
           mv git-hunk git-hunk-aarch64
 
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
       - name: Create universal binary
         run: |
           lipo -create -output git-hunk git-hunk-x86_64 git-hunk-aarch64
           tar -czf git-hunk-macos-universal.tar.gz git-hunk git-hunk.1 completions
+
+      - name: Verify universal tarball contents
+        run: tests/check-release-artifact.sh git-hunk-macos-universal.tar.gz ${{ steps.version.outputs.VERSION }}
 
       - name: Upload universal artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

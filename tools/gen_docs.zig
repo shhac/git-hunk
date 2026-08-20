@@ -217,6 +217,35 @@ fn checkPresence(fail: *Failure, content: []const u8, file_label: []const u8, co
 }
 
 // ============================================================================
+// Version stamp
+// ============================================================================
+
+/// Rewrite the man page's `.TH` source field to carry the build version, so
+/// `man git-hunk` names the version it documents. Without this the shipped man
+/// page is indistinguishable from any other release's, and a packaging step
+/// that shipped a stale copy would leave no trace.
+fn stampVersion(gpa: std.mem.Allocator, man: []const u8, version: []const u8) ![]const u8 {
+    const th_prefix = ".TH GIT\\-HUNK 1 ";
+    if (!std.mem.startsWith(u8, man, th_prefix)) return man;
+    const line_end = std.mem.indexOfScalar(u8, man, '\n') orelse return man;
+    const line = man[0..line_end];
+
+    // .TH <name> <section> "<date>" "<source>" "<manual>" — keep the date the
+    // page already carries and replace only the source field.
+    var fields: std.ArrayList([]const u8) = .empty;
+    var it = std.mem.splitScalar(u8, line, '"');
+    while (it.next()) |part| try fields.append(gpa, part);
+    if (fields.items.len < 4) return man;
+    const date = fields.items[1];
+
+    return std.fmt.allocPrint(
+        gpa,
+        "{s}\"{s}\" \"git-hunk {s}\" \"User Commands\"{s}",
+        .{ th_prefix, date, version, man[line_end..] },
+    );
+}
+
+// ============================================================================
 // Main
 // ============================================================================
 
@@ -226,12 +255,13 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const args = try init.minimal.args.toSlice(gpa);
 
-    if (args.len < 2) {
-        std.debug.print("usage: gen-docs <repo-root> [--check]\n", .{});
+    if (args.len < 3) {
+        std.debug.print("usage: gen-docs <repo-root> <version> [--check]\n", .{});
         std.process.exit(2);
     }
     const root_path = args[1];
-    const check_only = args.len > 2 and std.mem.eql(u8, args[2], "--check");
+    const version = args[2];
+    const check_only = args.len > 3 and std.mem.eql(u8, args[3], "--check");
 
     var root = try std.Io.Dir.cwd().openDir(io, root_path, .{});
     defer root.close(io);
@@ -241,7 +271,8 @@ pub fn main(init: std.process.Init) !void {
     // --- Man page generation ---
     const man = try root.readFileAlloc(io, man_path, gpa, limit);
     const spliced1 = try spliceRegion(gpa, man, "commands", man_commands_section);
-    const spliced2 = try spliceRegion(gpa, spliced1, "global-options", man_global_options_section);
+    const spliced2a = try spliceRegion(gpa, spliced1, "global-options", man_global_options_section);
+    const spliced2 = try stampVersion(gpa, spliced2a, version);
 
     var fail = Failure{ .gpa = gpa };
 
