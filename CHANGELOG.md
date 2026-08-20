@@ -5,6 +5,7 @@
 ### Fixed
 - A configured external diff driver no longer makes a dirty tree look clean. With `diff.external` set, or `GIT_EXTERNAL_DIFF` exported, git hands the diff to that program and writes **nothing** to stdout while exiting 0 — so `list` showed no hunks, `count` returned 0, and `check` passed vacuously. Not a crash and not a parse error: a wrong answer shaped exactly like a clean tree, which an agent has no way to distinguish. Every `git diff` call site now passes `--no-ext-diff` (which defeats both the config key and the environment variable), including the `--no-index` path used for untracked files.
 - A `diff.<driver>.textconv` filter no longer leaks converted text into the hunk listing. Hunks on such a path showed the driver's rendering of the blob rather than its real content, and the patch rebuilt from that rendering was rejected by `git apply` ("patch does not apply") — `add`, `reset`, `restore` and `commit` all failed on those paths. Diff calls now pass `--no-textconv`, so textconv paths behave like any other.
+- Redirecting stdout to a regular file no longer overwrites what preceded it. The stdout writer was positional and started at offset 0, ignoring the offset the shell had already put on the descriptor, so `git hunk list >> log` truncated the log and `{ echo header; git hunk list; } > out` overwrote the header. Output is now streamed.
 
 ## [0.17.0] - 2026-08-07
 

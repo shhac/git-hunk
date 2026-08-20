@@ -636,4 +636,49 @@ echo "$STAGED874" | grep -q "target874.txt" \
     || fail "test 874: target874.txt should be staged"
 pass "test 874: typechange alongside normal changes"
 
+# ============================================================================
+# T21 — stdout redirected to a regular file
+#
+# A positional file writer starts at offset 0 and ignores the offset the shell
+# already put on the descriptor, so appending or sharing a redirect with other
+# commands would silently overwrite what came before. Logs live outside the
+# repo so they do not show up as untracked hunks in the listing under test.
+# ============================================================================
+new_repo
+sed -i.bak '5s/.*/Changed line five./' alpha.txt
+OUTDIR880="$(mktemp -d)"
+
+# ============================================================================
+# Test 880: `list >> file` appends rather than overwriting
+# ============================================================================
+printf 'PRECEDING-MARKER\n' > "$OUTDIR880/append.log"
+"$GIT_HUNK" list --porcelain >> "$OUTDIR880/append.log"
+[[ "$(head -1 "$OUTDIR880/append.log")" == "PRECEDING-MARKER" ]] \
+    || fail "test 880: append clobbered preceding content:"$'\n'"$(cat "$OUTDIR880/append.log")"
+grep -q 'alpha.txt' "$OUTDIR880/append.log" \
+    || fail "test 880: appended listing missing from log"
+pass "test 880: list appends when stdout is opened for append"
+
+# ============================================================================
+# Test 881: stdout shared with other commands in one redirect group
+# ============================================================================
+{ echo "HEADER881"; "$GIT_HUNK" list --porcelain; echo "FOOTER881"; } > "$OUTDIR880/group.log"
+[[ "$(head -1 "$OUTDIR880/group.log")" == "HEADER881" ]] \
+    || fail "test 881: HEADER881 was overwritten:"$'\n'"$(cat "$OUTDIR880/group.log")"
+[[ "$(tail -1 "$OUTDIR880/group.log")" == "FOOTER881" ]] \
+    || fail "test 881: FOOTER881 missing or displaced:"$'\n'"$(cat "$OUTDIR880/group.log")"
+grep -q 'alpha.txt' "$OUTDIR880/group.log" \
+    || fail "test 881: listing missing from grouped redirect"
+pass "test 881: stdout shares the descriptor offset with sibling commands"
+
+# ============================================================================
+# Test 882: output to a file matches output through a pipe, byte for byte
+# ============================================================================
+"$GIT_HUNK" list --porcelain > "$OUTDIR880/direct.log"
+"$GIT_HUNK" list --porcelain | cat > "$OUTDIR880/piped.log"
+cmp -s "$OUTDIR880/direct.log" "$OUTDIR880/piped.log" \
+    || fail "test 882: file and pipe output differ:"$'\n'"$(diff "$OUTDIR880/direct.log" "$OUTDIR880/piped.log")"
+pass "test 882: file and pipe output identical"
+rm -rf "$OUTDIR880"
+
 report_results

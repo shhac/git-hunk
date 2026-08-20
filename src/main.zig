@@ -36,7 +36,11 @@ fn run(init: std.process.Init) !void {
     types.setEnvMap(init.environ_map);
 
     var stdout_buffer: [64 * 1024]u8 = undefined;
-    var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buffer);
+    // Streaming, not positional: a positional writer starts at offset 0 and
+    // ignores the offset the shell already put on the inherited descriptor, so
+    // `git hunk list >> log` and `{ echo hi; git hunk list; } > out` would
+    // overwrite whatever preceded them.
+    var stdout_writer = std.Io.File.stdout().writerStreaming(io, &stdout_buffer);
     const stdout = &stdout_writer.interface;
 
     const process_args = try init.minimal.args.toSlice(init.arena.allocator());
