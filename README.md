@@ -449,12 +449,45 @@ accepted by all commands.
 
 ## Testing
 
+```
+zig build test              # unit tests
+zig build test-integration  # integration suite (requires git)
+```
+
 Integration tests use a deterministic fixture repo created by `tests/setup-repo.sh`
 (3 files, 30 lines each, 2 commits):
 
 ```
 REPO="$(bash tests/setup-repo.sh)"
 ```
+
+### Hostile git configuration
+
+Git config can change what `git diff` writes, or whether it writes anything at
+all. `tests/run-hostile.sh` re-runs the entire integration suite with such a
+config applied through `GIT_CONFIG_GLOBAL`, and requires the same assertion
+count as a default-config run — so a profile that silently emptied every diff
+fails instead of passing by asserting nothing.
+
+```
+tests/run-hostile.sh --list                        # profile names
+tests/run-hostile.sh ./zig-out/bin/git-hunk        # all profiles
+tests/run-hostile.sh ./zig-out/bin/git-hunk color-ui
+```
+
+Profiles live in `tests/hostile-profiles.sh`; CI runs one job per profile.
+
+### Release artifacts
+
+```
+zig build && tools/package-release.sh local
+tests/check-release-artifact.sh git-hunk-local.tar.gz
+```
+
+`tools/package-release.sh` is what the release workflow uses, so this checks
+the payload a release actually publishes: the binary, the man page and all four
+completion files, with the shipped man page and completions verified against
+the shipped binary's command list.
 
 ## License
 
