@@ -12,6 +12,11 @@
 # are stable across runs.
 set -euo pipefail
 
+# Never let an inherited git environment redirect this at another repository.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
+      GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE \
+      GIT_CEILING_DIRECTORIES GIT_PREFIX
+
 REPO="$(mktemp -d)"
 cd "$REPO"
 

@@ -12,6 +12,9 @@
 
 ### Changed
 - Test coverage for classes that were previously unpinned: the `\ No newline at end of file` marker end to end (all four positions across add, reset, restore, commit, stash, and line-spec selection, asserting file and blob bytes); non-UTF-8 file *content* as distinct from filenames; line-ending normalisation under `core.autocrlf` true/input, `core.eol` with `text=auto`, and none — each pinned against git's own answer (`git add`, `git checkout --`) rather than against the pre-edit bytes; submodule and mode-change skips; and stdout redirected to a regular file.
+- `git hunk commit` builds its temporary index under `TMPDIR` when set, rather than always under `/tmp` — the same rule the shell and `mktemp` follow, so a caller that has isolated its temp directory keeps that isolation.
+- Test coverage for classes that were previously unpinned: the `\ No newline at end of file` marker end to end (all four positions across add, reset, restore, commit, stash, and line-spec selection, asserting file and blob bytes); non-UTF-8 file *content* as distinct from filenames; line-ending normalisation under `core.autocrlf` true/input, `core.eol` with `text=auto`, and none — each pinned against git's own answer (`git add`, `git checkout --`) rather than against the pre-edit bytes; submodule and mode-change skips; an inherited `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE` (which hooks, rebases and CI all set); and stdout redirected to a regular file.
+- The test harness now scrubs an inherited git environment and observes repos through `git --no-ext-diff --no-textconv --no-color`. Without the first, a caller's `GIT_DIR` redirected the whole suite at another repository; without the second, a test asserting that something *is* present fails under a hostile diff driver while its negation passes vacuously.
 
 ## [0.17.0] - 2026-08-07
 

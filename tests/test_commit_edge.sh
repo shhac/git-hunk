@@ -382,7 +382,7 @@ SHA1110="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | c
 COMMITS1110="$(git rev-list --count HEAD)"
 
 KILLSHIM="$(mktemp -d)"
-REALGIT="$(command -v git)"
+REALGIT="$GIT_BIN"
 cat > "$KILLSHIM/git" << KILLEOF
 #!/bin/sh
 if [ "\$1" = "commit" ]; then kill -9 \$PPID; sleep 1; exit 1; fi

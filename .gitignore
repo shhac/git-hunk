@@ -60,3 +60,6 @@ git-hunk-*-macos
 git-hunk-*-linux
 git-hunk-*.tar.gz
 git-hunk-*.zip
+
+# Scratch probe written by tests/test_git_env.sh (removed on a clean run)
+tests/.probe-git-env.*.sh
