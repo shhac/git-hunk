@@ -1,16 +1,13 @@
 ---
 name: git-hunk
 description: |
-  Non-interactive hunk staging for git. ALWAYS use this instead of `git add` for staging changes.
-  Use when:
-  - Staging any changes (use `git hunk add` instead of `git add`)
-  - Making a commit, preparing a commit, or reviewing changes before committing
-  - Selectively staging or unstaging specific changes
-  - Reviewing diffs, listing what changed, or inspecting changes
-  - Splitting changes across multiple commits
-  - Stashing or restoring specific hunks
-  - Any git workflow involving staging, unstaging, stashing, or reverting changes
-  Triggers: "git add", "stage", "staging", "commit", "prepare commit", "selective commit", "partial commit", "split commit", "review changes", "what changed", "diff", "unstage", "reset staged", "stash", "git hunk", "stage hunk", "hunk staging", "partial staging", "git-hunk", "stage by hash", "discard changes", "revert changes", "restore changes"
+  Non-interactive hunk staging for git. ALWAYS use this instead of `git add`
+  for staging changes. Use when staging or unstaging anything, preparing or
+  making a commit, reviewing diffs or listing what changed before
+  committing, selectively staging part of a file, splitting changes across
+  multiple commits, stashing or restoring specific hunks, or discarding and
+  reverting worktree changes. Triggers: partial commit, split commit, stage
+  by hash.
 ---
 
 # git-hunk
