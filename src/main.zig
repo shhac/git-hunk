@@ -13,11 +13,13 @@ const path_mod = @import("path.zig");
 // imported above for their symbols.
 comptime {
     _ = @import("args.zig");
+    _ = @import("check.zig");
     _ = @import("commands.zig");
     _ = @import("commit.zig");
     _ = @import("diff.zig");
     _ = @import("format.zig");
     _ = @import("git.zig");
+    _ = @import("head_match.zig");
     _ = @import("help.zig");
     _ = @import("patch.zig");
     _ = @import("path.zig");
