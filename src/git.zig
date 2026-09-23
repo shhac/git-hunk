@@ -249,8 +249,9 @@ pub const ApplyOptions = struct {
     /// `git apply` rejects `--3way` together with `--check`, so dry-run paths
     /// must drop this flag.
     three_way: bool = false,
-    /// User-supplied `--ref` value for the failure message (so the user knows
-    /// which historical diff conflicted). Null means "current diff".
+    /// The `--ref` in effect, for the failure message (so the user knows which
+    /// historical diff conflicted). A single ref arrives already expanded, so
+    /// this names the range (`X^..X`), not what was typed. Null means "current diff".
     ref: ?[]const u8 = null,
     /// Optional child environment (e.g. GIT_INDEX_FILE pointing at a temp
     /// index). Null inherits the parent environment.

@@ -116,6 +116,8 @@ pub const Common = struct {
     /// `--files-from` synthesises paths from file contents, which do not
     /// outlive the read buffer.
     file_filter: std.ArrayList([]const u8) = .empty,
+    /// As typed until main expands it, before any command runs: a single ref
+    /// without --staged becomes the range `X^..X` (or `<empty-tree>..X`).
     ref: ?[]const u8 = null,
     output: OutputMode = .human,
     no_color: bool = false,

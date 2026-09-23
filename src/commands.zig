@@ -61,13 +61,9 @@ fn loadHunks(arena: Allocator, mode: DiffMode, common: types.Common) !Loaded {
         try diff_mod.parseDiff(arena, tracked_diff, mode, &hunks);
     }
 
-    // Untracked files appear only when the worktree is the right-side endpoint:
-    // - No ref, unstaged: worktree is right side → include
-    // - Single ref, unstaged: worktree is right side → include
-    // - Staged (with or without ref): index is right side → exclude
-    // - Range (contains ".."): no worktree involved → exclude
-    const is_range = if (common.ref) |r| std.mem.indexOf(u8, r, "..") != null else false;
-    if (mode == .unstaged and !is_range and common.diff_filter != .tracked_only) {
+    // Untracked files belong only to the index→worktree diff. Staged mode has
+    // the index on the right, and by now any unstaged ref is a commit range.
+    if (mode == .unstaged and common.ref == null and common.diff_filter != .tracked_only) {
         const untracked_diff = try git.diffUntrackedFiles(arena, common.file_filter.items);
         if (untracked_diff.len > 0) {
             const before_count = hunks.items.len;
