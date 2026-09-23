@@ -122,9 +122,7 @@ pub fn cmdList(allocator: Allocator, stdout: *std.Io.Writer, opts: ListOptions) 
             max_path_len = @max(max_path_len, h.file_path.len + @as(usize, if (h.is_symlink) 1 else 0));
         }
     }
-    // Clamp col_width so prefix (col_width + 21) doesn't exceed terminal width
-    const max_col: usize = if (@as(usize, term_width) > 25) @as(usize, term_width) - 25 else 20;
-    const col_width = @min(@max(max_path_len, 20), max_col);
+    const col_width = format.listColumnWidth(max_path_len, term_width);
 
     // Apply file filter, output, and count
     var hunk_count: usize = 0;
@@ -482,8 +480,7 @@ fn dryRunApplyHunks(
         .stage => .{ .human = "would stage", .porcelain = "would-stage" },
         .unstage => .{ .human = "would unstage", .porcelain = "would-unstage" },
     };
-    const use_color = format.shouldUseColor(opts.common.output, opts.common.no_color);
-    _ = try format.printMatchedHunks(stdout, matched, verbs.human, verbs.porcelain, use_color, opts.common.output, opts.common.verbosity);
+    try format.printMatchedHunks(stdout, matched, verbs.human, verbs.porcelain, opts.common);
 }
 
 fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOptions, action: ApplyAction) !void {
@@ -566,12 +563,11 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
 
     const had_conflicts = try restoreWorktree(allocator, arena, matched, opts);
 
-    const use_color = format.shouldUseColor(opts.common.output, opts.common.no_color);
     const verb: []const u8 = if (opts.dry_run) "would restore" else "restored";
     const porcelain_verb: []const u8 = if (opts.dry_run) "would-restore" else "restored";
     const summary_verb: []const u8 = if (opts.dry_run) "would be restored" else "restored";
 
-    const count = try format.printMatchedHunks(stdout, matched, verb, porcelain_verb, use_color, opts.common.output, opts.common.verbosity);
+    try format.printMatchedHunks(stdout, matched, verb, porcelain_verb, opts.common);
 
     // Skip the "N hunks restored" summary when --3way left conflict markers:
     // it would contradict the error. The per-hunk lines above still show what
@@ -582,7 +578,7 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
         std.debug.print("error: --3way left conflict markers in the worktree — resolve before continuing\n", .{});
         std.process.exit(1);
     }
-    format.printHunkCountSummary(opts.common.verbosity, opts.common.output, count, summary_verb);
+    format.printHunkCountSummary(opts.common, matched.len, summary_verb);
 }
 
 /// Exit if any selected hunk is an untracked file: restoring one deletes it
@@ -761,8 +757,7 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
             error.ReadTreeFailed => std.process.exit(1),
             else => return err,
         };
-        const use_color = format.shouldUseColor(opts.common.output, opts.common.no_color);
-        _ = try format.printMatchedHunks(stdout, matched, "would commit", "would-commit", use_color, opts.common.output, opts.common.verbosity);
+        try format.printMatchedHunks(stdout, matched, "would commit", "would-commit", opts.common);
         return;
     }
 

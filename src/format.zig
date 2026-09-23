@@ -34,6 +34,48 @@ pub const COLOR_YELLOW = "\x1b[33m"; // SHA hash
 pub const COLOR_GREEN = "\x1b[32m"; // added lines (+), result hashes
 pub const COLOR_RED = "\x1b[31m"; // removed lines (-)
 pub const COLOR_DIM = "\x1b[2m"; // consumed/merged hashes
+pub const COLOR_CYAN = "\x1b[36m"; // @@ headers of numbered hunks
+const COLOR_BOLD = "\x1b[1m"; // selection markers of numbered hunks
+
+/// The escape codes that wrap text in a colour: empty when colour is off or
+/// there is no colour to apply, so the text prints bare.
+pub const Paint = struct { on: []const u8, off: []const u8 };
+
+pub fn paint(use_color: bool, color: []const u8) Paint {
+    if (!use_color or color.len == 0) return .{ .on = "", .off = "" };
+    return .{ .on = color, .off = COLOR_RESET };
+}
+
+fn diffLineColor(kind: types.BodyLine.Kind) []const u8 {
+    return switch (kind) {
+        .addition => COLOR_GREEN,
+        .removal => COLOR_RED,
+        .context, .no_newline, .other => "",
+    };
+}
+
+/// Columns `printHunkHuman` spends outside the path column before the
+/// summary: sha(7) + 2 + [path] + 2 + range(8) + 2.
+const list_prefix_overhead = 21;
+/// Summary columns the path column must leave free on a narrow terminal.
+const list_min_summary = 4;
+const list_min_path_column = 20;
+
+/// Width of `list`'s path column: wide enough for the longest path, but
+/// never crowding the summary off a narrow terminal.
+pub fn listColumnWidth(max_path_len: usize, term_width: u16) usize {
+    const reserved = list_prefix_overhead + list_min_summary;
+    const max_col: usize = if (term_width > reserved) term_width - reserved else list_min_path_column;
+    return @min(@max(max_path_len, list_min_path_column), max_col);
+}
+
+/// Cut `summary` to `available` columns, reporting whether an ellipsis should
+/// follow. The ellipsis takes the last column when there is room for it.
+fn truncateSummary(summary: []const u8, available: usize) struct { text: []const u8, ellipsis: bool } {
+    if (summary.len <= available) return .{ .text = summary, .ellipsis = false };
+    if (available <= 1) return .{ .text = summary[0..available], .ellipsis = false };
+    return .{ .text = summary[0 .. available - 1], .ellipsis = true };
+}
 
 pub fn printHunkHuman(stdout: *std.Io.Writer, h: Hunk, mode: DiffMode, col_width: usize, term_width: u16, use_color: bool) !void {
     const short_sha = h.sha_hex[0..7];
@@ -43,46 +85,20 @@ pub fn printHunkHuman(stdout: *std.Io.Writer, h: Hunk, mode: DiffMode, col_width
     var range_buf: [24]u8 = undefined;
     const range = formatLineRange(&range_buf, h, mode);
 
-    // SHA column (7 chars) + 2-space gap
-    if (use_color) {
-        try stdout.writeAll(COLOR_YELLOW);
-        try stdout.writeAll(short_sha);
-        try stdout.writeAll(COLOR_RESET);
-    } else {
-        try stdout.writeAll(short_sha);
-    }
-    try stdout.writeAll("  ");
+    const sha = paint(use_color, COLOR_YELLOW);
+    try stdout.print("{s}{s}{s}  ", .{ sha.on, short_sha, sha.off });
 
-    // File path column (dynamic width) + gap
     try writeFilePath(stdout, h);
     const path_len = h.file_path.len + @as(usize, if (h.is_symlink) 1 else 0);
-    const path_pad = col_width + 2 -| path_len;
-    var pad_i: usize = 0;
-    while (pad_i < path_pad) : (pad_i += 1) try stdout.writeByte(' ');
+    try stdout.splatByteAll(' ', col_width + 2 -| path_len);
 
-    // Range column (8 chars padded) + 2-space gap
     try stdout.print("{s:<8}  ", .{range});
 
-    // Summary column, truncated to fit terminal width
-    // prefix_width = 7(sha) + 2 + col_width + 2 + 8(range) + 2 = col_width + 21
-    const prefix_width: usize = col_width + 21;
-    const available: usize = if (@as(usize, term_width) > prefix_width + 1)
-        @as(usize, term_width) - prefix_width - 1
-    else
-        0;
-    if (available == 0) {
-        // No space for summary — skip to avoid overflow/wrapping
-    } else if (summary.len > available) {
-        const trunc = available -| 1; // leave 1 column for ellipsis if possible
-        if (trunc > 0) {
-            try stdout.writeAll(summary[0..trunc]);
-            try stdout.writeAll("\xe2\x80\xa6"); // U+2026 HORIZONTAL ELLIPSIS
-        } else {
-            try stdout.writeAll(summary[0..available]);
-        }
-    } else {
-        try stdout.writeAll(summary);
-    }
+    // The last terminal column stays empty so the line never wraps.
+    const available = @as(usize, term_width) -| (col_width + list_prefix_overhead + 1);
+    const fitted = truncateSummary(summary, available);
+    try stdout.writeAll(fitted.text);
+    if (fitted.ellipsis) try stdout.writeAll("\xe2\x80\xa6"); // U+2026 HORIZONTAL ELLIPSIS
     try stdout.writeByte('\n');
 }
 
@@ -109,15 +125,8 @@ pub fn printHunkPorcelain(stdout: *std.Io.Writer, h: Hunk, mode: DiffMode) !void
 fn printRawLines(stdout: *std.Io.Writer, raw_lines: []const u8, indent: []const u8, use_color: bool) !void {
     var iter = std.mem.splitScalar(u8, raw_lines, '\n');
     while (iter.next()) |line| {
-        const color: []const u8 = if (use_color and line.len > 0)
-            (if (line[0] == '+') COLOR_GREEN else if (line[0] == '-') COLOR_RED else "")
-        else
-            "";
-        if (color.len > 0) {
-            try stdout.print("{s}{s}{s}{s}\n", .{ indent, color, line, COLOR_RESET });
-        } else {
-            try stdout.print("{s}{s}\n", .{ indent, line });
-        }
+        const color = paint(use_color, diffLineColor(.of(line)));
+        try stdout.print("{s}{s}{s}{s}\n", .{ indent, color.on, line, color.off });
     }
 }
 
@@ -149,29 +158,19 @@ pub fn printRawLinesWithLineNumbers(stdout: *std.Io.Writer, raw_lines: []const u
     const num_width = digitWidth(countBodyLines(raw_lines));
 
     var lines = types.BodyLineIterator.init(raw_lines);
-    if (use_color) {
-        try stdout.print("\x1b[36m{s}{s}\n", .{ lines.header, COLOR_RESET });
-    } else {
-        try stdout.print("{s}\n", .{lines.header});
-    }
+    const header = paint(use_color, COLOR_CYAN);
+    try stdout.print("{s}{s}{s}\n", .{ header.on, lines.header, header.off });
 
-    var num_buf: [16]u8 = undefined;
     while (lines.next()) |line| {
         if (line.number) |number| {
-            const num_str = formatNumPadded(&num_buf, number, num_width);
-            try printNumberedBodyLine(stdout, line, num_str, line_spec.containsLine(number), use_color);
+            try printNumberedBodyLine(stdout, line, number, num_width, line_spec.containsLine(number), use_color);
             continue;
         }
         // Pad the "\ No newline" marker to align with the numbered lines.
-        if (line.kind == .no_newline) {
-            var p: usize = 0;
-            while (p < num_width + 2) : (p += 1) try stdout.writeByte(' ');
-        }
+        if (line.kind == .no_newline) try stdout.splatByteAll(' ', num_width + 2);
         try stdout.print("{s}\n", .{line.text});
     }
 }
-
-const COLOR_BOLD = "\x1b[1m";
 
 /// Count the numbered body lines (context, +, -) in a raw hunk.
 fn countBodyLines(raw_lines: []const u8) u32 {
@@ -194,30 +193,19 @@ fn digitWidth(n: u32) usize {
 /// Print a single numbered body line: `>num: line` (selected) or ` num: line`,
 /// with +/- line content colored when `use_color` is true and the prefix made
 /// bold when selected.
-fn printNumberedBodyLine(stdout: *std.Io.Writer, line: types.BodyLine, num_str: []const u8, selected: bool, use_color: bool) !void {
-    const marker: u8 = if (selected) '>' else ' ';
-    const line_color: []const u8 = if (!use_color) "" else switch (line.kind) {
-        .addition => COLOR_GREEN,
-        .removal => COLOR_RED,
-        else => "",
-    };
+/// One reset closes both the bold prefix and the line colour.
+fn printNumberedBodyLine(stdout: *std.Io.Writer, line: types.BodyLine, number: u32, num_width: usize, selected: bool, use_color: bool) !void {
+    const line_color: []const u8 = if (use_color) diffLineColor(line.kind) else "";
     const prefix_color: []const u8 = if (use_color and selected) COLOR_BOLD else "";
-    const reset: []const u8 = if (line_color.len > 0 or prefix_color.len > 0) COLOR_RESET else "";
-    try stdout.print("{s}{c}{s}:{s}{s}{s}\n", .{ prefix_color, marker, num_str, line_color, line.text, reset });
-}
-
-/// Format a number right-aligned in a fixed-width field.
-fn formatNumPadded(buf: []u8, num: u32, width: usize) []const u8 {
-    // Format the number
-    var tmp: [12]u8 = undefined;
-    const num_str = std.fmt.bufPrint(&tmp, "{d}", .{num}) catch return "";
-    const pad_len = if (width > num_str.len) width - num_str.len else 0;
-    const total = pad_len + num_str.len;
-    if (total > buf.len) return num_str;
-    // Fill padding spaces
-    @memset(buf[0..pad_len], ' ');
-    @memcpy(buf[pad_len..total], num_str);
-    return buf[0..total];
+    try stdout.print("{[prefix]s}{[marker]c}{[number]d:>[width]}:{[color]s}{[text]s}{[reset]s}\n", .{
+        .prefix = prefix_color,
+        .marker = @as(u8, if (selected) '>' else ' '),
+        .number = number,
+        .width = num_width,
+        .color = line_color,
+        .text = line.text,
+        .reset = @as([]const u8, if (line_color.len > 0 or prefix_color.len > 0) COLOR_RESET else ""),
+    });
 }
 
 pub fn printDiffPorcelain(stdout: *std.Io.Writer, h: Hunk) !void {
@@ -239,6 +227,14 @@ pub fn printDiffPorcelain(stdout: *std.Io.Writer, h: Hunk) !void {
 const MatchedHunk = types.MatchedHunk;
 const OutputMode = types.OutputMode;
 
+/// Write a hunk address as the user types it: `sha7` or `sha7:spec`.
+pub fn writeShaSpec(stdout: *std.Io.Writer, sha7: []const u8, line_spec: ?LineSpec) !void {
+    try stdout.writeAll(sha7);
+    const ls = line_spec orelse return;
+    try stdout.writeByte(':');
+    try writeLineSpec(stdout, ls);
+}
+
 /// Write a line spec as `start-end` or `start` (comma-separated for multiple ranges).
 pub fn writeLineSpec(stdout: *std.Io.Writer, ls: LineSpec) !void {
     for (ls.ranges, 0..) |r, i| {
@@ -251,33 +247,28 @@ pub fn writeLineSpec(stdout: *std.Io.Writer, ls: LineSpec) !void {
     }
 }
 
-/// Iterate `matched`, printing one line per hunk via `printMatchedHunkLine`
-/// when verbosity is not quiet. Returns the count of hunks iterated. Used by
-/// cmdRestore, cmdStash, and cmdCommit (post-commit and dry-run output).
+/// Print one line per matched hunk via `printMatchedHunkLine` unless quiet,
+/// in the output mode and colour `common` asks for. Used by cmdRestore,
+/// cmdStash, and cmdCommit (post-commit and dry-run output).
 pub fn printMatchedHunks(
     stdout: *std.Io.Writer,
     matched: []const MatchedHunk,
     verb: []const u8,
     porcelain_verb: []const u8,
-    use_color: bool,
-    output: OutputMode,
-    verbosity: types.Verbosity,
-) !usize {
-    var count: usize = 0;
+    common: types.Common,
+) !void {
+    if (common.verbosity == .quiet) return;
+    const use_color = shouldUseColor(common.output, common.no_color);
     for (matched) |m| {
-        count += 1;
-        if (verbosity != .quiet) {
-            try printMatchedHunkLine(stdout, verb, porcelain_verb, m, use_color, output);
-        }
+        try printMatchedHunkLine(stdout, verb, porcelain_verb, m, use_color, common.output);
     }
-    return count;
 }
 
 /// Print a verbose-mode summary line of the form "1 hunk {verb}" or
 /// "{N} hunks {verb}". No-op for quiet/porcelain modes. Used by every
 /// hunk-applying command.
-pub fn printHunkCountSummary(verbosity: types.Verbosity, output: OutputMode, count: usize, verb: []const u8) void {
-    if (verbosity != .verbose or output != .human) return;
+pub fn printHunkCountSummary(common: types.Common, count: usize, verb: []const u8) void {
+    if (common.verbosity != .verbose or common.output != .human) return;
     if (count == 1) {
         std.debug.print("1 hunk {s}\n", .{verb});
     } else {
@@ -290,24 +281,16 @@ pub fn printHunkCountSummary(verbosity: types.Verbosity, output: OutputMode, cou
 pub fn printMatchedHunkLine(stdout: *std.Io.Writer, verb: []const u8, porcelain_verb: []const u8, m: MatchedHunk, use_color: bool, output: OutputMode) !void {
     switch (output) {
         .human => {
-            try stdout.print("{s} ", .{verb});
-            if (use_color) try stdout.writeAll(COLOR_YELLOW);
-            try stdout.writeAll(m.hunk.sha_hex[0..7]);
-            if (m.line_spec) |ls| {
-                try stdout.print(":", .{});
-                try writeLineSpec(stdout, ls);
-            }
-            if (use_color) try stdout.writeAll(COLOR_RESET);
-            try stdout.writeAll("  ");
+            const sha = paint(use_color, COLOR_YELLOW);
+            try stdout.print("{s} {s}", .{ verb, sha.on });
+            try writeShaSpec(stdout, m.hunk.sha_hex[0..7], m.line_spec);
+            try stdout.print("{s}  ", .{sha.off});
             try writeFilePath(stdout, m.hunk);
             try stdout.writeByte('\n');
         },
         .porcelain => {
-            try stdout.print("{s}\t{s}", .{ porcelain_verb, m.hunk.sha_hex[0..7] });
-            if (m.line_spec) |ls| {
-                try stdout.print(":", .{});
-                try writeLineSpec(stdout, ls);
-            }
+            try stdout.print("{s}\t", .{porcelain_verb});
+            try writeShaSpec(stdout, m.hunk.sha_hex[0..7], m.line_spec);
             try stdout.writeByte('\t');
             try writeFilePath(stdout, m.hunk);
             try stdout.writeByte('\n');
@@ -495,15 +478,14 @@ test "printMatchedHunkLine adds @ suffix for symlinks" {
     try std.testing.expect(std.mem.endsWith(u8, w.buffered(), "link@\n"));
 }
 
-test "printMatchedHunks empty input returns 0" {
+test "printMatchedHunks empty input writes nothing" {
     var buf: [16]u8 = undefined;
     var w = std.Io.Writer.fixed(&buf);
-    const count = try printMatchedHunks(&w, &.{}, "v", "v", false, .human, .normal);
-    try std.testing.expectEqual(@as(usize, 0), count);
+    try printMatchedHunks(&w, &.{}, "v", "v", .{ .no_color = true });
     try std.testing.expectEqual(@as(usize, 0), w.buffered().len);
 }
 
-test "printMatchedHunks counts and prints one line per hunk" {
+test "printMatchedHunks prints one line per hunk" {
     var buf: [512]u8 = undefined;
     var w = std.Io.Writer.fixed(&buf);
     var h1 = testMakeHunk("a.txt", 1, 1, 1, 1);
@@ -514,8 +496,7 @@ test "printMatchedHunks counts and prints one line per hunk" {
         .{ .hunk = &h1, .line_spec = null },
         .{ .hunk = &h2, .line_spec = null },
     };
-    const count = try printMatchedHunks(&w, &matched, "v", "v", false, .human, .normal);
-    try std.testing.expectEqual(@as(usize, 2), count);
+    try printMatchedHunks(&w, &matched, "v", "v", .{ .no_color = true });
     const out = w.buffered();
     try std.testing.expect(std.mem.indexOf(u8, out, "a.txt") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "b.txt") != null);
@@ -543,21 +524,21 @@ test "digitWidth basic cases" {
 test "printNumberedBodyLine non-selected non-color" {
     var buf: [64]u8 = undefined;
     var w = std.Io.Writer.fixed(&buf);
-    try printNumberedBodyLine(&w, testBodyLine("+added"), "3", false, false);
+    try printNumberedBodyLine(&w, testBodyLine("+added"), 3, 1, false, false);
     try std.testing.expectEqualStrings(" 3:+added\n", w.buffered());
 }
 
 test "printNumberedBodyLine selected gets > marker" {
     var buf: [64]u8 = undefined;
     var w = std.Io.Writer.fixed(&buf);
-    try printNumberedBodyLine(&w, testBodyLine(" context"), "5", true, false);
+    try printNumberedBodyLine(&w, testBodyLine(" context"), 5, 1, true, false);
     try std.testing.expectEqualStrings(">5: context\n", w.buffered());
 }
 
 test "printNumberedBodyLine color: + line gets green" {
     var buf: [128]u8 = undefined;
     var w = std.Io.Writer.fixed(&buf);
-    try printNumberedBodyLine(&w, testBodyLine("+added"), "1", false, true);
+    try printNumberedBodyLine(&w, testBodyLine("+added"), 1, 1, false, true);
     const out = w.buffered();
     try std.testing.expect(std.mem.indexOf(u8, out, COLOR_GREEN) != null);
     try std.testing.expect(std.mem.indexOf(u8, out, COLOR_RESET) != null);
@@ -567,7 +548,7 @@ test "printNumberedBodyLine color: + line gets green" {
 test "printNumberedBodyLine empty line + selected + color: bold marker, no line-color" {
     var buf: [128]u8 = undefined;
     var w = std.Io.Writer.fixed(&buf);
-    try printNumberedBodyLine(&w, testBodyLine(""), "1", true, true);
+    try printNumberedBodyLine(&w, testBodyLine(""), 1, 1, true, true);
     const out = w.buffered();
     // Empty line is treated as context (no +/-): no green/red, but bold prefix.
     try std.testing.expect(std.mem.indexOf(u8, out, COLOR_BOLD) != null);
@@ -579,7 +560,7 @@ test "printNumberedBodyLine empty line + selected + color: bold marker, no line-
 test "printNumberedBodyLine color + selected: bold + green" {
     var buf: [128]u8 = undefined;
     var w = std.Io.Writer.fixed(&buf);
-    try printNumberedBodyLine(&w, testBodyLine("+added"), "1", true, true);
+    try printNumberedBodyLine(&w, testBodyLine("+added"), 1, 1, true, true);
     const out = w.buffered();
     try std.testing.expect(std.mem.indexOf(u8, out, COLOR_BOLD) != null);
     try std.testing.expect(std.mem.indexOf(u8, out, COLOR_GREEN) != null);
@@ -620,13 +601,12 @@ test "printRawLinesWithLineNumbers no-newline marker is padded" {
     try std.testing.expect(std.mem.indexOf(u8, out, "   \\ No newline") != null);
 }
 
-test "printMatchedHunks quiet verbosity counts but prints nothing" {
+test "printMatchedHunks quiet verbosity prints nothing" {
     var buf: [16]u8 = undefined;
     var w = std.Io.Writer.fixed(&buf);
     var h = testMakeHunk("a.txt", 1, 1, 1, 1);
     const matched = [_]MatchedHunk{.{ .hunk = &h, .line_spec = null }};
-    const count = try printMatchedHunks(&w, &matched, "v", "v", false, .human, .quiet);
-    try std.testing.expectEqual(@as(usize, 1), count);
+    try printMatchedHunks(&w, &matched, "v", "v", .{ .no_color = true, .verbosity = .quiet });
     try std.testing.expectEqual(@as(usize, 0), w.buffered().len);
 }
 
@@ -746,4 +726,63 @@ test "printHunkPorcelain format" {
     var expected_buf: [256]u8 = undefined;
     const expected = try std.fmt.bufPrint(&expected_buf, "{s}\ta.zig\t1\t1\thello\n", .{sha[0..7]});
     try std.testing.expectEqualStrings(expected, output);
+}
+
+test "paint wraps only when colour is on and there is a colour" {
+    const on = paint(true, COLOR_GREEN);
+    try std.testing.expectEqualStrings(COLOR_GREEN, on.on);
+    try std.testing.expectEqualStrings(COLOR_RESET, on.off);
+    const off = paint(false, COLOR_GREEN);
+    try std.testing.expectEqualStrings("", off.on);
+    try std.testing.expectEqualStrings("", off.off);
+    const none = paint(true, "");
+    try std.testing.expectEqualStrings("", none.on);
+    try std.testing.expectEqualStrings("", none.off);
+}
+
+test "writeShaSpec appends the line spec after a colon" {
+    var buf: [64]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    const ranges = [_]types.LineRange{ .{ .start = 2, .end = 2 }, .{ .start = 4, .end = 6 } };
+    try writeShaSpec(&w, "abcdef0", .{ .ranges = &ranges });
+    try w.writeByte(' ');
+    try writeShaSpec(&w, "1234567", null);
+    try std.testing.expectEqualStrings("abcdef0:2,4-6 1234567", w.buffered());
+}
+
+test "listColumnWidth fits the longest path between a floor and the terminal" {
+    try std.testing.expectEqual(@as(usize, 20), listColumnWidth(5, 80));
+    try std.testing.expectEqual(@as(usize, 30), listColumnWidth(30, 80));
+    // 80 columns leave 55 for the path once the prefix and 4 summary columns are reserved.
+    try std.testing.expectEqual(@as(usize, 55), listColumnWidth(70, 80));
+    try std.testing.expectEqual(@as(usize, 15), listColumnWidth(70, 40));
+    try std.testing.expectEqual(@as(usize, 20), listColumnWidth(70, 25));
+}
+
+test "truncateSummary keeps what fits and marks a cut with an ellipsis" {
+    const whole = truncateSummary("hello", 5);
+    try std.testing.expectEqualStrings("hello", whole.text);
+    try std.testing.expect(!whole.ellipsis);
+
+    const cut = truncateSummary("hello world", 5);
+    try std.testing.expectEqualStrings("hell", cut.text);
+    try std.testing.expect(cut.ellipsis);
+
+    // One column has no room for an ellipsis as well as text.
+    const one = truncateSummary("hello", 1);
+    try std.testing.expectEqualStrings("h", one.text);
+    try std.testing.expect(!one.ellipsis);
+
+    const none = truncateSummary("hello", 0);
+    try std.testing.expectEqualStrings("", none.text);
+    try std.testing.expect(!none.ellipsis);
+}
+
+test "printRawLinesWithLineNumbers right-aligns numbers to the widest" {
+    var buf: [512]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    const ranges = [_]types.LineRange{.{ .start = 10, .end = 10 }};
+    try printRawLinesWithLineNumbers(&w, "@@ -1,10 +1,10 @@\n a\n b\n c\n d\n e\n f\n g\n h\n i\n+j\n\\ No newline at end of file", .{ .ranges = &ranges }, false);
+    try std.testing.expect(std.mem.indexOf(u8, w.buffered(), "\n  1: a\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, w.buffered(), "\n>10:+j\n    \\ No newline") != null);
 }

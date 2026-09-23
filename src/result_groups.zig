@@ -238,22 +238,16 @@ pub fn printResultGroupHuman(stdout: *std.Io.Writer, verb: []const u8, rg: Resul
     // Applied hashes (yellow), space-separated, with optional :line_spec
     for (rg.applied, 0..) |ai, i| {
         if (i > 0) try stdout.print(" ", .{});
-        if (use_color) try stdout.print("{s}", .{format.COLOR_YELLOW});
-        try stdout.print("{s}", .{ai.sha7});
-        if (ai.line_spec) |ls| {
-            try stdout.print(":", .{});
-            try format.writeLineSpec(stdout, ls);
-        }
-        if (use_color) try stdout.print("{s}", .{format.COLOR_RESET});
+        const sha = format.paint(use_color, format.COLOR_YELLOW);
+        try stdout.writeAll(sha.on);
+        try format.writeShaSpec(stdout, ai.sha7, ai.line_spec);
+        try stdout.writeAll(sha.off);
     }
 
     // Consumed hashes (dim), space-separated, +-prefixed
+    const consumed = format.paint(use_color, format.COLOR_DIM);
     for (rg.consumed) |con| {
-        if (use_color) {
-            try stdout.print(" {s}+{s}{s}", .{ format.COLOR_DIM, con, format.COLOR_RESET });
-        } else {
-            try stdout.print(" +{s}", .{con});
-        }
+        try stdout.print(" {s}+{s}{s}", .{ consumed.on, con, consumed.off });
     }
 
     // Arrow (always present)
@@ -261,11 +255,10 @@ pub fn printResultGroupHuman(stdout: *std.Io.Writer, verb: []const u8, rg: Resul
 
     // Result hashes (green), comma-separated
     if (rg.result_shas.len > 0) {
+        const result = format.paint(use_color, format.COLOR_GREEN);
         for (rg.result_shas, 0..) |rs, i| {
             if (i > 0) try stdout.print(",", .{});
-            if (use_color) try stdout.print("{s}", .{format.COLOR_GREEN});
-            try stdout.print("{s}", .{rs});
-            if (use_color) try stdout.print("{s}", .{format.COLOR_RESET});
+            try stdout.print("{s}{s}{s}", .{ result.on, rs, result.off });
         }
     } else {
         try stdout.print("?", .{});
@@ -273,8 +266,7 @@ pub fn printResultGroupHuman(stdout: *std.Io.Writer, verb: []const u8, rg: Resul
 
     // File path (two spaces before file)
     try stdout.writeAll("  ");
-    try stdout.writeAll(rg.file_path);
-    if (rg.is_symlink) try stdout.writeByte('@');
+    try format.writeFilePath(stdout, rg);
     try stdout.writeByte('\n');
 }
 
@@ -287,11 +279,7 @@ pub fn printResultGroupPorcelain(stdout: *std.Io.Writer, verb: []const u8, rg: R
     // applied: space-separated with optional :line_spec
     for (rg.applied, 0..) |ai, i| {
         if (i > 0) try stdout.print(" ", .{});
-        try stdout.print("{s}", .{ai.sha7});
-        if (ai.line_spec) |ls| {
-            try stdout.print(":", .{});
-            try format.writeLineSpec(stdout, ls);
-        }
+        try format.writeShaSpec(stdout, ai.sha7, ai.line_spec);
     }
 
     // result: comma-separated
@@ -303,8 +291,7 @@ pub fn printResultGroupPorcelain(stdout: *std.Io.Writer, verb: []const u8, rg: R
 
     // file
     try stdout.writeByte('\t');
-    try stdout.writeAll(rg.file_path);
-    if (rg.is_symlink) try stdout.writeByte('@');
+    try format.writeFilePath(stdout, rg);
 
     // consumed: comma-separated (optional field, only if non-empty)
     if (rg.consumed.len > 0) {

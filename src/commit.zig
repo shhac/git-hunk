@@ -229,12 +229,11 @@ fn computeHookCreatedPaths(
 }
 
 pub fn printCommitResults(stdout: *std.Io.Writer, opts: CommitOptions, matched: []const MatchedHunk, commit_output: []const u8) !void {
-    const use_color = format.shouldUseColor(opts.common.output, opts.common.no_color);
-    const count = try format.printMatchedHunks(stdout, matched, "committed", "committed", use_color, opts.common.output, opts.common.verbosity);
+    try format.printMatchedHunks(stdout, matched, "committed", "committed", opts.common);
     if (opts.common.verbosity != .quiet and commit_output.len > 0) {
         std.debug.print("{s}\n", .{commit_output});
     }
-    format.printHunkCountSummary(opts.common.verbosity, opts.common.output, count, "committed");
+    format.printHunkCountSummary(opts.common, matched.len, "committed");
 }
 
 // ============================================================================

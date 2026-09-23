@@ -106,31 +106,16 @@ pub fn renderCheckPorcelain(stdout: *std.Io.Writer, summary: CheckSummary) !void
 /// Render a check summary in human form (failures only, with stderr summary line).
 pub fn renderCheckHuman(stdout: *std.Io.Writer, summary: CheckSummary, use_color: bool) !void {
     if (!summary.has_failure) return;
+    const sha = format.paint(use_color, format.COLOR_YELLOW);
     for (summary.results) |r| {
         switch (r.status) {
             .ok => {},
-            .stale => {
-                if (use_color) {
-                    try stdout.print("stale {s}{s}{s}\n", .{ format.COLOR_YELLOW, r.prefix, format.COLOR_RESET });
-                } else {
-                    try stdout.print("stale {s}\n", .{r.prefix});
-                }
-            },
-            .ambiguous => {
-                if (use_color) {
-                    try stdout.print("ambiguous {s}{s}{s}\n", .{ format.COLOR_YELLOW, r.prefix, format.COLOR_RESET });
-                } else {
-                    try stdout.print("ambiguous {s}\n", .{r.prefix});
-                }
-            },
+            .stale => try stdout.print("stale {s}{s}{s}\n", .{ sha.on, r.prefix, sha.off }),
+            .ambiguous => try stdout.print("ambiguous {s}{s}{s}\n", .{ sha.on, r.prefix, sha.off }),
         }
     }
     for (summary.unexpected) |h| {
-        if (use_color) {
-            try stdout.print("unexpected {s}{s}{s}  ", .{ format.COLOR_YELLOW, h.sha_hex[0..7], format.COLOR_RESET });
-        } else {
-            try stdout.print("unexpected {s}  ", .{h.sha_hex[0..7]});
-        }
+        try stdout.print("unexpected {s}{s}{s}  ", .{ sha.on, h.sha_hex[0..7], sha.off });
         try format.writeFilePath(stdout, h.*);
         try stdout.writeByte('\n');
     }
