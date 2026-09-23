@@ -263,7 +263,7 @@ fn parseHunkBody(arena: Allocator, cursor: *DiffCursor, diff: []const u8, hunk_h
 
 /// Why a changed path produced no hunk. Each corresponds to a documented
 /// skip in `parseDiff`.
-pub const SkipReason = enum {
+const SkipReason = enum {
     submodule,
     mode_only,
     rename_only,
@@ -520,7 +520,7 @@ fn parseU32(s: *[]const u8) ?u32 {
     return val;
 }
 
-pub const computeHunkSha = types.computeHunkSha;
+const computeHunkSha = types.computeHunkSha;
 
 /// C-unescape a git quoted path (handles \t, \n, \\, \", and \ooo octal).
 /// Returns the input unchanged if no backslashes are present.

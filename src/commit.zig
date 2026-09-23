@@ -69,7 +69,7 @@ pub fn legacyRecoverIndexBackup(allocator: Allocator) !void {
     cwd.deleteFile(io, backup_path) catch {};
 }
 
-pub const CommitContext = struct {
+const CommitContext = struct {
     allocator: Allocator,
     patches: []const []const u8,
     binary_paths: []const []const u8,

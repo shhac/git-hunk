@@ -420,7 +420,7 @@ fn isHexDigit(c: u8) bool {
     return (c >= '0' and c <= '9') or (c >= 'a' and c <= 'f');
 }
 
-pub fn deinitShaArgs(allocator: Allocator, sha_args: *std.ArrayList(ShaArg)) void {
+fn deinitShaArgs(allocator: Allocator, sha_args: *std.ArrayList(ShaArg)) void {
     for (sha_args.items) |arg| {
         if (arg.line_spec) |ls| {
             allocator.free(ls.ranges);

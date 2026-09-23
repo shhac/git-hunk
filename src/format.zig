@@ -29,17 +29,17 @@ pub fn shouldUseColor(output: types.OutputMode, no_color: bool) bool {
 }
 
 // ANSI color escape codes — only used in human mode when stdout is a TTY
-pub const COLOR_RESET = "\x1b[0m";
+const COLOR_RESET = "\x1b[0m";
 pub const COLOR_YELLOW = "\x1b[33m"; // SHA hash
 pub const COLOR_GREEN = "\x1b[32m"; // added lines (+), result hashes
-pub const COLOR_RED = "\x1b[31m"; // removed lines (-)
+const COLOR_RED = "\x1b[31m"; // removed lines (-)
 pub const COLOR_DIM = "\x1b[2m"; // consumed/merged hashes
-pub const COLOR_CYAN = "\x1b[36m"; // @@ headers of numbered hunks
+const COLOR_CYAN = "\x1b[36m"; // @@ headers of numbered hunks
 const COLOR_BOLD = "\x1b[1m"; // selection markers of numbered hunks
 
 /// The escape codes that wrap text in a colour: empty when colour is off or
 /// there is no colour to apply, so the text prints bare.
-pub const Paint = struct { on: []const u8, off: []const u8 };
+const Paint = struct { on: []const u8, off: []const u8 };
 
 pub fn paint(use_color: bool, color: []const u8) Paint {
     if (!use_color or color.len == 0) return .{ .on = "", .off = "" };
@@ -236,7 +236,7 @@ pub fn writeShaSpec(stdout: *std.Io.Writer, sha7: []const u8, line_spec: ?LineSp
 }
 
 /// Write a line spec as `start-end` or `start` (comma-separated for multiple ranges).
-pub fn writeLineSpec(stdout: *std.Io.Writer, ls: LineSpec) !void {
+fn writeLineSpec(stdout: *std.Io.Writer, ls: LineSpec) !void {
     for (ls.ranges, 0..) |r, i| {
         if (i > 0) try stdout.print(",", .{});
         if (r.start == r.end) {

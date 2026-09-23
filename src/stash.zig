@@ -20,7 +20,7 @@ const StashOptions = types.StashOptions;
 const defaultIo = types.getIo;
 
 /// Bundles HEAD-side metadata used by cmdStash. All slices are gpa-owned.
-pub const HeadInfo = struct {
+const HeadInfo = struct {
     tree: []u8,
     sha: []u8,
     branch: ?[]u8,
@@ -49,7 +49,7 @@ pub fn gatherHeadInfo(allocator: Allocator) !HeadInfo {
 }
 
 /// Result of running both the tracked-text and tracked-binary tree pipelines.
-pub const StashTreeBuild = struct {
+const StashTreeBuild = struct {
     tree: []const u8,
     /// Patches reverse-applied to worktree at cleanup. Empty if no tracked text hunks.
     index_patches: []const []const u8,

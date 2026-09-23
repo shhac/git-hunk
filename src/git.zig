@@ -232,9 +232,9 @@ pub fn runGitDiffFiles(allocator: Allocator, mode: DiffMode, ref: ?[]const u8, c
     return runGitCapture(allocator, argv.items, .{ .max_bytes = 10 * 1024 * 1024 }, "git diff", .{ .trim = false });
 }
 
-pub const ApplyTarget = enum { index, worktree };
+const ApplyTarget = enum { index, worktree };
 
-pub const ApplyOptions = struct {
+const ApplyOptions = struct {
     reverse: bool = false,
     target: ApplyTarget = .index,
     check_only: bool = false,
@@ -258,7 +258,7 @@ pub const ApplyOptions = struct {
     env_map: ?*const EnvMap = null,
 };
 
-pub const ApplyResult = enum { applied_clean, applied_with_conflicts };
+const ApplyResult = enum { applied_clean, applied_with_conflicts };
 
 /// Apply `patches` one after another under the same options, stopping at the
 /// first that fails. Reports conflicts if any patch landed with them.

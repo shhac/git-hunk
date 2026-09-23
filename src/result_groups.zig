@@ -16,7 +16,7 @@ const MatchedHunk = types.MatchedHunk;
 const rangesOverlap = types.rangesOverlap;
 
 /// An applied input hunk (what the user asked to stage/unstage).
-pub const AppliedInput = struct {
+const AppliedInput = struct {
     sha7: []const u8,
     line_spec: ?types.LineSpec,
 };

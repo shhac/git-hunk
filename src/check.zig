@@ -12,16 +12,16 @@ const format = @import("format.zig");
 const Allocator = std.mem.Allocator;
 const Hunk = types.Hunk;
 
-pub const CheckStatus = enum { ok, stale, ambiguous };
+const CheckStatus = enum { ok, stale, ambiguous };
 
-pub const CheckResult = struct {
+const CheckResult = struct {
     prefix: []const u8,
     status: CheckStatus,
     resolved_sha7: []const u8,
     file_path: []const u8,
 };
 
-pub const CheckSummary = struct {
+const CheckSummary = struct {
     results: []const CheckResult,
     unexpected: []const *const Hunk,
     has_failure: bool,

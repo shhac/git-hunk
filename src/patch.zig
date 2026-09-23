@@ -106,7 +106,7 @@ pub fn partitionByKind(arena: Allocator, matches: []const MatchedHunk) !HunkPart
 /// filtering is direction-sensitive: a forward apply matches the patch's old
 /// side against the target, a reverse apply matches its new side, so each
 /// direction must keep a different set of deselected lines as context.
-pub const ApplyDirection = enum { forward, reverse };
+const ApplyDirection = enum { forward, reverse };
 
 /// Build one or more patches from matched hunks, in the order `direction`
 /// must apply them. Returns multiple patches when typechanges are present
