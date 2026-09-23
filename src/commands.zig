@@ -677,6 +677,7 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
     var matched: std.ArrayList(MatchedHunk) = .empty;
     defer matched.deinit(arena);
     try resolveHunksFromOpts(arena, hunks.items, opts.sha_args.items, opts.file_filter, &matched);
+    exitIfNoMatches(matched.items.len, opts.file_filter);
 
     const partition = try patch_mod.partitionByKind(arena, matched.items);
     const text_matched = try partition.combinedText(arena);

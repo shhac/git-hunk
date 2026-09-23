@@ -977,4 +977,21 @@ if echo "$ERR247" | grep -q -- "--file selection"; then
 fi
 pass "test 247: genuinely stale hash keeps the plain error"
 
+# ============================================================================
+# Test 248: add/reset with a --file that matches no hunk fail like the other
+# commands, rather than exiting 0 having done nothing
+# ============================================================================
+new_repo
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
+for CMD248 in "add --all" "reset --all"; do
+    [[ "$CMD248" == "reset --all" ]] && git add alpha.txt
+    EC248=0
+    ERR248="$("$GIT_HUNK" $CMD248 --file nosuch.txt 2>&1)" || EC248=$?
+    [[ "$EC248" -eq 1 ]] \
+        || fail "test 248: '$CMD248 --file nosuch.txt' should exit 1, got $EC248"
+    echo "$ERR248" | grep -q "no hunks matching file 'nosuch.txt'" \
+        || fail "test 248: '$CMD248' should name the unmatched file, got: '$ERR248'"
+done
+pass "test 248: add/reset with an unmatched --file exit 1 and say so"
+
 report_results
