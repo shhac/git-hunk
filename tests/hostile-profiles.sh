@@ -122,13 +122,20 @@ EOF
 # Every repo the suite creates takes these on, so a SHA-1 constant or direct
 # `.git/refs` access fails here. The environment variables reach older git than
 # the equivalent config keys; the probe refuses a git that silently ignores
-# them, since the profile would then match the baseline vacuously.
+# them, since the profile would then match the baseline vacuously. Commits
+# start `git maintenance run --auto --detach`, which under reftable has refs
+# to compact and can still be writing into .git while a test deletes the
+# repo; running it in the foreground keeps teardown deterministic.
 profile_git3_defaults() {
     cat >> "$1" <<'EOF'
 [init]
 	defaultBranch = main
 [safe]
 	bareRepository = explicit
+[maintenance]
+	autoDetach = false
+[gc]
+	autoDetach = false
 EOF
     export GIT_DEFAULT_HASH=sha256
     export GIT_DEFAULT_REF_FORMAT=reftable
