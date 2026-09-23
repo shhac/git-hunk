@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.19.0] - 2026-09-23
+
+### Added
+- Git 3.0 readiness: git-hunk works in SHA-256 and reftable repositories, the defaults Git 3.0 gives every new repository, as well as in SHA-1 ones, with nothing to configure. Wherever it needs an object ID it asks git, which answers in the repository's own format. The integration suite gains a `git3-defaults` hostile profile (SHA-256, reftable, `main`, `safe.bareRepository=explicit`) that CI runs on every push; it refuses a git too old to honour those settings rather than passing vacuously.
+
+### Fixed
+- `--ref <initial-commit>` failed in a SHA-256 repository with "unknown revision". It diffed against the SHA-1 empty tree, which a SHA-256 repository does not have.
+- An untracked symlink's diff named its blob with a SHA-1 hash even in a SHA-256 repository.
+- An uppercase hunk-hash prefix passed validation and then matched nothing ("no hunk matching"). It is now rejected by name ("hunk hashes are lowercase hex"), in line with Git 3.0's lowercase-only object IDs.
+- `commit --amend` dropped the original commit's changes. The temp index was seeded from `HEAD~1` while the hunks are relative to `HEAD`, so the amended commit held only the new hunk and the original change reappeared as staged. On a root commit `--amend` failed outright. Both now build on `HEAD`, as `git commit --amend` does.
+- `commit --dry-run` checked against the real index while the commit builds on `HEAD`, so a staged edit next to the target hunk made the preview pass and the commit fail.
+- A file added by a pre-commit hook with a non-ASCII name was left behind as a staged deletion, which the next plain `git commit` would record. Path listings are now NUL-separated, and every file of a multi-file commit counts as a target (previously only the first file of each patch did).
+- Binary renames: `a.bin → b.bin` was listed and reset under the old path, leaving the rename staged, and a rename between names of different lengths was invisible to `list`, `count` and `-v`. Renames now take their path from `rename to`. A C-quoted path ending in a backslash was dropped by the same parser.
+- `add`/`reset` with a `--file` that matched no hunk exited 0 having done nothing. They now report "no hunks matching file" and exit 1, like the other commands.
+- `add`, `reset` and `restore --dry-run` rejected every file↔symlink typechange ("already exists" / "wrong type") that the real operation applies cleanly. The dry run now checks the delete and create halves as one sequence.
+- `reset --ref <X>` could not succeed: git received `diff --cached X^..X` and printed its usage text. It now takes hunks from the same diff as `list --ref X` and removes them from the index, the mirror of `add --ref X`.
+
+### Changed
+- Internal restructure with no change in behaviour, checked against the previous binary across a few hundred scenarios:
+  - The per-command option structs share one `Common` struct, replacing a field-copy layer driven by reflection. Whether a command accepts `--3way` now comes from the command spec.
+  - Subcommands dispatch through one typed path.
+  - Commands load and select hunks through one shared path.
+  - Patches are built in the order they apply.
+  - One numbered iterator walks every hunk body, so `diff -n` numbering and line-spec selection cannot drift apart.
+  - `diff.zig` parses one file section at a time, shared with the skipped-path report.
+  - Colour, hash and summary rendering live in `format.zig`.
+  - Stash machinery moves into `stash.zig`, and new `head_match.zig` and `check.zig` hold the index→HEAD matcher and `check`'s resolver.
+- Test suites use the harness `first_sha` helper throughout, and the symlink and typechange cases move to `tests/test_symlink.sh`.
+
 ## [0.18.1] - 2026-08-20
 
 ### Fixed
