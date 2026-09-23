@@ -320,7 +320,7 @@ pub fn collectSkippedPaths(
         if (!std.mem.startsWith(u8, outer_line, "diff --git ")) continue;
 
         const state = parseExtendedHeaders(&cursor);
-        const file_path = (try extractPathFromDiffGitLine(arena, outer_line)) orelse continue;
+        const file_path = (try sectionFilePath(arena, outer_line, state)) orelse continue;
 
         var has_hunk = false;
         for (hunks) |h| {
@@ -360,7 +360,7 @@ pub fn parseDiff(arena: Allocator, diff: []const u8, mode: DiffMode, hunks: *std
 
         // Binary files: synthesize a single whole-file hunk.
         if (state.is_binary) {
-            const file_path = (try extractPathFromDiffGitLine(arena, diff_git_line)) orelse continue;
+            const file_path = (try sectionFilePath(arena, diff_git_line, state)) orelse continue;
             const ph = try buildBinaryPatchHeader(arena, diff_git_line, state);
             try hunks.append(arena, synthesizeWholeFileHunk(file_path, ph, state, true, "binary"));
             continue;
@@ -370,7 +370,7 @@ pub fn parseDiff(arena: Allocator, diff: []const u8, mode: DiffMode, hunks: *std
         const peeked = cursor.peek();
         const has_minus = peeked != null and std.mem.startsWith(u8, peeked.?, "--- ");
         if (!has_minus and (state.is_new_file or state.is_deleted_file)) {
-            const file_path = (try extractPathFromDiffGitLine(arena, diff_git_line)) orelse continue;
+            const file_path = (try sectionFilePath(arena, diff_git_line, state)) orelse continue;
             const ph = try buildEmptyFilePatchHeader(arena, diff_git_line, file_path, state);
             try hunks.append(arena, synthesizeWholeFileHunk(file_path, ph, state, false, ""));
             continue;
@@ -566,10 +566,19 @@ fn cUnescape(arena: Allocator, input: []const u8) ![]const u8 {
     return result.items;
 }
 
+/// The path a file section's hunks belong to. A rename names its new path in
+/// `rename to`, which is unambiguous where the `diff --git` line is not.
+fn sectionFilePath(arena: Allocator, diff_git_line: []const u8, state: FileHeaderState) !?[]const u8 {
+    const to = state.rename_to orelse return extractPathFromDiffGitLine(arena, diff_git_line);
+    if (to.len >= 2 and to[0] == '"' and to[to.len - 1] == '"') return try cUnescape(arena, to[1 .. to.len - 1]);
+    return to;
+}
+
 /// Extract file path from a "diff --git a/PATH b/PATH" line.
 /// For non-renames, both paths are identical, so we split at the midpoint.
 /// Handles both unquoted and C-quoted paths.
-/// Returns null if the format is unrecognized.
+/// Returns null if the format is unrecognized, or if the two unquoted halves
+/// differ (a rename, whose path comes from `rename to` instead).
 fn extractPathFromDiffGitLine(arena: Allocator, line: []const u8) !?[]const u8 {
     const prefix = "diff --git ";
     if (!std.mem.startsWith(u8, line, prefix)) return null;
@@ -577,30 +586,12 @@ fn extractPathFromDiffGitLine(arena: Allocator, line: []const u8) !?[]const u8 {
 
     // Quoted paths: "a/PATH" "b/PATH"
     if (rest.len > 0 and rest[0] == '"') {
-        // Find closing quote of first path, skipping escaped quotes
-        var close_idx: ?usize = null;
-        {
-            var i: usize = 1;
-            while (i < rest.len) : (i += 1) {
-                if (rest[i] == '"' and (i == 0 or rest[i - 1] != '\\')) {
-                    close_idx = i;
-                    break;
-                }
-            }
-        }
-        const close1 = close_idx orelse return null;
-        // Expect ' "b/' after first quoted path
-        if (close1 + 1 >= rest.len or rest[close1 + 1] != ' ') return null;
-        // Extract from second quoted path: "b/..."
-        if (close1 + 2 >= rest.len or rest[close1 + 2] != '"') return null;
-        const second_start = close1 + 3; // skip '"b' → start after 'b'
-        if (second_start >= rest.len or rest[second_start] != 'b') return null;
-        if (second_start + 1 >= rest.len or rest[second_start + 1] != '/') return null;
-        const path_start = second_start + 2; // skip 'b/'
-        var path_end = rest.len;
-        if (path_end > 0 and rest[path_end - 1] == '"') path_end -= 1;
-        if (path_start > path_end) return null;
-        return try cUnescape(arena, rest[path_start..path_end]);
+        const close1 = findClosingQuote(rest) orelse return null;
+        const second = rest[close1 + 1 ..];
+        if (!std.mem.startsWith(u8, second, " \"b/")) return null;
+        const quoted = second[" \"b/".len..];
+        if (!std.mem.endsWith(u8, quoted, "\"")) return null;
+        return try cUnescape(arena, quoted[0 .. quoted.len - 1]);
     }
 
     // Unquoted paths: a/PATH b/PATH
@@ -609,11 +600,26 @@ fn extractPathFromDiffGitLine(arena: Allocator, line: []const u8) !?[]const u8 {
     if (rest.len < 5) return null;
     if ((rest.len - 5) % 2 != 0) return null; // must be odd total for symmetric split
     const path_len = (rest.len - 5) / 2;
-    // Verify structure: starts with "a/", has " b/" at midpoint
     if (!std.mem.startsWith(u8, rest, "a/")) return null;
     const mid = 2 + path_len; // position of space before "b/"
-    if (rest[mid] != ' ' or rest[mid + 1] != 'b' or rest[mid + 2] != '/') return null;
-    return rest[2..mid];
+    if (!std.mem.eql(u8, rest[mid..][0..3], " b/")) return null;
+    const a_path = rest[2..mid];
+    if (!std.mem.eql(u8, a_path, rest[mid + 3 ..])) return null;
+    return a_path;
+}
+
+/// Index of the quote closing the C-quoted string that `s` opens with. A
+/// backslash escapes the byte after it, so `\\"` closes where `\"` does not.
+fn findClosingQuote(s: []const u8) ?usize {
+    var i: usize = 1;
+    while (i < s.len) : (i += 1) {
+        switch (s[i]) {
+            '\\' => i += 1,
+            '"' => return i,
+            else => {},
+        }
+    }
+    return null;
 }
 
 /// Extract file path from a ---/+++ diff line, handling both normal and C-quoted paths.
@@ -1363,6 +1369,64 @@ test "extractPathFromDiffGitLine empty rest" {
     defer arena.deinit();
     const result = try extractPathFromDiffGitLine(arena.allocator(), "diff --git ");
     try std.testing.expectEqual(@as(?[]const u8, null), result);
+}
+
+test "extractPathFromDiffGitLine same-length rename is not split" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try extractPathFromDiffGitLine(arena.allocator(), "diff --git a/a.bin b/b.bin");
+    try std.testing.expectEqual(@as(?[]const u8, null), result);
+}
+
+test "extractPathFromDiffGitLine quoted path ending in backslash" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    // Filename `dir\` quotes to "a/dir\\": the backslash before the closing
+    // quote is itself escaped, so that quote does close the string.
+    const result = try extractPathFromDiffGitLine(arena.allocator(), "diff --git \"a/dir\\\\\" \"b/dir\\\\\"");
+    try std.testing.expectEqualStrings("dir\\", result.?);
+}
+
+test "extractPathFromDiffGitLine quoted path ending in escaped quote" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const result = try extractPathFromDiffGitLine(arena.allocator(), "diff --git \"a/q\\\"\" \"b/q\\\"\"");
+    try std.testing.expectEqualStrings("q\"", result.?);
+}
+
+test "parseDiff binary rename takes the new path from rename to" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const diff =
+        \\diff --git a/a.bin b/b.bin
+        \\similarity index 60%
+        \\rename from a.bin
+        \\rename to b.bin
+        \\index abcdefg..1234567 100644
+        \\Binary files a/a.bin and b/b.bin differ
+        \\
+    ;
+    var hunks: std.ArrayList(Hunk) = .empty;
+    try parseDiff(arena.allocator(), diff, .staged, &hunks);
+    try std.testing.expectEqual(@as(usize, 1), hunks.items.len);
+    try std.testing.expectEqualStrings("b.bin", hunks.items[0].file_path);
+}
+
+test "collectSkippedPaths reports a pure rename under its new path" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const diff =
+        \\diff --git a/short b/much-longer-name
+        \\similarity index 100%
+        \\rename from short
+        \\rename to much-longer-name
+        \\
+    ;
+    var skipped: std.ArrayList(SkippedPath) = .empty;
+    try collectSkippedPaths(arena.allocator(), diff, &.{}, &skipped);
+    try std.testing.expectEqual(@as(usize, 1), skipped.items.len);
+    try std.testing.expectEqualStrings("much-longer-name", skipped.items[0].file_path);
+    try std.testing.expectEqual(SkipReason.rename_only, skipped.items[0].reason);
 }
 
 test "extractPathFromDiffGitLine escaped quote in path" {

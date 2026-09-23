@@ -703,4 +703,31 @@ cmp -s "$OUTDIR880/direct.log" "$OUTDIR880/piped.log" \
 pass "test 882: file and pipe output identical"
 rm -rf "$OUTDIR880"
 
+# ============================================================================
+# Test 890: a staged binary rename is addressed by its new path. Same-length
+# names used to split the `diff --git` line down the middle and yield the old
+# path; different-length names yielded nothing and the rename was invisible.
+# ============================================================================
+for NEW890 in b.bin renamed-longer.bin; do
+    new_repo
+    { printf 'bin\000ary\n'; seq 1 400; } > a.bin
+    git add a.bin && git commit -q -m "add binary"
+    git mv a.bin "$NEW890"
+    echo 401 >> "$NEW890"
+    git add "$NEW890"
+    git diff --cached --name-status | grep -q '^R' \
+        || fail "test 890: fixture broken, git did not detect the rename"
+
+    LIST890="$("$GIT_HUNK" list --staged --porcelain --oneline)"
+    echo "$LIST890" | grep -q "$NEW890" \
+        || fail "test 890: staged rename should list '$NEW890', got: '$LIST890'"
+    echo "$LIST890" | grep -q "a.bin" \
+        && fail "test 890: staged rename listed under old path: '$LIST890'"
+    "$GIT_HUNK" reset --all > /dev/null 2>&1 \
+        || fail "test 890: reset --all of the rename failed"
+    git diff --cached --quiet -- "$NEW890" \
+        || fail "test 890: '$NEW890' still staged after reset: '$(git status --short)'"
+    pass "test 890: staged binary rename to '$NEW890' is listed and reset by its new path"
+done
+
 report_results
