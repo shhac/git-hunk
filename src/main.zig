@@ -133,7 +133,7 @@ fn run(init: std.process.Init) !void {
         defer args_mod.deinitFileFilter(allocator, opts.file_filter);
         try resolveFileFilter(allocator, arena, prefix, opts.file_filter);
         try expandRefShorthand(arena, &opts.ref, false);
-        try commands.cmdStash(allocator, stdout, opts, init.environ_map);
+        try commands.cmdStash(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "commit")) {
         var opts = args_mod.parseCommitArgs(allocator, process_args[2..]) catch |err|
             handleParseError(stdout, err, .commit);
@@ -141,7 +141,7 @@ fn run(init: std.process.Init) !void {
         defer args_mod.deinitFileFilter(allocator, opts.file_filter);
         try resolveFileFilter(allocator, arena, prefix, opts.file_filter);
         try expandRefShorthand(arena, &opts.ref, false);
-        try commands.cmdCommit(allocator, stdout, opts, init.environ_map);
+        try commands.cmdCommit(allocator, stdout, opts);
     } else if (std.mem.eql(u8, subcmd, "--version") or std.mem.eql(u8, subcmd, "-V")) {
         try stdout.print("git-hunk {s}\n", .{build_options.version});
     } else if (std.mem.eql(u8, subcmd, "--help") or std.mem.eql(u8, subcmd, "-h") or std.mem.eql(u8, subcmd, "help")) {

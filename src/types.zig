@@ -38,6 +38,11 @@ pub fn setEnvMap(env: *const std.process.Environ.Map) void {
     g_env_map = env;
 }
 
+/// Returns the process-wide environment map set by `setEnvMap`.
+pub fn getEnvMap() *const std.process.Environ.Map {
+    return g_env_map.?;
+}
+
 /// Look up an environment variable through the process-wide env map. Returns
 /// null if the variable is unset or if `setEnvMap` was never called.
 pub fn getEnv(name: []const u8) ?[]const u8 {

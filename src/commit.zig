@@ -80,14 +80,13 @@ pub const CommitContext = struct {
     amend: bool,
     three_way: bool,
     ref: ?[]const u8,
-    env_map: *const std.process.Environ.Map,
 };
 
 /// A throwaway index holding HEAD's tree: the base every commit is built on.
 /// That holds for --amend too, since the hunks are relative to HEAD and the
 /// amended commit must keep everything HEAD already changed.
-fn seedTempIndex(allocator: Allocator, env_map: *const std.process.Environ.Map) !git.TempIndex {
-    var tmp = try git.createTempIndex(allocator, env_map, "commit-");
+fn seedTempIndex(allocator: Allocator) !git.TempIndex {
+    var tmp = try git.createTempIndex(allocator, "commit-");
     errdefer tmp.deinit();
     try git.runGitReadTree(allocator, "HEAD", &tmp.env_map);
     return tmp;
@@ -97,8 +96,8 @@ fn seedTempIndex(allocator: Allocator, env_map: *const std.process.Environ.Map) 
 /// same HEAD-seeded index the real commit builds on, so a preview can never
 /// pass where the commit then fails. `--3way` is not passed: git rejects it
 /// alongside `--check`.
-pub fn checkTempIndexCommit(allocator: Allocator, patches: []const []const u8, ref: ?[]const u8, env_map: *const std.process.Environ.Map) !void {
-    var tmp = try seedTempIndex(allocator, env_map);
+pub fn checkTempIndexCommit(allocator: Allocator, patches: []const []const u8, ref: ?[]const u8) !void {
+    var tmp = try seedTempIndex(allocator);
     defer tmp.deinit();
     for (patches) |p| {
         _ = try git.runGitApply(allocator, p, .{ .target = .index, .check_only = true, .ref = ref, .env_map = &tmp.env_map });
@@ -119,7 +118,7 @@ pub fn runTempIndexCommit(ctx: CommitContext) ![]const u8 {
     const arena = arena_state.allocator();
 
     // 1. Temp index seeded from HEAD.
-    var tmp = try seedTempIndex(ctx.allocator, ctx.env_map);
+    var tmp = try seedTempIndex(ctx.allocator);
     defer tmp.deinit();
 
     // 2. Stage target hunks into the temp index (text via patch, binary via

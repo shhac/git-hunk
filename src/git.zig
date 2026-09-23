@@ -139,13 +139,14 @@ pub const TempIndex = struct {
 };
 
 /// Build a temporary git index file path with a unique random suffix and
-/// return an env map (cloned from `parent_env`) that points GIT_INDEX_FILE at
-/// it. `prefix` becomes part of the filename for human-readable diagnostics.
+/// return an env map (cloned from the process environment) that points
+/// GIT_INDEX_FILE at it. `prefix` becomes part of the filename for
+/// human-readable diagnostics.
 ///
 /// The directory is `TMPDIR` when set, `/tmp` otherwise — the same rule the
 /// shell and mktemp use, so a caller that has isolated its temp directory
 /// (a sandbox, a parallel test run) keeps that isolation.
-pub fn createTempIndex(allocator: Allocator, parent_env: *const EnvMap, prefix: []const u8) !TempIndex {
+pub fn createTempIndex(allocator: Allocator, prefix: []const u8) !TempIndex {
     var random_bytes: [8]u8 = undefined;
     std.Io.random(types.getIo(), &random_bytes);
     const random_val = std.mem.readInt(u64, &random_bytes, .little);
@@ -153,7 +154,7 @@ pub fn createTempIndex(allocator: Allocator, parent_env: *const EnvMap, prefix: 
     const path_z = try std.fmt.allocPrintSentinel(allocator, "{s}/git-hunk-{s}idx.{x:0>16}", .{ tmp_dir, prefix, random_val }, 0);
     errdefer allocator.free(path_z);
 
-    var env_map = try parent_env.clone(allocator);
+    var env_map = try types.getEnvMap().clone(allocator);
     errdefer env_map.deinit();
     try env_map.put("GIT_INDEX_FILE", path_z);
     return .{ .env_map = env_map, .path_z = path_z, .allocator = allocator };

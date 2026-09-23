@@ -12,7 +12,6 @@ const LineSpec = types.LineSpec;
 const LineRange = types.LineRange;
 const Verbosity = types.Verbosity;
 const StashOptions = types.StashOptions;
-const EnvMap = std.process.Environ.Map;
 const rangesOverlap = types.rangesOverlap;
 
 const defaultIo = types.getIo;
@@ -312,7 +311,6 @@ pub fn buildTrackedStashTree(
     tracked_matched: []MatchedHunk,
     head_tree: []const u8,
     context: ?u32,
-    parent_env: *const EnvMap,
 ) !TrackedStashResult {
     // Sort and build INDEX_PATCHES (index-relative, for worktree reverse-apply)
     const index_patches = try patch_mod.sortAndBuildPatches(arena, tracked_matched, .reverse);
@@ -348,7 +346,7 @@ pub fn buildTrackedStashTree(
     @memcpy(head_matched_sorted, head_matched);
     const head_patches = try patch_mod.sortAndBuildPatches(arena, head_matched_sorted, .forward);
 
-    var tmp = try git.createTempIndex(allocator, parent_env, "");
+    var tmp = try git.createTempIndex(allocator, "");
     defer tmp.deinit();
 
     try git.runGitReadTree(allocator, head_tree, &tmp.env_map);
@@ -369,9 +367,8 @@ pub fn buildUntrackedCommit(
     branch_name: []const u8,
     head_msg: []const u8,
     untracked_matched: []const MatchedHunk,
-    parent_env: *const EnvMap,
 ) ![]const u8 {
-    var tmp = try git.createTempIndex(allocator, parent_env, "ut-");
+    var tmp = try git.createTempIndex(allocator, "ut-");
     defer tmp.deinit();
 
     // Hash each untracked file and add to temp index
@@ -441,9 +438,8 @@ pub fn addBinaryFilesToTree(
     allocator: Allocator,
     current_tree: []const u8,
     binary_paths: []const []const u8,
-    parent_env: *const EnvMap,
 ) ![]const u8 {
-    var tmp = try git.createTempIndex(allocator, parent_env, "bin-");
+    var tmp = try git.createTempIndex(allocator, "bin-");
     defer tmp.deinit();
 
     try git.runGitReadTree(allocator, current_tree, &tmp.env_map);

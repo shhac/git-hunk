@@ -923,7 +923,6 @@ fn buildStashTree(
     partition: patch_mod.HunkPartition,
     head_tree: []const u8,
     context: ?u32,
-    env_map: *const std.process.Environ.Map,
 ) !StashTreeBuild {
     var tree: []const u8 = head_tree;
     var index_patches: []const []const u8 = &.{};
@@ -932,13 +931,13 @@ fn buildStashTree(
 
     if (partition.tracked_text.len > 0) {
         const tracked_mut = try arena.dupe(MatchedHunk, partition.tracked_text);
-        const result = try stash_mod.buildTrackedStashTree(arena, allocator, tracked_mut, head_tree, context, env_map);
+        const result = try stash_mod.buildTrackedStashTree(arena, allocator, tracked_mut, head_tree, context);
         index_patches = result.index_patches;
         tree = result.stash_tree;
         owns = true;
     }
     if (partition.tracked_binary_paths.len > 0) {
-        const new_tree = try stash_mod.addBinaryFilesToTree(allocator, tree, partition.tracked_binary_paths, env_map);
+        const new_tree = try stash_mod.addBinaryFilesToTree(allocator, tree, partition.tracked_binary_paths);
         if (owns) allocator.free(tree);
         tree = new_tree;
         owns = true;
@@ -960,7 +959,7 @@ fn buildStashMessage(arena: Allocator, opts: StashOptions, matched: []const Matc
     return msg_buf.items;
 }
 
-pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions, env_map: *const std.process.Environ.Map) !void {
+pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions) !void {
     if (opts.pop) {
         try stash_mod.stashPop(allocator, opts.verbosity);
         return;
@@ -1003,7 +1002,7 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
     var head = try gatherHeadInfo(allocator);
     defer head.deinit(allocator);
 
-    const stash_build = try buildStashTree(arena, allocator, partition, head.tree, opts.context, env_map);
+    const stash_build = try buildStashTree(arena, allocator, partition, head.tree, opts.context);
     defer if (stash_build.owns_tree) allocator.free(stash_build.tree);
 
     // Index commit (parent 2): captures tracked changes tree
@@ -1014,7 +1013,7 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
     // Untracked hunks pipeline (parent 3)
     var untracked_commit: ?[]const u8 = null;
     if (has_untracked) {
-        untracked_commit = try stash_mod.buildUntrackedCommit(arena, allocator, head.sha, head.branch_name, head.msg, untracked_matched.items, env_map);
+        untracked_commit = try stash_mod.buildUntrackedCommit(arena, allocator, head.sha, head.branch_name, head.msg, untracked_matched.items);
     }
     defer if (untracked_commit) |uc| allocator.free(uc);
 
@@ -1040,7 +1039,7 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
     try stash_mod.reportStashResults(stdout, opts, matched.items);
 }
 
-pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptions, env_map: *const std.process.Environ.Map) !void {
+pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptions) !void {
     var arena_state = std.heap.ArenaAllocator.init(allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -1079,7 +1078,7 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
     // Dry-run: validate patches against what the commit would build on and show what would be committed.
     // Checked before the message requirement — a preview has nothing to write a message onto.
     if (opts.dry_run) {
-        checkTempIndexCommit(allocator, patches, opts.ref, env_map) catch |err| switch (err) {
+        checkTempIndexCommit(allocator, patches, opts.ref) catch |err| switch (err) {
             error.ReadTreeFailed => std.process.exit(1),
             else => return err,
         };
@@ -1102,7 +1101,6 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
         .amend = opts.amend,
         .three_way = opts.three_way,
         .ref = opts.ref,
-        .env_map = env_map,
     }) catch |err| switch (err) {
         // git's own stderr has already been shown; exit without extra noise.
         error.ReadTreeFailed, error.CommitFailed, error.AddFailed => std.process.exit(1),
