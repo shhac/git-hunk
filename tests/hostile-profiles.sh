@@ -2,7 +2,8 @@
 # Hostile git-config profiles, sourced by run-hostile.sh.
 #
 # Each profile names git configuration that changes what `git diff` writes, or
-# how it writes it, without changing what actually differs. Running the whole
+# how it writes it, or which defaults a new repository gets (object format, ref
+# backend), without changing what actually differs. Running the whole
 # suite under one of these catches the case where git-hunk works by accident on
 # a default machine. `diff.context` is deliberately absent: it is documented as
 # honoured, so it legitimately changes hunk boundaries.
@@ -20,6 +21,7 @@ HOSTILE_PROFILES=(
     algorithm
     quotepath
     pager
+    git3-defaults
 )
 
 # `diff.external` and GIT_EXTERNAL_DIFF both hand the diff to another program
@@ -113,4 +115,28 @@ profile_pager() {
 [diff]
 	orderFile = $2/orderfile
 EOF
+}
+
+# Git 3.0's defaults for new repositories: SHA-256 object IDs, the reftable ref
+# backend, `main` as the first branch, and no implicit bare-repo discovery.
+# Every repo the suite creates takes these on, so a SHA-1 constant or direct
+# `.git/refs` access fails here. The environment variables reach older git than
+# the equivalent config keys; the probe refuses a git that silently ignores
+# them, since the profile would then match the baseline vacuously.
+profile_git3_defaults() {
+    cat >> "$1" <<'EOF'
+[init]
+	defaultBranch = main
+[safe]
+	bareRepository = explicit
+EOF
+    export GIT_DEFAULT_HASH=sha256
+    export GIT_DEFAULT_REF_FORMAT=reftable
+    git init -q "$2/probe"
+    local formats
+    formats="$(git -C "$2/probe" rev-parse --show-object-format --show-ref-format | tr '\n' ' ')"
+    if [[ "$formats" != "sha256 reftable " ]]; then
+        echo "git3-defaults: $(git --version) ignores GIT_DEFAULT_HASH/GIT_DEFAULT_REF_FORMAT (got: $formats)" >&2
+        return 1
+    fi
 }
