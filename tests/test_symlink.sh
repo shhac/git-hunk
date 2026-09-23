@@ -365,4 +365,24 @@ echo "$STAGED874" | grep -q "target874.txt" \
     || fail "test 874: target874.txt should be staged"
 pass "test 874: typechange alongside normal changes"
 
+# ============================================================================
+# Test 875: --dry-run agrees with the real operation for typechanges. A
+# typechange is a delete and a create on one path; checking each half against
+# the untouched target made the create half fail with "already exists".
+# ============================================================================
+new_repo
+rm beta.txt && ln -s alpha.txt beta.txt
+rm gamma.txt && ln -s alpha.txt gamma.txt
+"$GIT_HUNK" add --all --dry-run > /dev/null 2>&1 \
+    || fail "test 875: add --dry-run of two typechanges should pass"
+"$GIT_HUNK" add --all > /dev/null
+"$GIT_HUNK" reset --all --dry-run > /dev/null 2>&1 \
+    || fail "test 875: reset --dry-run of two typechanges should pass"
+"$GIT_HUNK" reset --all > /dev/null
+"$GIT_HUNK" restore --all --force --dry-run > /dev/null 2>&1 \
+    || fail "test 875: restore --dry-run of two typechanges should pass"
+[[ -L beta.txt && -L gamma.txt ]] \
+    || fail "test 875: dry runs changed the worktree"
+pass "test 875: add/reset/restore --dry-run accept typechanges"
+
 report_results

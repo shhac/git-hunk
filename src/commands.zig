@@ -463,12 +463,7 @@ fn dryRunApplyHunks(
     const reverse = action == .unstage;
     if (text_matched.len > 0) {
         const patches = try patch_mod.sortAndBuildPatches(arena, text_matched, if (reverse) .reverse else .forward);
-        // `--check` tests every patch against the untouched index, so order
-        // only decides which failure is reported first. Staging reports from
-        // the last patch back, the reverse of the order it applies in.
-        const check_order = try arena.dupe([]const u8, patches);
-        if (action == .stage) std.mem.reverse([]const u8, check_order);
-        _ = try git.applyPatches(allocator, check_order, .{
+        _ = try git.applyPatches(allocator, patches, .{
             .reverse = reverse,
             .target = .index,
             .check_only = true,

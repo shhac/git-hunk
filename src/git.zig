@@ -263,6 +263,20 @@ pub const ApplyResult = enum { applied_clean, applied_with_conflicts };
 /// Apply `patches` one after another under the same options, stopping at the
 /// first that fails. Reports conflicts if any patch landed with them.
 pub fn applyPatches(allocator: Allocator, patches: []const []const u8, opts: ApplyOptions) !ApplyResult {
+    if (patches.len == 0) return .applied_clean;
+    // `--check` never writes, so checking patches one at a time tests each
+    // against the untouched target, and a typechange's create half fails on
+    // the path its delete half would have freed. One invocation checks them
+    // as a sequence instead. `--reverse` reverses that sequence itself, so it
+    // is handed the forward order the patches were built in.
+    if (opts.check_only) {
+        const ordered = try allocator.dupe([]const u8, patches);
+        defer allocator.free(ordered);
+        if (opts.reverse) std.mem.reverse([]const u8, ordered);
+        const combined = try std.mem.concat(allocator, u8, ordered);
+        defer allocator.free(combined);
+        return runGitApply(allocator, combined, opts);
+    }
     var result: ApplyResult = .applied_clean;
     for (patches) |patch| {
         if (try runGitApply(allocator, patch, opts) == .applied_with_conflicts) result = .applied_with_conflicts;
