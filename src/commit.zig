@@ -80,9 +80,30 @@ pub const CommitContext = struct {
     env_map: *const std.process.Environ.Map,
 };
 
+/// A throwaway index holding HEAD's tree: the base every commit is built on.
+/// That holds for --amend too, since the hunks are relative to HEAD and the
+/// amended commit must keep everything HEAD already changed.
+fn seedTempIndex(allocator: Allocator, env_map: *const std.process.Environ.Map) !git.TempIndex {
+    var tmp = try git.createTempIndex(allocator, env_map, "commit-");
+    errdefer tmp.deinit();
+    try git.runGitReadTree(allocator, "HEAD", &tmp.env_map);
+    return tmp;
+}
+
+/// The dry-run twin of `runTempIndexCommit`: check the patches against the
+/// same HEAD-seeded index the real commit builds on, so a preview can never
+/// pass where the commit then fails. `--3way` is not passed: git rejects it
+/// alongside `--check`.
+pub fn checkTempIndexCommit(allocator: Allocator, patches: []const []const u8, ref: ?[]const u8, env_map: *const std.process.Environ.Map) !void {
+    var tmp = try seedTempIndex(allocator, env_map);
+    defer tmp.deinit();
+    for (patches) |p| {
+        _ = try git.runGitApply(allocator, p, .{ .target = .index, .check_only = true, .ref = ref, .env_map = &tmp.env_map });
+    }
+}
+
 /// Commit the target hunks through a throwaway GIT_INDEX_FILE index: build
-/// HEAD (or HEAD~1 for --amend) in a temp index, stage only the target
-/// hunks there, and run `git commit` against it. The user's real index is
+/// HEAD in a temp index, stage only the target hunks there, and run `git commit` against it. The user's real index is
 /// never rewritten, so an abort at any point leaves their staged work
 /// untouched (at worst a stray temp file in /tmp). Hooks run normally and
 /// see exactly the content being committed via the inherited
@@ -94,11 +115,9 @@ pub fn runTempIndexCommit(ctx: CommitContext) ![]const u8 {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    // 1. Temp index seeded from HEAD (or HEAD~1 for amend).
-    var tmp = try git.createTempIndex(ctx.allocator, ctx.env_map, "commit-");
+    // 1. Temp index seeded from HEAD.
+    var tmp = try seedTempIndex(ctx.allocator, ctx.env_map);
     defer tmp.deinit();
-    const read_tree_ref: []const u8 = if (ctx.amend) "HEAD~1" else "HEAD";
-    try git.runGitReadTree(ctx.allocator, read_tree_ref, &tmp.env_map);
 
     // 2. Stage target hunks into the temp index (text via patch, binary via
     // git add). A --3way conflict would leave unmerged temp-index entries

@@ -529,4 +529,27 @@ echo "$STATUS1115" | grep -q "hookfix.txt" \
     && fail "test 1115: hook path not clean after commit, got: '$STATUS1115'"
 pass "test 1115: spaced-path commit stays clean through hook cleanup"
 
+# ============================================================================
+# Test 1116: --dry-run agrees with the real commit. The S2 overlap (a staged
+# edit next to the unstaged hunk) fails the real commit, which builds on HEAD;
+# a dry run that checked against the real index would wrongly pass.
+# ============================================================================
+new_repo
+sed -i.bak '5s/.*/staged five s2/' alpha.txt
+git add alpha.txt
+sed -i.bak '6s/.*/unstaged six s2/' alpha.txt
+STAGED1116="$(git diff --cached)"
+SHA1116="$(first_sha --oneline --file alpha.txt)"
+[[ -n "$SHA1116" ]] || fail "test 1116: no unstaged hunk found"
+EC1116_DRY=0
+"$GIT_HUNK" commit "$SHA1116" --dry-run > /dev/null 2>&1 || EC1116_DRY=$?
+EC1116_REAL=0
+"$GIT_HUNK" commit "$SHA1116" -m "s2 overlap" > /dev/null 2>&1 || EC1116_REAL=$?
+[[ "$EC1116_REAL" -ne 0 ]] || fail "test 1116: fixture broken, the real commit should fail"
+[[ "$EC1116_DRY" -eq "$EC1116_REAL" ]] \
+    || fail "test 1116: dry-run exit $EC1116_DRY disagrees with real commit exit $EC1116_REAL"
+[[ "$(git diff --cached)" == "$STAGED1116" ]] \
+    || fail "test 1116: staged diff changed"
+pass "test 1116: commit --dry-run fails exactly when the real commit does"
+
 report_results

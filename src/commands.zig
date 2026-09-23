@@ -30,6 +30,7 @@ const printResultGroupHuman = result_groups_mod.printResultGroupHuman;
 const printResultGroupPorcelain = result_groups_mod.printResultGroupPorcelain;
 const legacyRecoverIndexBackup = commit_mod.legacyRecoverIndexBackup;
 const runTempIndexCommit = commit_mod.runTempIndexCommit;
+const checkTempIndexCommit = commit_mod.checkTempIndexCommit;
 const printCommitResults = commit_mod.printCommitResults;
 
 /// Get diff output including untracked files (unstaged mode only).
@@ -1074,13 +1075,13 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
         std.process.exit(1);
     }
 
-    // Dry-run: validate patches against the index (without modifying it) and show what would be committed.
+    // Dry-run: validate patches against what the commit would build on and show what would be committed.
     // Checked before the message requirement — a preview has nothing to write a message onto.
     if (opts.dry_run) {
-        for (patches) |p| {
-            // git apply rejects --3way + --check; we pass plain --check for dry-run.
-            _ = try git.runGitApply(allocator, p, .{ .target = .index, .check_only = true, .ref = opts.ref });
-        }
+        checkTempIndexCommit(allocator, patches, opts.ref, env_map) catch |err| switch (err) {
+            error.ReadTreeFailed => std.process.exit(1),
+            else => return err,
+        };
         const use_color = format.shouldUseColor(opts.output, opts.no_color);
         _ = try format.printMatchedHunks(stdout, matched.items, "would commit", "would-commit", use_color, opts.output, opts.verbosity);
         return;

@@ -91,7 +91,15 @@ COMMIT_COUNT_AFTER="$(git rev-list --count HEAD)"
     || fail "test 1004: commit count should not increase with --amend (before=$COMMIT_COUNT_BEFORE, after=$COMMIT_COUNT_AFTER)"
 git log --oneline -1 | grep -q "amended commit" \
     || fail "test 1004: amended commit message not found"
-pass "test 1004: commit --amend does not increase commit count"
+# The amended commit keeps what the original commit changed: the new hunk is
+# relative to HEAD, so it lands on top of HEAD's tree, not HEAD~1's.
+[[ "$(git show HEAD:alpha.txt | head -1)" == "Changed alpha." ]] \
+    || fail "test 1004: amend dropped the original commit's alpha.txt change"
+[[ "$(git show HEAD:beta.txt | head -1)" == "Changed beta." ]] \
+    || fail "test 1004: amend did not include the beta.txt hunk"
+git diff --cached --quiet \
+    || fail "test 1004: index should match the amended HEAD, got: '$(git diff --cached --stat)'"
+pass "test 1004: commit --amend rewrites HEAD in place, keeping its changes"
 
 # ============================================================================
 # Test 1005: commit --dry-run does not modify state
@@ -392,5 +400,26 @@ if "$GIT_HUNK" commit "$SHA1021" > /dev/null 2>&1; then
     fail "test 1021: commit without -m should fail"
 fi
 pass "test 1021: commit without -m still errors when not a dry run"
+
+# ============================================================================
+# Test 1022: commit --amend works on a root commit, like `git commit --amend`
+# ============================================================================
+ROOT1022=$(mktemp -d)
+cd "$ROOT1022"
+git init -q
+git config user.email t@t.test
+git config user.name t
+echo "one" > root.txt
+git add root.txt && git commit -q -m "root"
+echo "two" >> root.txt
+SHA1022="$(first_sha --oneline)"
+"$GIT_HUNK" commit "$SHA1022" --amend -m "amended root" > /dev/null 2>&1 \
+    || fail "test 1022: commit --amend on a root commit should succeed"
+[[ "$(git rev-list --count HEAD)" -eq 1 ]] \
+    || fail "test 1022: amended root should still be the only commit"
+[[ "$(git show HEAD:root.txt)" == $'one\ntwo' ]] \
+    || fail "test 1022: amended root content wrong: '$(git show HEAD:root.txt)'"
+pass "test 1022: commit --amend on a root commit"
+cd /tmp && rm -rf "$ROOT1022"
 
 report_results
