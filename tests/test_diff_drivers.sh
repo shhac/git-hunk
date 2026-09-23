@@ -137,7 +137,7 @@ pass "test 1507: textconv does not alter diff output"
 # ============================================================================
 # Test 1508: hunks from a textconv path still apply
 # ============================================================================
-SHA1508="$("$GIT_HUNK" list --porcelain --file driver.txt 2>/dev/null | head -1 | cut -f1)"
+SHA1508="$(first_sha --file driver.txt)"
 [[ -n "$SHA1508" ]] || fail "test 1508: no hunk listed for a textconv path"
 "$GIT_HUNK" add "$SHA1508" > /dev/null 2>&1 \
     || fail "test 1508: add failed for a hunk on a textconv path"
@@ -154,7 +154,7 @@ pass "test 1508: textconv hunks stage the real blob content"
 # ============================================================================
 setup_driver_repo
 install_textconv
-SHA1509="$("$GIT_HUNK" list --porcelain --file driver.txt 2>/dev/null | head -1 | cut -f1)"
+SHA1509="$(first_sha --file driver.txt)"
 "$GIT_HUNK" restore "$SHA1509" > /dev/null 2>&1 \
     || fail "test 1509: restore failed on a textconv path"
 [[ "$(cat driver.txt)" == "$(printf 'l%s\n' 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 SEVENTEEN 20)" ]] \
@@ -165,7 +165,7 @@ pass "test 1509: restore under textconv writes real bytes"
 # Test 1510: commit under an external diff driver
 # ============================================================================
 setup_driver_repo
-SHA1510="$("$GIT_HUNK" list --porcelain --file driver.txt 2>/dev/null | head -1 | cut -f1)"
+SHA1510="$(first_sha --file driver.txt)"
 git config diff.external "$TRUE_BIN"
 GIT_EXTERNAL_DIFF="$TRUE_BIN" "$GIT_HUNK" commit "$SHA1510" -m "hostile driver commit" > /dev/null 2>&1 \
     || fail "test 1510: commit failed under external diff drivers"

@@ -7,7 +7,7 @@ source "$(dirname "$0")/harness.sh" "$1"
 new_repo
 sed -i.bak '1s/.*/Modified first line./' alpha.txt
 
-SHA="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA="$(first_sha --oneline --file alpha.txt)"
 "$GIT_HUNK" add "$SHA" > /dev/null
 STAGED="$(git diff --cached alpha.txt | wc -l | tr -d ' ')"
 [[ "$STAGED" -gt 0 ]] || fail "test 200: hunk was not staged"
@@ -47,7 +47,7 @@ pass "test 202: --all stages all hunks"
 new_repo
 sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
-SHA="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA="$(first_sha --oneline --file alpha.txt)"
 ADD_OUT="$("$GIT_HUNK" add --no-color "$SHA")"
 echo "$ADD_OUT" | grep -qE '^staged [a-f0-9]{7} → [a-f0-9]{7}  alpha\.txt$' \
     || fail "test 203: output didn't match expected format, got: '$ADD_OUT'"
@@ -71,12 +71,12 @@ pass "test 204: reset output format (unstaged X -> Y  file)"
 # ============================================================================
 new_repo
 sed -i.bak '1s/.*/Change A./' alpha.txt
-SHA_A="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA_A="$(first_sha --oneline --file alpha.txt)"
 "$GIT_HUNK" add --no-color "$SHA_A" > /dev/null
 
 # Modify same area again to create overlap
 sed -i.bak '1s/.*/Change B./' alpha.txt
-SHA_B="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA_B="$(first_sha --oneline --file alpha.txt)"
 MERGE_OUT="$("$GIT_HUNK" add --no-color "$SHA_B")"
 echo "$MERGE_OUT" | grep -qE '^staged [a-f0-9]{7} \+[a-f0-9]{7} → [a-f0-9]{7}  alpha\.txt$' \
     || fail "test 205: merge output didn't show consumed hash, got: '$MERGE_OUT'"
@@ -88,7 +88,7 @@ pass "test 205: overlap/merge shows consumed hash"
 new_repo
 sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
-SHA="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA="$(first_sha --oneline --file alpha.txt)"
 PORC_OUT="$("$GIT_HUNK" add --porcelain "$SHA")"
 PORC_VERB="$(echo "$PORC_OUT" | cut -f1)"
 PORC_APPLIED="$(echo "$PORC_OUT" | cut -f2)"
@@ -108,7 +108,7 @@ sed -i.bak '1s/.*/Change A./' alpha.txt
 "$GIT_HUNK" add --all > /dev/null 2>/dev/null
 
 sed -i.bak '1s/.*/Change B./' alpha.txt
-SHA="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA="$(first_sha --oneline --file alpha.txt)"
 PORC_MERGE="$("$GIT_HUNK" add --porcelain "$SHA")"
 FIELD_COUNT="$(echo "$PORC_MERGE" | awk -F'\t' '{print NF}')"
 [[ "$FIELD_COUNT" -eq 5 ]] || fail "test 207: expected 5 tab fields for merge, got $FIELD_COUNT in: '$PORC_MERGE'"
@@ -124,7 +124,7 @@ sed -i.bak '1s/.*/Change A./' alpha.txt
 "$GIT_HUNK" add --all > /dev/null 2>/dev/null
 
 sed -i.bak '1s/.*/Change B./' alpha.txt
-SHA="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA="$(first_sha --oneline --file alpha.txt)"
 STDERR208="$("$GIT_HUNK" add --verbose --no-color "$SHA" 2>&1 >/dev/null)"
 echo "$STDERR208" | grep -qE '\(.*merged\)' \
     || fail "test 208: summary stderr didn't show merged count, got: '$STDERR208'"
@@ -154,7 +154,7 @@ pass "test 209: batch add produces per-file output"
 new_repo
 sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
-SHA="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA="$(first_sha --oneline --file alpha.txt)"
 ARROW_OUT="$("$GIT_HUNK" add --no-color "$SHA")"
 echo "$ARROW_OUT" | grep -q '→' \
     || fail "test 210: arrow missing from output, got: '$ARROW_OUT'"
@@ -280,7 +280,7 @@ pass "test 214: --all stages tracked changes and untracked files"
 new_repo
 echo "new file content line 1" > untracked.txt
 
-SHA215="$("$GIT_HUNK" list --porcelain --oneline --file untracked.txt | head -1 | cut -f1)"
+SHA215="$(first_sha --oneline --file untracked.txt)"
 [[ -n "$SHA215" ]] || fail "test 215: no untracked hunk found"
 "$GIT_HUNK" add "$SHA215" > /dev/null
 STAGED215="$(git diff --cached --name-only)"
@@ -293,7 +293,7 @@ pass "test 215: add stages untracked file"
 new_repo
 echo "new file content line 1" > untracked.txt
 
-SHA216="$("$GIT_HUNK" list --porcelain --oneline --file untracked.txt | head -1 | cut -f1)"
+SHA216="$(first_sha --oneline --file untracked.txt)"
 "$GIT_HUNK" add "$SHA216" > /dev/null 2>/dev/null
 STAGED_SHA216="$("$GIT_HUNK" list --staged --porcelain --oneline --file untracked.txt | head -1 | cut -f1)"
 [[ -n "$STAGED_SHA216" ]] || fail "test 216: no staged hunk found after add"
@@ -347,7 +347,7 @@ sed -i.bak 's/line 3 original/line 3 changed/' linespec.txt
 sed -i.bak 's/line 5 original/line 5 changed/' linespec.txt
 sed -i.bak 's/line 8 original/line 8 changed/' linespec.txt
 
-SHA219="$("$GIT_HUNK" list --porcelain --oneline --file linespec.txt | head -1 | cut -f1)"
+SHA219="$(first_sha --oneline --file linespec.txt)"
 [[ -n "$SHA219" ]] || fail "test 219: no hunk found"
 "$GIT_HUNK" add --no-color "${SHA219}:3-4" > /dev/null
 
@@ -386,7 +386,7 @@ sed -i.bak 's/line 3 original/line 3 changed/' linespec.txt
 sed -i.bak 's/line 5 original/line 5 changed/' linespec.txt
 sed -i.bak 's/line 8 original/line 8 changed/' linespec.txt
 
-SHA220="$("$GIT_HUNK" list --porcelain --oneline --file linespec.txt | head -1 | cut -f1)"
+SHA220="$(first_sha --oneline --file linespec.txt)"
 [[ -n "$SHA220" ]] || fail "test 220: no hunk found"
 "$GIT_HUNK" add --no-color "${SHA220}:3-7" > /dev/null
 
@@ -473,7 +473,7 @@ sed -i.bak 's/line 3 original/line 3 changed/' linespec.txt
 sed -i.bak 's/line 5 original/line 5 changed/' linespec.txt
 sed -i.bak 's/line 8 original/line 8 changed/' linespec.txt
 
-SHA222="$("$GIT_HUNK" list --porcelain --oneline --file linespec.txt | head -1 | cut -f1)"
+SHA222="$(first_sha --oneline --file linespec.txt)"
 [[ -n "$SHA222" ]] || fail "test 222: no hunk found"
 PORC222="$("$GIT_HUNK" add --porcelain "${SHA222}:3-4")"
 VERB222="$(echo "$PORC222" | cut -f1)"
@@ -495,7 +495,7 @@ pass "test 222: add --porcelain includes line spec suffix in applied field"
 # ============================================================================
 new_repo
 sed -i.bak '1s/.*/First change./' alpha.txt
-SHA223="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA223="$(first_sha --oneline --file alpha.txt)"
 [[ -n "$SHA223" ]] || fail "test 223: no hunk found before staleness"
 
 # Overwrite the change so SHA223 no longer matches the diff
@@ -530,7 +530,7 @@ new_repo
 sed -i.bak '1s/.*/Round-trip test./' alpha.txt
 cp alpha.txt alpha.txt.orig
 
-SHA225="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA225="$(first_sha --oneline --file alpha.txt)"
 [[ -n "$SHA225" ]] || fail "test 225: no hunk found"
 "$GIT_HUNK" add "$SHA225" > /dev/null
 SHA225_STAGED="$("$GIT_HUNK" list --staged --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
@@ -548,7 +548,7 @@ pass "test 225: add+reset roundtrip leaves worktree byte-exact"
 new_repo
 sed -i.bak '1s/.*/Idempotency test./' alpha.txt
 
-SHA226="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA226="$(first_sha --oneline --file alpha.txt)"
 [[ -n "$SHA226" ]] || fail "test 226: no hunk found"
 "$GIT_HUNK" add "$SHA226" > /dev/null
 
@@ -667,7 +667,7 @@ ERR232_DIR=$("$GIT_HUNK" add nested 2>&1 >/dev/null || true)
 echo "$ERR232_DIR" | grep -q "looks like a path, not a hunk hash" \
     || fail "test 232e: expected path-vs-hash hint for directory, got: '$ERR232_DIR'"
 
-SHA232_HASH_NAME="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA232_HASH_NAME="$(first_sha --oneline --file alpha.txt)"
 [[ -n "$SHA232_HASH_NAME" ]] || fail "test 232f: no alpha hunk found"
 touch "$SHA232_HASH_NAME"
 git add "$SHA232_HASH_NAME" && git commit -q -m "add hash-named file"
@@ -802,7 +802,7 @@ pass "test 237: reset sha:N works at default context"
 # ============================================================================
 new_repo
 sed -i.bak '1s/.*/Changed alpha./' alpha.txt
-SHA238="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA238="$(first_sha --oneline --file alpha.txt)"
 [[ -n "$SHA238" ]] || fail "test 238: no hunk found"
 
 OUT238="$("$GIT_HUNK" add --dry-run --no-color "$SHA238")" \
@@ -843,7 +843,7 @@ keep-B
 ADD-3
 keep-C
 DRY_EOF
-SHA240="$("$GIT_HUNK" list --porcelain --oneline --file dryspec.txt | head -1 | cut -f1)"
+SHA240="$(first_sha --oneline --file dryspec.txt)"
 OUT240="$("$GIT_HUNK" add --dry-run --no-color "${SHA240}:2,5")"
 echo "$OUT240" | grep -qE "^would stage ${SHA240}:2,5  dryspec\.txt$" \
     || fail "test 240: expected line spec echoed in dry-run output, got: '$OUT240'"
@@ -953,7 +953,7 @@ pass "test 245: --files-from errors cleanly on a missing file"
 new_repo
 sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 sed -i.bak '1s/.*/Changed beta./' beta.txt
-SHA246="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA246="$(first_sha --oneline --file alpha.txt)"
 [[ -n "$SHA246" ]] || fail "test 246: no hunk found"
 
 ERR246="$("$GIT_HUNK" add "$SHA246" --file beta.txt --no-color 2>&1 || true)"

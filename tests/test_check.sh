@@ -58,7 +58,7 @@ pass "test 303: check --exclusive with extra hunks exits 1"
 new_repo
 sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
-SHA304="$("$GIT_HUNK" list --porcelain --oneline | head -1 | cut -f1)"
+SHA304="$(first_sha --oneline)"
 if PORC304="$("$GIT_HUNK" check --porcelain "$SHA304" "deadbeef" 2>/dev/null)"; then
     fail "test 304: expected exit 1"
 fi
@@ -72,7 +72,7 @@ pass "test 304: check --porcelain reports all entries"
 new_repo
 sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
-SHA305="$("$GIT_HUNK" list --porcelain --oneline | head -1 | cut -f1)"
+SHA305="$(first_sha --oneline)"
 if "$GIT_HUNK" check "${SHA305}:1-3" > /dev/null 2>/dev/null; then
     fail "test 305: expected exit 1 for line spec"
 fi
@@ -84,7 +84,7 @@ pass "test 305: check rejects line specs"
 new_repo
 sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
-SHA306="$("$GIT_HUNK" list --porcelain --oneline | head -1 | cut -f1)"
+SHA306="$(first_sha --oneline)"
 "$GIT_HUNK" add "$SHA306" > /dev/null 2>/dev/null
 STAGED_SHA306="$("$GIT_HUNK" list --staged --porcelain --oneline | head -1 | cut -f1)"
 "$GIT_HUNK" check --staged "$STAGED_SHA306"
@@ -117,7 +117,7 @@ fi
 new_repo
 echo "untracked content" > untracked.txt
 
-SHA308="$("$GIT_HUNK" list --porcelain --oneline --file untracked.txt | head -1 | cut -f1)"
+SHA308="$(first_sha --oneline --file untracked.txt)"
 [[ -n "$SHA308" ]] || fail "test 308: no untracked hunk found"
 "$GIT_HUNK" check "$SHA308" 2>/dev/null
 [[ $? -eq 0 ]] || fail "test 308: check should exit 0 for valid untracked hash"
@@ -157,7 +157,7 @@ new_repo
 sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 sed -i.bak '1s/.*/Changed beta./' beta.txt
 sed -i.bak '1s/.*/Changed gamma./' gamma.txt
-SHA311_B="$("$GIT_HUNK" list --porcelain --oneline --file beta.txt | head -1 | cut -f1)"
+SHA311_B="$(first_sha --oneline --file beta.txt)"
 [[ -n "$SHA311_B" ]] || fail "test 311: beta hash not found"
 # Beta is excluded by --file a --file c, so its SHA should appear stale
 if "$GIT_HUNK" check --file alpha.txt --file gamma.txt "$SHA311_B" 2>/dev/null; then

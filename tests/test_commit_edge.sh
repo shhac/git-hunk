@@ -21,7 +21,7 @@ sed -i.bak '6s/.*/unstaged six s2/' alpha.txt
 STAGED1100="$(git diff --cached)"
 HEAD1100="$(git rev-parse HEAD)"
 WT1100="$(cat alpha.txt)"
-SHA1100="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA1100="$(first_sha --oneline --file alpha.txt)"
 [[ -n "$SHA1100" ]] || fail "test 1100: no unstaged hunk found"
 EC1100=0
 ERR1100="$("$GIT_HUNK" commit "$SHA1100" -m "s2 overlap" 2>&1)" || EC1100=$?
@@ -53,7 +53,7 @@ sed -i.bak '6s/.*/unstaged six s2b/' alpha.txt
 STAGED1101="$(git diff --cached)"
 HEAD1101="$(git rev-parse HEAD)"
 WT1101="$(cat alpha.txt)"
-SHA1101="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA1101="$(first_sha --oneline --file alpha.txt)"
 [[ -n "$SHA1101" ]] || fail "test 1101: no unstaged hunk found"
 EC1101=0
 ERR1101="$("$GIT_HUNK" commit --3way "$SHA1101" -m "s2b overlap 3way" 2>&1)" || EC1101=$?
@@ -82,7 +82,7 @@ printf 'recreated line one\nrecreated line two\n' > alpha.txt
 
 STAGED1102="$(git diff --cached)"
 HEAD1102="$(git rev-parse HEAD)"
-SHA1102="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA1102="$(first_sha --oneline --file alpha.txt)"
 [[ -n "$SHA1102" ]] || fail "test 1102: no recreation hunk found"
 EC1102=0
 ERR1102="$("$GIT_HUNK" commit "$SHA1102" -m "s5 recreate" 2>&1)" || EC1102=$?
@@ -114,7 +114,7 @@ rm alpha.txt
 
 STAGED1103="$(git diff --cached)"
 HEAD1103="$(git rev-parse HEAD)"
-SHA1103="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA1103="$(first_sha --oneline --file alpha.txt)"
 [[ -n "$SHA1103" ]] || fail "test 1103: no deletion hunk found"
 EC1103=0
 ERR1103="$("$GIT_HUNK" commit "$SHA1103" -m "s6 delete" 2>&1)" || EC1103=$?
@@ -147,7 +147,7 @@ sed -i.bak '7s/.*/unstaged seven s8/' alpha.txt
 
 STAGED1104="$(git diff --cached)"
 HEAD1104="$(git rev-parse HEAD)"
-SHA1104="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA1104="$(first_sha --oneline --file alpha.txt)"
 [[ -n "$SHA1104" ]] || fail "test 1104: no unstaged hunk found (S8)"
 EC1104=0
 "$GIT_HUNK" commit "$SHA1104" -m "s8 near" > /dev/null 2>&1 || EC1104=$?
@@ -167,7 +167,7 @@ git add alpha.txt
 sed -i.bak '25s/.*/unstaged twentyfive s8b/' alpha.txt
 
 COMMITS1104B="$(git rev-list --count HEAD)"
-SHA1104B="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA1104B="$(first_sha --oneline --file alpha.txt)"
 [[ -n "$SHA1104B" ]] || fail "test 1104: no unstaged hunk found (S8b)"
 "$GIT_HUNK" commit "$SHA1104B" -m "s8b far" > /dev/null 2>&1 \
     || fail "test 1104: S8b far-apart commit should succeed"
@@ -199,7 +199,7 @@ printf 'staged s9\n' > staged1105.txt
 git add staged1105.txt              # user-staged addition: must survive
 git rm -q beta.txt                  # user-staged deletion: must survive
 
-SHA1105="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA1105="$(first_sha --oneline --file alpha.txt)"
 [[ -n "$SHA1105" ]] || fail "test 1105: no unstaged hunk found"
 "$GIT_HUNK" commit "$SHA1105" -m "s9 hook add" > /dev/null 2>&1 \
     || fail "test 1105: commit with file-adding hook should succeed"
@@ -247,7 +247,7 @@ sed -i.bak '15s/.*/unstaged alpha 1106/' alpha.txt
 
 STAGED1106="$(git diff --cached)"
 HEAD1106="$(git rev-parse HEAD)"
-SHA1106="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA1106="$(first_sha --oneline --file alpha.txt)"
 echo 0 > "$SHIM_COUNT"
 EC1106=0
 PATH="$SHIM_DIR:$PATH" GIT_HUNK_SHIM_FAIL=read-tree GIT_HUNK_SHIM_FAIL_ON=1 GIT_HUNK_SHIM_COUNT_FILE="$SHIM_COUNT" \
@@ -273,7 +273,7 @@ sed -i.bak '15s/.*/unstaged alpha 1107/' alpha.txt
 
 STAGED1107="$(git diff --cached)"
 HEAD1107="$(git rev-parse HEAD)"
-SHA1107="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA1107="$(first_sha --oneline --file alpha.txt)"
 echo 0 > "$SHIM_COUNT"
 EC1107=0
 PATH="$SHIM_DIR:$PATH" GIT_HUNK_SHIM_FAIL=apply GIT_HUNK_SHIM_FAIL_ON=1 GIT_HUNK_SHIM_COUNT_FILE="$SHIM_COUNT" \
@@ -299,7 +299,7 @@ sed -i.bak '15s/.*/unstaged alpha 1108/' alpha.txt
 
 STAGED1108="$(git diff --cached)"
 HEAD1108="$(git rev-parse HEAD)"
-SHA1108="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA1108="$(first_sha --oneline --file alpha.txt)"
 echo 0 > "$SHIM_COUNT"
 EC1108=0
 PATH="$SHIM_DIR:$PATH" GIT_HUNK_SHIM_FAIL=commit GIT_HUNK_SHIM_FAIL_ON=1 GIT_HUNK_SHIM_COUNT_FILE="$SHIM_COUNT" \
@@ -321,7 +321,7 @@ sed -i.bak '15s/.*/unstaged alpha 1108b/' alpha.txt
 
 STAGED1108B="$(git diff --cached)"
 HEAD1108B="$(git rev-parse HEAD)"
-SHA1108B="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA1108B="$(first_sha --oneline --file alpha.txt)"
 echo 0 > "$SHIM_COUNT"
 EC1108B=0
 PATH="$SHIM_DIR:$PATH" GIT_HUNK_SHIM_FAIL=commit GIT_HUNK_SHIM_FAIL_ON=1 GIT_HUNK_SHIM_COUNT_FILE="$SHIM_COUNT" \
@@ -348,7 +348,7 @@ git add beta.txt
 sed -i.bak '15s/.*/unstaged alpha 1109/' alpha.txt
 
 COMMITS1109="$(git rev-list --count HEAD)"
-SHA1109="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA1109="$(first_sha --oneline --file alpha.txt)"
 echo 0 > "$SHIM_COUNT"
 EC1109=0
 ERR1109="$(PATH="$SHIM_DIR:$PATH" GIT_HUNK_SHIM_FAIL=apply GIT_HUNK_SHIM_FAIL_ON=2 GIT_HUNK_SHIM_COUNT_FILE="$SHIM_COUNT" \
@@ -378,7 +378,7 @@ printf 'crash staged\n' > beta.txt
 git add beta.txt
 sed -i.bak '1s/.*/crash worktree change/' alpha.txt && rm alpha.txt.bak
 STAGED1110="$(git diff --cached)"
-SHA1110="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA1110="$(first_sha --oneline --file alpha.txt)"
 COMMITS1110="$(git rev-list --count HEAD)"
 
 KILLSHIM="$(mktemp -d)"
@@ -422,7 +422,7 @@ printf 'staged bin1111\n' > staged1111.txt
 git add staged1111.txt                 # user-staged addition: must survive
 printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\xff' > image.png
 STAGED1111="$(git diff --cached)"
-SHA1111="$("$GIT_HUNK" list --porcelain --oneline --file image.png | head -1 | cut -f1)"
+SHA1111="$(first_sha --oneline --file image.png)"
 "$GIT_HUNK" commit "$SHA1111" -m "binary invariants" >/dev/null 2>&1 \
     || fail "test 1111: binary commit failed"
 git show --name-only --pretty=format: HEAD | grep -q "^image.png$" \
@@ -447,7 +447,7 @@ printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00' > image.png
 git add image.png && git commit -q -m "add binary"
 printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\xff' > image.png
 COMMITS1112="$(git rev-list --count HEAD)"
-SHA1112="$("$GIT_HUNK" list --porcelain --oneline --file image.png | head -1 | cut -f1)"
+SHA1112="$(first_sha --oneline --file image.png)"
 echo 0 > "$SHIM_COUNT"
 EC1112=0
 ERR1112="$(PATH="$SHIM_DIR:$PATH" GIT_HUNK_SHIM_FAIL=add GIT_HUNK_SHIM_FAIL_ON=2 GIT_HUNK_SHIM_COUNT_FILE="$SHIM_COUNT" \
@@ -470,8 +470,8 @@ new_repo
 sed -i.bak '1s/.*/multi one/' alpha.txt && rm alpha.txt.bak
 sed -i.bak '1s/.*/multi two/' beta.txt && rm beta.txt.bak
 COMMITS1113="$(git rev-list --count HEAD)"
-SHA1113A="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
-SHA1113B="$("$GIT_HUNK" list --porcelain --oneline --file beta.txt | head -1 | cut -f1)"
+SHA1113A="$(first_sha --oneline --file alpha.txt)"
+SHA1113B="$(first_sha --oneline --file beta.txt)"
 echo 0 > "$SHIM_COUNT"
 EC1113=0
 ERR1113="$(PATH="$SHIM_DIR:$PATH" GIT_HUNK_SHIM_FAIL=apply GIT_HUNK_SHIM_FAIL_ON=2 GIT_HUNK_SHIM_COUNT_FILE="$SHIM_COUNT" \
@@ -495,7 +495,7 @@ git add image.png && git commit -q -m "add binary"
 printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\xff' > image.png
 COMMITS1114="$(git rev-list --count HEAD)"
 HUNKS1114="$("$GIT_HUNK" count)"
-SHA1114="$("$GIT_HUNK" list --porcelain --oneline --file image.png | head -1 | cut -f1)"
+SHA1114="$(first_sha --oneline --file image.png)"
 OUT1114="$("$GIT_HUNK" commit --dry-run "$SHA1114" -m "preview" 2>/dev/null)" \
     || fail "test 1114: binary dry-run should exit 0"
 echo "$OUT1114" | grep -q "would commit" \

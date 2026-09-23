@@ -53,7 +53,7 @@ printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00' > image.png
 git add image.png && git commit -q -m "add binary"
 printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\xff' > image.png
 BEFORE803="$(md5sum image.png 2>/dev/null || md5 -q image.png)"
-SHA803="$("$GIT_HUNK" list --porcelain --oneline --file image.png 2>/dev/null | head -1 | cut -f1)"
+SHA803="$(first_sha --oneline --file image.png)"
 "$GIT_HUNK" restore "$SHA803" > /dev/null
 AFTER803="$(md5sum image.png 2>/dev/null || md5 -q image.png)"
 [[ "$BEFORE803" != "$AFTER803" ]] \
@@ -70,7 +70,7 @@ new_repo
 printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00' > image.png
 git add image.png && git commit -q -m "add binary"
 printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\xff' > image.png
-SHA804="$("$GIT_HUNK" list --porcelain --oneline --file image.png 2>/dev/null | head -1 | cut -f1)"
+SHA804="$(first_sha --oneline --file image.png)"
 "$GIT_HUNK" commit "$SHA804" -m "update binary" > /dev/null 2>/dev/null
 LAST_MSG804="$(git log -1 --format=%s)"
 [[ "$LAST_MSG804" == "update binary" ]] \
@@ -101,7 +101,7 @@ new_repo
 printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00' > image.png
 git add image.png && git commit -q -m "add binary"
 printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\xff' > image.png
-SHA806="$("$GIT_HUNK" list --porcelain --oneline --file image.png 2>/dev/null | head -1 | cut -f1)"
+SHA806="$(first_sha --oneline --file image.png)"
 EXIT806=0
 "$GIT_HUNK" add "${SHA806}:1-5" > /dev/null 2>/dev/null || EXIT806=$?
 [[ "$EXIT806" -ne 0 ]] \
@@ -115,7 +115,7 @@ new_repo
 printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00' > image.png
 git add image.png && git commit -q -m "add binary"
 printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\xff' > image.png
-SHA807="$("$GIT_HUNK" list --porcelain --oneline --file image.png 2>/dev/null | head -1 | cut -f1)"
+SHA807="$(first_sha --oneline --file image.png)"
 DIFF807="$("$GIT_HUNK" diff "$SHA807" --no-color 2>/dev/null)"
 echo "$DIFF807" | grep -q "Binary file changed" \
     || fail "test 807: expected 'Binary file changed' in diff output, got: '$DIFF807'"
@@ -142,7 +142,7 @@ printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00' > image.png
 git add image.png && git commit -q -m "add binary"
 printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\xff' > image.png
 BEFORE809="$(md5sum image.png 2>/dev/null || md5 -q image.png)"
-SHA809="$("$GIT_HUNK" list --porcelain --oneline --file image.png 2>/dev/null | head -1 | cut -f1)"
+SHA809="$(first_sha --oneline --file image.png)"
 "$GIT_HUNK" stash "$SHA809" > /dev/null 2>/dev/null
 AFTER809="$(md5sum image.png 2>/dev/null || md5 -q image.png)"
 [[ "$BEFORE809" != "$AFTER809" ]] \
@@ -189,7 +189,7 @@ echo "original" > "café.txt"
 git add "café.txt" && git commit -q -m "unicode file"
 echo "changed" > "café.txt"
 
-SHA811="$("$GIT_HUNK" list --porcelain --oneline 2>/dev/null | head -1 | cut -f1)"
+SHA811="$(first_sha --oneline)"
 [[ -n "$SHA811" ]] || fail "test 811: no hunk for unicode file"
 "$GIT_HUNK" add "$SHA811" > /dev/null
 STAGED811="$("$GIT_HUNK" count --staged)"
@@ -206,7 +206,7 @@ git add "café.txt" && git commit -q -m "unicode file"
 ORIG812="$(cat "café.txt")"
 echo "changed" > "café.txt"
 
-SHA812="$("$GIT_HUNK" list --porcelain --oneline 2>/dev/null | head -1 | cut -f1)"
+SHA812="$(first_sha --oneline)"
 [[ -n "$SHA812" ]] || fail "test 812: no hunk for unicode file"
 "$GIT_HUNK" restore "$SHA812" > /dev/null
 [[ "$(cat "café.txt")" == "$ORIG812" ]] \

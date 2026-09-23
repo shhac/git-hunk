@@ -7,7 +7,7 @@ source "$(dirname "$0")/harness.sh" "$1"
 new_repo
 sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
-SHA900="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA900="$(first_sha --oneline --file alpha.txt)"
 [[ -n "$SHA900" ]] || fail "test 900: no unstaged hunk found"
 OUT900="$("$GIT_HUNK" diff --no-color "$SHA900")"
 echo "$OUT900" | grep -q '@@' || fail "test 900: diff output missing @@ header, got: '$OUT900'"
@@ -20,7 +20,7 @@ pass "test 900: diff tracked file displays diff content"
 new_repo
 echo "unique_untracked_content_901" > show_untracked.txt
 
-SHA901="$("$GIT_HUNK" list --porcelain --oneline --file show_untracked.txt | head -1 | cut -f1)"
+SHA901="$(first_sha --oneline --file show_untracked.txt)"
 [[ -n "$SHA901" ]] || fail "test 901: no untracked hunk found"
 OUT901="$("$GIT_HUNK" diff --no-color "$SHA901")"
 echo "$OUT901" | grep -qE '(new file|@@)' || fail "test 901: diff output missing header, got: '$OUT901'"
@@ -33,7 +33,7 @@ pass "test 901: diff untracked file displays new file header and content"
 new_repo
 sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
-SHA902="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA902="$(first_sha --oneline --file alpha.txt)"
 OUT902="$("$GIT_HUNK" diff --no-color "$SHA902")"
 echo "$OUT902" | grep -q $'\033' && fail "test 902: diff --no-color output contains ANSI escape codes" || true
 pass "test 902: diff --no-color omits ANSI escape codes"
@@ -60,7 +60,7 @@ pass "test 903: diff multiple SHAs displays content from both hunks"
 new_repo
 sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
-SHA904="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA904="$(first_sha --oneline --file alpha.txt)"
 OUT904="$("$GIT_HUNK" diff --no-color "$SHA904")"
 echo "$OUT904" | grep -q 'alpha.txt' || fail "test 904: diff output missing filename in diff header, got: '$OUT904'"
 pass "test 904: diff diff header includes filename"
@@ -71,7 +71,7 @@ pass "test 904: diff diff header includes filename"
 new_repo
 sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
-SHA905="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA905="$(first_sha --oneline --file alpha.txt)"
 OUT905="$("$GIT_HUNK" diff --porcelain "$SHA905")"
 [[ -n "$OUT905" ]] || fail "test 905: diff --porcelain produced no output"
 FIRST905="$(echo "$OUT905" | head -1)"
@@ -87,7 +87,7 @@ pass "test 905: diff --porcelain outputs tab-separated metadata"
 new_repo
 sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
-SHA906="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA906="$(first_sha --oneline --file alpha.txt)"
 OUT906="$("$GIT_HUNK" diff --porcelain "$SHA906")"
 echo "$OUT906" | grep -q '@@' || fail "test 906: porcelain output missing @@ diff marker, got: '$OUT906'"
 echo "$OUT906" | grep -q 'Changed alpha' || fail "test 906: porcelain output missing changed content"
@@ -99,7 +99,7 @@ pass "test 906: diff --porcelain includes raw diff content"
 new_repo
 echo "porcelain untracked 907" > untracked_porc.txt
 
-SHA907="$("$GIT_HUNK" list --porcelain --oneline --file untracked_porc.txt | head -1 | cut -f1)"
+SHA907="$(first_sha --oneline --file untracked_porc.txt)"
 OUT907="$("$GIT_HUNK" diff --porcelain "$SHA907")"
 echo "$OUT907" | grep -q 'untracked_porc.txt' || fail "test 907: filename missing from porcelain output"
 echo "$OUT907" | grep -q $'\t' || fail "test 907: porcelain output has no tabs"
@@ -152,7 +152,7 @@ pass "test 910: diff --porcelain --staged shows staged hunk metadata"
 new_repo
 sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
-SHA911="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA911="$(first_sha --oneline --file alpha.txt)"
 OUT911="$("$GIT_HUNK" diff --no-color "${SHA911}:1")"
 echo "$OUT911" | grep -q '>' || fail "test 911: line spec output missing '>' marker for selected line"
 echo "$OUT911" | grep -qE '[0-9]+:' || fail "test 911: line spec output missing line numbers"
@@ -164,7 +164,7 @@ pass "test 911: diff SHA:1 displays line numbers and > marker"
 new_repo
 sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
-SHA912="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA912="$(first_sha --oneline --file alpha.txt)"
 OUT912="$("$GIT_HUNK" diff --no-color "${SHA912}:1-3")"
 echo "$OUT912" | grep -q '>' || fail "test 912: multi-range line spec missing '>' marker"
 echo "$OUT912" | grep -qE '[0-9]+:' || fail "test 912: multi-range line spec missing line numbers"
@@ -269,7 +269,7 @@ git add context_test.txt && git commit -m "context test setup" -q
 sed -i.bak 's/line 4 to change/line 4 changed/' context_test.txt
 
 # List and diff with matching unified level (SHA is context-dependent)
-SHA919="$("$GIT_HUNK" list --porcelain --oneline --file context_test.txt | head -1 | cut -f1)"
+SHA919="$(first_sha --oneline --file context_test.txt)"
 [[ -n "$SHA919" ]] || fail "test 919: no hunk found for context_test.txt"
 OUT919="$("$GIT_HUNK" diff --no-color "$SHA919")"
 # 'line 3' is a context line 1 line before the change — should appear with default context
@@ -295,7 +295,7 @@ git add context_test2.txt && git commit -m "context test2 setup" -q
 sed -i.bak 's/line 4 to change/line 4 changed/' context_test2.txt
 
 # Must use --unified 0 when listing to get the SHA for a -U0 diff
-SHA920="$("$GIT_HUNK" list --porcelain --oneline --unified 0 --file context_test2.txt | head -1 | cut -f1)"
+SHA920="$(first_sha --oneline --unified 0 --file context_test2.txt)"
 [[ -n "$SHA920" ]] || fail "test 920: no hunk found with --unified 0"
 OUT920="$("$GIT_HUNK" diff --no-color "$SHA920" --unified 0)"
 # 'line 3' as a context line (space prefix) should NOT appear with -U0
@@ -336,7 +336,7 @@ new_repo
 sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 sed -i.bak '1s/.*/Changed beta./' beta.txt
 sed -i.bak '1s/.*/Changed gamma./' gamma.txt
-SHA923_A="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA923_A="$(first_sha --oneline --file alpha.txt)"
 [[ -n "$SHA923_A" ]] || fail "test 923: alpha hash not found"
 OUT923="$("$GIT_HUNK" diff --no-color --file alpha.txt --file gamma.txt "$SHA923_A")"
 echo "$OUT923" | grep -q "alpha.txt" || fail "test 923: alpha.txt missing in diff with multi-file filter"
@@ -363,7 +363,7 @@ ADD-3
 keep-C
 NUM_EOF
 
-SHA924="$("$GIT_HUNK" list --porcelain --oneline --file numbered.txt | head -1 | cut -f1)"
+SHA924="$(first_sha --oneline --file numbered.txt)"
 [[ -n "$SHA924" ]] || fail "test 924: no hunk found"
 OUT924="$("$GIT_HUNK" diff --no-color -n "$SHA924")"
 # Line 1 is the keep-A CONTEXT line, so ADD-1 is line 2 — the exact off-by-one
@@ -414,7 +414,7 @@ pass "test 927: -n gutter numbers match what add stages"
 # ============================================================================
 new_repo
 sed -i.bak '1s/.*/Changed alpha./' alpha.txt
-SHA928="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA928="$(first_sha --oneline --file alpha.txt)"
 OUT928="$("$GIT_HUNK" diff --no-color "$SHA928")"
 if echo "$OUT928" | grep -qE '^[ >][0-9]+:'; then
     fail "test 928: plain diff must not be numbered, got: '$OUT928'"

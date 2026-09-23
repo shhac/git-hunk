@@ -8,7 +8,7 @@ new_repo
 sed -i.bak '1s/.*/Modified first line./' alpha.txt
 mkdir -p subdir
 
-SHA="$(cd subdir && "$GIT_HUNK" list --porcelain --oneline | head -1 | cut -f1)"
+SHA="$(cd subdir && first_sha --oneline)"
 [[ -n "$SHA" ]] || fail "test 1100: no hunks listed from subdirectory"
 pass "test 1100: list from subdirectory shows hunks"
 
@@ -19,7 +19,7 @@ new_repo
 sed -i.bak '1s/.*/Modified first line./' alpha.txt
 mkdir -p subdir
 
-SHA="$(cd subdir && "$GIT_HUNK" list --porcelain --oneline | head -1 | cut -f1)"
+SHA="$(cd subdir && first_sha --oneline)"
 [[ -n "$SHA" ]] || fail "test 1101: no hunk found from subdirectory"
 (cd subdir && "$GIT_HUNK" add "$SHA" > /dev/null)
 
@@ -91,7 +91,7 @@ EOF
 git add subdir/inner.txt && git commit -m "add inner" -q
 sed -i.bak '1s/.*/inner modified./' subdir/inner.txt
 
-SHA="$("$GIT_HUNK" list --porcelain --oneline --file subdir/inner.txt | head -1 | cut -f1)"
+SHA="$(first_sha --oneline --file subdir/inner.txt)"
 [[ -n "$SHA" ]] || fail "test 1105: no hunk found for subdir/inner.txt from root"
 "$GIT_HUNK" add "$SHA" > /dev/null
 
@@ -120,7 +120,7 @@ new_repo
 sed -i.bak '1s/.*/Modified first line./' alpha.txt
 mkdir -p subdir
 
-SHA="$(cd subdir && "$GIT_HUNK" list --porcelain --oneline | head -1 | cut -f1)"
+SHA="$(cd subdir && first_sha --oneline)"
 [[ -n "$SHA" ]] || fail "test 1107: no hunk found from subdirectory"
 (cd subdir && "$GIT_HUNK" commit "$SHA" -m "commit from subdir" > /dev/null 2>/dev/null)
 
@@ -165,7 +165,7 @@ new_repo
 sed -i.bak '1s/.*/Modified first line./' alpha.txt
 mkdir -p a/b/c
 
-SHA="$(cd a/b/c && "$GIT_HUNK" list --porcelain --oneline | head -1 | cut -f1)"
+SHA="$(cd a/b/c && first_sha --oneline)"
 [[ -n "$SHA" ]] || fail "test 1110: no hunks from deeply nested dir"
 (cd a/b/c && "$GIT_HUNK" add "$SHA" > /dev/null)
 
@@ -195,7 +195,7 @@ sed -i.bak '1s/.*/changed/' alpha.txt && rm alpha.txt.bak
 # `git hunk add <sha>` must chdir to repo root and then apply the patch with
 # the right path. If realpath fails (the bug), the patch path keeps the
 # subdir prefix and `git apply` errors with "does not exist in index".
-SHA1111=$(cd subdir && "$GIT_HUNK" list --porcelain --oneline | head -1 | cut -f1)
+SHA1111=$(cd subdir && first_sha --oneline)
 [[ -n "$SHA1111" ]] || fail "test 1111: no hunk found from /tmp/<repo>/subdir"
 (cd subdir && "$GIT_HUNK" add "$SHA1111" 2>&1 > /dev/null) \
     || fail "test 1111: add from subdir of /tmp-rooted repo failed (likely realpath fallback bug)"

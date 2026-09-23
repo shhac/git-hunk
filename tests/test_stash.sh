@@ -9,7 +9,7 @@ sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 sed -i.bak '1s/.*/Changed beta./' beta.txt
 ORIG_ALPHA="$(git show HEAD:alpha.txt | head -1)"
 
-SHA700="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA700="$(first_sha --oneline --file alpha.txt)"
 "$GIT_HUNK" stash "$SHA700" > /dev/null
 STASH_LIST700="$(git stash list)"
 [[ -n "$STASH_LIST700" ]] || fail "test 700: expected non-empty stash list"
@@ -26,7 +26,7 @@ new_repo
 sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 ORIG_ALPHA="$(git show HEAD:alpha.txt | head -1)"
 
-SHA701="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA701="$(first_sha --oneline --file alpha.txt)"
 "$GIT_HUNK" stash "$SHA701" > /dev/null
 [[ "$(head -1 alpha.txt)" == "$ORIG_ALPHA" ]] || fail "test 701: not reverted after stash"
 
@@ -90,7 +90,7 @@ sed -i.bak '1s/.*/Staged beta./' beta.txt
 git add beta.txt
 sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
-SHA705="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA705="$(first_sha --oneline --file alpha.txt)"
 "$GIT_HUNK" stash "$SHA705" > /dev/null
 STAGED705="$(git diff --cached --name-only)"
 echo "$STAGED705" | grep -q "beta.txt" \
@@ -139,7 +139,7 @@ pass "test 709: pop rejects extra flags"
 new_repo
 sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
-SHA710="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA710="$(first_sha --oneline --file alpha.txt)"
 if "$GIT_HUNK" stash "${SHA710}:1-3" > /dev/null 2>/dev/null; then
     fail "test 710: expected exit 1 for line spec"
 fi
@@ -151,7 +151,7 @@ pass "test 710: line spec rejection"
 new_repo
 echo "untracked content" > untracked.txt
 
-SHA711="$("$GIT_HUNK" list --porcelain --oneline --file untracked.txt | head -1 | cut -f1)"
+SHA711="$(first_sha --oneline --file untracked.txt)"
 [[ -n "$SHA711" ]] || fail "test 711: no untracked hunk found"
 "$GIT_HUNK" stash "$SHA711" > /dev/null
 [[ ! -f untracked.txt ]] || fail "test 711: untracked.txt should be deleted after stash"
@@ -201,7 +201,7 @@ sed -i.bak '1s/.*/Staged beta./' beta.txt
 git add beta.txt
 echo "untracked content" > untracked.txt
 
-SHA714="$("$GIT_HUNK" list --porcelain --oneline --file untracked.txt | head -1 | cut -f1)"
+SHA714="$(first_sha --oneline --file untracked.txt)"
 "$GIT_HUNK" stash "$SHA714" > /dev/null
 [[ ! -f untracked.txt ]] || fail "test 714: untracked.txt should be gone after stash"
 STAGED714="$(git diff --cached --name-only)"
@@ -234,7 +234,7 @@ echo '#!/bin/sh' > script.sh
 chmod +x script.sh
 [[ -x script.sh ]] || fail "test 716: precondition: script.sh should be executable"
 
-HASH=$("$GIT_HUNK" list --porcelain --oneline | head -1 | cut -f1)
+HASH=$(first_sha --oneline)
 "$GIT_HUNK" stash "$HASH" > /dev/null
 [[ ! -f script.sh ]] || fail "test 716: script.sh should be removed after stash"
 
@@ -292,7 +292,7 @@ pass "test 719: stash push --include-untracked works"
 new_repo
 echo "untracked content" > untracked.txt
 
-SHA720="$("$GIT_HUNK" list --porcelain --oneline --file untracked.txt | head -1 | cut -f1)"
+SHA720="$(first_sha --oneline --file untracked.txt)"
 [[ -n "$SHA720" ]] || fail "test 720: no untracked hunk found"
 "$GIT_HUNK" stash "$SHA720" > /dev/null
 [[ ! -f untracked.txt ]] || fail "test 720: untracked.txt should be deleted after stash"
@@ -310,7 +310,7 @@ sed -i.bak '1s/.*/Unstaged change to beta./' beta.txt
 # Stage alpha.txt only (leave beta.txt unstaged)
 git add alpha.txt
 
-SHA721="$("$GIT_HUNK" list --porcelain --oneline --file beta.txt | head -1 | cut -f1)"
+SHA721="$(first_sha --oneline --file beta.txt)"
 [[ -n "$SHA721" ]] || fail "test 721: no unstaged hunk found for beta.txt"
 "$GIT_HUNK" stash "$SHA721" > /dev/null
 

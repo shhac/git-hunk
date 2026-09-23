@@ -7,7 +7,7 @@ source "$(dirname "$0")/harness.sh" "$1"
 new_repo
 sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
-SHA500="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA500="$(first_sha --oneline --file alpha.txt)"
 [[ -n "$SHA500" ]] || fail "test 500: no unstaged hunk found"
 "$GIT_HUNK" restore --no-color "$SHA500" > /dev/null
 REMAINING500="$("$GIT_HUNK" count --file alpha.txt)"
@@ -34,7 +34,7 @@ pass "test 501: restore --all reverts all hunks"
 new_repo
 sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
-SHA502="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA502="$(first_sha --oneline --file alpha.txt)"
 [[ -n "$SHA502" ]] || fail "test 502: no unstaged hunk found"
 DRY_OUT="$("$GIT_HUNK" restore --no-color --dry-run "$SHA502")"
 echo "$DRY_OUT" | grep -q "would restore" || fail "test 502: expected 'would restore' in output, got '$DRY_OUT'"
@@ -48,7 +48,7 @@ pass "test 502: restore --dry-run does not modify worktree"
 new_repo
 sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
-SHA503="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA503="$(first_sha --oneline --file alpha.txt)"
 DISCARD_OUT="$("$GIT_HUNK" restore --no-color "$SHA503")"
 echo "$DISCARD_OUT" | grep -qE '^restored [a-f0-9]{7}  alpha\.txt$' \
     || fail "test 503: restore output format wrong, got: '$DISCARD_OUT'"
@@ -60,7 +60,7 @@ pass "test 503: restore output format"
 new_repo
 sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
-SHA504="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA504="$(first_sha --oneline --file alpha.txt)"
 PORC504="$("$GIT_HUNK" restore --porcelain "$SHA504")"
 PORC504_VERB="$(echo "$PORC504" | cut -f1)"
 PORC504_SHA="$(echo "$PORC504" | cut -f2)"
@@ -114,7 +114,7 @@ pass "test 507: restore with stale hash exits 1"
 new_repo
 sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
-SHA508="$("$GIT_HUNK" list --porcelain --oneline | head -1 | cut -f1)"
+SHA508="$(first_sha --oneline)"
 OUT508="$("$GIT_HUNK" restore --dry-run --porcelain "$SHA508")"
 echo "$OUT508" | grep -q "^would-restore" \
     || fail "test 508: expected 'would-restore' verb in porcelain output, got: '$OUT508'"
@@ -126,7 +126,7 @@ pass "test 508: restore --dry-run --porcelain uses would-restore verb"
 new_repo
 echo "untracked content" > untracked.txt
 
-SHA509="$("$GIT_HUNK" list --porcelain --oneline --file untracked.txt | head -1 | cut -f1)"
+SHA509="$(first_sha --oneline --file untracked.txt)"
 [[ -n "$SHA509" ]] || fail "test 509: no untracked hunk found"
 if "$GIT_HUNK" restore "$SHA509" > /dev/null 2>/dev/null; then
     fail "test 509: expected exit 1 without --force"
@@ -140,7 +140,7 @@ pass "test 509: restore untracked without --force exits 1"
 new_repo
 echo "untracked content" > untracked.txt
 
-SHA510="$("$GIT_HUNK" list --porcelain --oneline --file untracked.txt | head -1 | cut -f1)"
+SHA510="$(first_sha --oneline --file untracked.txt)"
 [[ -n "$SHA510" ]] || fail "test 510: no untracked hunk found"
 "$GIT_HUNK" restore --force "$SHA510" > /dev/null
 [[ ! -f untracked.txt ]] || fail "test 510: untracked file should be deleted after --force restore"
@@ -177,7 +177,7 @@ pass "test 512: restore --force --all restores everything"
 new_repo
 echo "untracked content" > untracked.txt
 
-SHA513="$("$GIT_HUNK" list --porcelain --oneline --file untracked.txt | head -1 | cut -f1)"
+SHA513="$(first_sha --oneline --file untracked.txt)"
 [[ -n "$SHA513" ]] || fail "test 513: no untracked hunk found"
 OUT513="$("$GIT_HUNK" restore --dry-run "$SHA513" 2>/dev/null)"
 echo "$OUT513" | grep -q "would restore" || fail "test 513: expected 'would restore' in output, got: '$OUT513'"
@@ -490,7 +490,7 @@ ADD-3
 keep-C
 CTX_EOF
 
-SHA525="$("$GIT_HUNK" list --porcelain --oneline --file ctxspec.txt | head -1 | cut -f1)"
+SHA525="$(first_sha --oneline --file ctxspec.txt)"
 [[ -n "$SHA525" ]] || fail "test 525: no hunk found"
 # Body line 2 is ADD-1 (line 1 is the keep-A context line).
 "$GIT_HUNK" restore --no-color "${SHA525}:2" > /dev/null \
@@ -522,7 +522,7 @@ keep-B
 keep-C
 DEL_EOF
 
-SHA526="$("$GIT_HUNK" list --porcelain --oneline --file delspec.txt | head -1 | cut -f1)"
+SHA526="$(first_sha --oneline --file delspec.txt)"
 [[ -n "$SHA526" ]] || fail "test 526: no hunk found"
 # Body line 2 is the '-DEL-1' line; restoring it puts DEL-1 back.
 "$GIT_HUNK" restore --no-color "${SHA526}:2" > /dev/null \
@@ -553,7 +553,7 @@ NEW-2
 ctx2
 MIX_EOF
 
-SHA527="$("$GIT_HUNK" list --porcelain --oneline --file mixspec.txt | head -1 | cut -f1)"
+SHA527="$(first_sha --oneline --file mixspec.txt)"
 [[ -n "$SHA527" ]] || fail "test 527: no hunk found"
 # Body lines: 1=' ctx' 2='-OLD-1' 3='-OLD-2' 4='+NEW-1' 5='+NEW-2' 6=' ctx2'
 "$GIT_HUNK" restore --no-color "${SHA527}:2,4" > /dev/null \

@@ -154,7 +154,7 @@ pass "test 111: --untracked-only with no untracked files shows nothing"
 new_repo
 echo "unique_marker_for_show_test" > untracked_show.txt
 
-SHA112="$("$GIT_HUNK" list --porcelain --oneline --file untracked_show.txt | head -1 | cut -f1)"
+SHA112="$(first_sha --oneline --file untracked_show.txt)"
 [[ -n "$SHA112" ]] || fail "test 112: no untracked hunk found"
 DIFF_OUT="$("$GIT_HUNK" diff --no-color "$SHA112")"
 echo "$DIFF_OUT" | grep -q "unique_marker_for_show_test" \
@@ -169,13 +169,13 @@ pass "test 112: diff displays untracked file content"
 # Repo 1: use new_repo (setup-repo.sh creates deterministic content)
 new_repo
 sed -i.bak '1s/.*/Cross-repo SHA test line./' alpha.txt
-SHA113A="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA113A="$(first_sha --oneline --file alpha.txt)"
 [[ -n "$SHA113A" ]] || fail "test 113: no hunk found in repo 1"
 
 # Repo 2: new_repo creates another identical repo (same deterministic content)
 new_repo
 sed -i.bak '1s/.*/Cross-repo SHA test line./' alpha.txt
-SHA113B="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA113B="$(first_sha --oneline --file alpha.txt)"
 [[ -n "$SHA113B" ]] || fail "test 113: no hunk found in repo 2"
 
 [[ "$SHA113A" == "$SHA113B" ]] \
@@ -199,8 +199,8 @@ git add proximity.txt && git commit -m "proximity setup" -q
 sed -i.bak 's/line 2 original/line 2 changed/' proximity.txt
 sed -i.bak 's/line 4 original/line 4 changed/' proximity.txt
 
-SHA114_U0="$("$GIT_HUNK" list --porcelain --oneline --unified 0 --file proximity.txt | head -1 | cut -f1)"
-SHA114_U3="$("$GIT_HUNK" list --porcelain --oneline --unified 3 --file proximity.txt | head -1 | cut -f1)"
+SHA114_U0="$(first_sha --oneline --unified 0 --file proximity.txt)"
+SHA114_U3="$(first_sha --oneline --unified 3 --file proximity.txt)"
 [[ -n "$SHA114_U0" ]] || fail "test 114: no hunk found with -U0"
 [[ -n "$SHA114_U3" ]] || fail "test 114: no hunk found with -U3"
 [[ "$SHA114_U0" != "$SHA114_U3" ]] \

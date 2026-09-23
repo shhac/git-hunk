@@ -7,7 +7,7 @@ source "$(dirname "$0")/harness.sh" "$1"
 new_repo
 sed -i.bak '1s/.*/Changed alpha first line./' alpha.txt
 
-SHA1000="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA1000="$(first_sha --oneline --file alpha.txt)"
 [[ -n "$SHA1000" ]] || fail "test 1000: no unstaged hunk found"
 OUT1000="$("$GIT_HUNK" commit --no-color "$SHA1000" -m "test basic commit" 2>/dev/null)"
 git log --oneline -1 | grep -q "test basic commit" \
@@ -79,12 +79,12 @@ pass "test 1003: commit --file only commits hunks in specified file"
 # ============================================================================
 new_repo
 sed -i.bak '1s/.*/Changed alpha./' alpha.txt
-SHA1004="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA1004="$(first_sha --oneline --file alpha.txt)"
 "$GIT_HUNK" commit "$SHA1004" -m "initial commit" > /dev/null 2>/dev/null
 COMMIT_COUNT_BEFORE="$(git rev-list --count HEAD)"
 
 sed -i.bak '1s/.*/Changed beta./' beta.txt
-SHA1004B="$("$GIT_HUNK" list --porcelain --oneline --file beta.txt | head -1 | cut -f1)"
+SHA1004B="$(first_sha --oneline --file beta.txt)"
 "$GIT_HUNK" commit "$SHA1004B" --amend -m "amended commit" > /dev/null 2>/dev/null
 COMMIT_COUNT_AFTER="$(git rev-list --count HEAD)"
 [[ "$COMMIT_COUNT_AFTER" -eq "$COMMIT_COUNT_BEFORE" ]] \
@@ -109,7 +109,7 @@ sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
 COUNT1005_BEFORE="$("$GIT_HUNK" count)"
 COMMITS1005_BEFORE="$(git rev-list --count HEAD)"
-SHA1005="$("$GIT_HUNK" list --porcelain --oneline | head -1 | cut -f1)"
+SHA1005="$(first_sha --oneline)"
 DRY_OUT="$("$GIT_HUNK" commit --dry-run --no-color "$SHA1005" -m "dry run test")"
 echo "$DRY_OUT" | grep -q "would commit" \
     || fail "test 1005: expected 'would commit' in output, got '$DRY_OUT'"
@@ -133,7 +133,7 @@ STAGED1006_BEFORE="$(git diff --cached --name-only)"
 echo "$STAGED1006_BEFORE" | grep -q "alpha.txt" \
     || fail "test 1006: alpha.txt should be staged before commit"
 
-SHA1006="$("$GIT_HUNK" list --porcelain --oneline --file beta.txt | head -1 | cut -f1)"
+SHA1006="$(first_sha --oneline --file beta.txt)"
 [[ -n "$SHA1006" ]] || fail "test 1006: no beta.txt hunk found"
 "$GIT_HUNK" commit "$SHA1006" -m "commit beta only" > /dev/null 2>/dev/null
 STAGED1006_AFTER="$(git diff --cached --name-only)"
@@ -149,7 +149,7 @@ pass "test 1006: commit preserves existing staged changes"
 new_repo
 sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
-SHA1007="$("$GIT_HUNK" list --porcelain --oneline | head -1 | cut -f1)"
+SHA1007="$(first_sha --oneline)"
 PORC_OUT="$("$GIT_HUNK" commit --porcelain "$SHA1007" -m "porcelain test" 2>/dev/null)"
 PORC_VERB="$(echo "$PORC_OUT" | cut -f1)"
 PORC_SHA="$(echo "$PORC_OUT" | cut -f2)"
@@ -168,7 +168,7 @@ pass "test 1007: commit --porcelain output format"
 new_repo
 sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
-SHA1008="$("$GIT_HUNK" list --porcelain --oneline | head -1 | cut -f1)"
+SHA1008="$(first_sha --oneline)"
 QUIET_OUT="$("$GIT_HUNK" commit --quiet "$SHA1008" -m "quiet test" 2>/dev/null)"
 [[ -z "$QUIET_OUT" ]] \
     || fail "test 1008: expected empty stdout with --quiet, got '$QUIET_OUT'"
@@ -182,7 +182,7 @@ pass "test 1008: commit --quiet suppresses stdout"
 new_repo
 sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
-SHA1009="$("$GIT_HUNK" list --porcelain --oneline | head -1 | cut -f1)"
+SHA1009="$(first_sha --oneline)"
 STDERR1009="$("$GIT_HUNK" commit --verbose --no-color "$SHA1009" -m "verbose test" 2>&1 >/dev/null)"
 echo "$STDERR1009" | grep -q "1 hunk committed" \
     || fail "test 1009: expected '1 hunk committed' on stderr, got '$STDERR1009'"
@@ -194,7 +194,7 @@ pass "test 1009: commit --verbose shows summary on stderr"
 new_repo
 sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
-SHA1010="$("$GIT_HUNK" list --porcelain --oneline | head -1 | cut -f1)"
+SHA1010="$(first_sha --oneline)"
 COMMITS1010_BEFORE="$(git rev-list --count HEAD)"
 mkdir -p .git/hooks
 printf '#!/bin/sh\nexit 1\n' > .git/hooks/pre-commit
@@ -222,7 +222,7 @@ new_repo
 cp .git/index .git/index.hunk-backup
 sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
-SHA1011="$("$GIT_HUNK" list --porcelain --oneline | head -1 | cut -f1)"
+SHA1011="$(first_sha --oneline)"
 STDERR1011="$("$GIT_HUNK" commit "$SHA1011" -m "stale backup test" 2>&1 >/dev/null)"
 echo "$STDERR1011" | grep -q "stale index backup" \
     || fail "test 1011: expected stale backup warning, got '$STDERR1011'"
@@ -246,7 +246,7 @@ pass "test 1012: --staged is rejected"
 # ============================================================================
 new_repo
 sed -i.bak '1s/.*/Changed alpha./' alpha.txt
-SHA1013="$("$GIT_HUNK" list --porcelain --oneline | head -1 | cut -f1)"
+SHA1013="$(first_sha --oneline)"
 if "$GIT_HUNK" commit "$SHA1013" > /dev/null 2>/dev/null; then
     fail "test 1013: expected non-zero exit for missing -m"
 fi
@@ -283,7 +283,7 @@ pass "test 1014: commit --ref <commit> cherry-picks that commit's hunk"
 new_repo
 sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 
-SHA1015="$("$GIT_HUNK" list --porcelain --oneline | head -1 | cut -f1)"
+SHA1015="$(first_sha --oneline)"
 OUT1015="$("$GIT_HUNK" commit --dry-run --porcelain "$SHA1015" -m "dry porcelain")"
 echo "$OUT1015" | grep -q "^would-commit" \
     || fail "test 1015: expected 'would-commit' verb in porcelain dry-run, got: '$OUT1015'"
@@ -310,7 +310,7 @@ pass "test 1016: commit --file a --file c -m commits union, leaves b modified"
 # ============================================================================
 new_repo
 sed -i.bak '1s/.*/Changed alpha for 1017./' alpha.txt
-SHA1017=$("$GIT_HUNK" list --porcelain --oneline | head -1 | cut -f1)
+SHA1017=$(first_sha --oneline)
 "$GIT_HUNK" commit --3way --dry-run "$SHA1017" -m "ignored" > /dev/null 2>&1 \
     || fail "test 1017: commit --3way --dry-run should not error (git apply rejects --3way + --check)"
 pass "test 1017: commit --3way --dry-run runs without error"
@@ -372,7 +372,7 @@ pass "test 1019: commit --3way fails clearly when 3-way produces conflicts"
 # ============================================================================
 new_repo
 sed -i.bak '1s/.*/Changed alpha./' alpha.txt
-SHA1020="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA1020="$(first_sha --oneline --file alpha.txt)"
 [[ -n "$SHA1020" ]] || fail "test 1020: no hunk found"
 COMMITS1020_BEFORE="$(git log --oneline | wc -l)"
 
@@ -394,7 +394,7 @@ pass "test 1020: commit --dry-run does not require -m"
 # ============================================================================
 new_repo
 sed -i.bak '1s/.*/Changed alpha./' alpha.txt
-SHA1021="$("$GIT_HUNK" list --porcelain --oneline --file alpha.txt | head -1 | cut -f1)"
+SHA1021="$(first_sha --oneline --file alpha.txt)"
 [[ -n "$SHA1021" ]] || fail "test 1021: no hunk found"
 if "$GIT_HUNK" commit "$SHA1021" > /dev/null 2>&1; then
     fail "test 1021: commit without -m should fail"
