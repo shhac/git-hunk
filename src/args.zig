@@ -620,61 +620,10 @@ test "parseListArgs staged" {
     try std.testing.expectEqual(DiffMode.staged, opts.mode);
 }
 
-test "parseListArgs porcelain" {
-    const args_arr = [_][:0]const u8{"--porcelain"};
-    const opts = try parseListArgs(std.testing.allocator, &args_arr);
-    try std.testing.expectEqual(OutputMode.porcelain, opts.common.output);
-}
-
 test "parseListArgs oneline" {
     const args_arr = [_][:0]const u8{"--oneline"};
     const opts = try parseListArgs(std.testing.allocator, &args_arr);
     try std.testing.expect(opts.oneline);
-}
-
-test "parseListArgs no-color" {
-    const args_arr = [_][:0]const u8{"--no-color"};
-    const opts = try parseListArgs(std.testing.allocator, &args_arr);
-    try std.testing.expect(opts.common.no_color);
-}
-
-test "parseListArgs file filter" {
-    const args_arr = [_][:0]const u8{ "--file", "src/main.zig" };
-    var opts = try parseListArgs(std.testing.allocator, &args_arr);
-    defer deinitFileFilter(std.testing.allocator, &opts.common.file_filter);
-    try std.testing.expectEqual(@as(usize, 1), opts.common.file_filter.items.len);
-    try std.testing.expectEqualStrings("src/main.zig", opts.common.file_filter.items[0]);
-}
-
-test "parseListArgs file missing arg" {
-    const args_arr = [_][:0]const u8{"--file"};
-    try std.testing.expectError(error.MissingArgument, parseListArgs(std.testing.allocator, &args_arr));
-}
-
-test "parseListArgs multiple --file accumulate" {
-    const args_arr = [_][:0]const u8{
-        "--file", "foo.txt",
-        "--file", "bar.txt",
-    };
-    var opts = try parseListArgs(std.testing.allocator, &args_arr);
-    defer deinitFileFilter(std.testing.allocator, &opts.common.file_filter);
-    try std.testing.expectEqual(@as(usize, 2), opts.common.file_filter.items.len);
-    try std.testing.expectEqualStrings("foo.txt", opts.common.file_filter.items[0]);
-    try std.testing.expectEqualStrings("bar.txt", opts.common.file_filter.items[1]);
-}
-
-test "parseAddResetArgs multiple --file accumulate" {
-    const allocator = std.testing.allocator;
-    const args_arr = [_][:0]const u8{
-        "--file", "foo.txt",
-        "--file", "bar.txt",
-    };
-    var opts = try parseAddResetArgs(allocator, &args_arr);
-    defer deinitShaArgs(allocator, &opts.sha_args);
-    defer deinitFileFilter(allocator, &opts.common.file_filter);
-    try std.testing.expectEqual(@as(usize, 2), opts.common.file_filter.items.len);
-    try std.testing.expectEqualStrings("foo.txt", opts.common.file_filter.items[0]);
-    try std.testing.expectEqualStrings("bar.txt", opts.common.file_filter.items[1]);
 }
 
 test "parseListArgs unknown flag" {
@@ -698,155 +647,6 @@ test "parseListArgs all flags combined" {
     try std.testing.expect(opts.oneline);
     try std.testing.expect(opts.common.no_color);
     try std.testing.expectEqualStrings("foo.txt", opts.common.file_filter.items[0]);
-}
-
-test "parseListArgs context" {
-    const args_arr = [_][:0]const u8{ "--unified", "0" };
-    const opts = try parseListArgs(std.testing.allocator, &args_arr);
-    try std.testing.expectEqual(@as(?u32, 0), opts.common.context);
-}
-
-test "parseListArgs context value" {
-    const args_arr = [_][:0]const u8{ "--unified", "5" };
-    const opts = try parseListArgs(std.testing.allocator, &args_arr);
-    try std.testing.expectEqual(@as(?u32, 5), opts.common.context);
-}
-
-test "parseListArgs context missing arg" {
-    const args_arr = [_][:0]const u8{"--unified"};
-    try std.testing.expectError(error.MissingArgument, parseListArgs(std.testing.allocator, &args_arr));
-}
-
-test "parseListArgs context invalid" {
-    const args_arr = [_][:0]const u8{ "--unified", "abc" };
-    try std.testing.expectError(error.InvalidArgument, parseListArgs(std.testing.allocator, &args_arr));
-}
-
-test "parseListArgs context default null" {
-    const opts = try parseListArgs(std.testing.allocator, &.{});
-    try std.testing.expectEqual(@as(?u32, null), opts.common.context);
-}
-
-test "parseListArgs context -U<n> form" {
-    const args_arr = [_][:0]const u8{"-U3"};
-    const opts = try parseListArgs(std.testing.allocator, &args_arr);
-    try std.testing.expectEqual(@as(?u32, 3), opts.common.context);
-}
-
-test "parseListArgs context -U0 form" {
-    const args_arr = [_][:0]const u8{"-U0"};
-    const opts = try parseListArgs(std.testing.allocator, &args_arr);
-    try std.testing.expectEqual(@as(?u32, 0), opts.common.context);
-}
-
-test "parseListArgs context --unified=<n> form" {
-    const args_arr = [_][:0]const u8{"--unified=5"};
-    const opts = try parseListArgs(std.testing.allocator, &args_arr);
-    try std.testing.expectEqual(@as(?u32, 5), opts.common.context);
-}
-
-test "parseListArgs context -U alone gives error" {
-    const args_arr = [_][:0]const u8{"-U"};
-    try std.testing.expectError(error.MissingArgument, parseListArgs(std.testing.allocator, &args_arr));
-}
-
-test "parseListArgs context -Uabc gives error" {
-    const args_arr = [_][:0]const u8{"-Uabc"};
-    try std.testing.expectError(error.InvalidArgument, parseListArgs(std.testing.allocator, &args_arr));
-}
-
-test "parseListArgs context --unified=abc gives error" {
-    const args_arr = [_][:0]const u8{"--unified=abc"};
-    try std.testing.expectError(error.InvalidArgument, parseListArgs(std.testing.allocator, &args_arr));
-}
-
-test "parseListArgs context -U <n> space form" {
-    const args_arr = [_][:0]const u8{ "-U", "3" };
-    const opts = try parseListArgs(std.testing.allocator, &args_arr);
-    try std.testing.expectEqual(@as(?u32, 3), opts.common.context);
-}
-
-test "parseListArgs verbosity default normal" {
-    const opts = try parseListArgs(std.testing.allocator, &.{});
-    try std.testing.expectEqual(types.Verbosity.normal, opts.common.verbosity);
-}
-
-test "parseListArgs verbosity --quiet" {
-    const args_arr = [_][:0]const u8{"--quiet"};
-    const opts = try parseListArgs(std.testing.allocator, &args_arr);
-    try std.testing.expectEqual(types.Verbosity.quiet, opts.common.verbosity);
-}
-
-test "parseListArgs verbosity -q" {
-    const args_arr = [_][:0]const u8{"-q"};
-    const opts = try parseListArgs(std.testing.allocator, &args_arr);
-    try std.testing.expectEqual(types.Verbosity.quiet, opts.common.verbosity);
-}
-
-test "parseListArgs verbosity --verbose" {
-    const args_arr = [_][:0]const u8{"--verbose"};
-    const opts = try parseListArgs(std.testing.allocator, &args_arr);
-    try std.testing.expectEqual(types.Verbosity.verbose, opts.common.verbosity);
-}
-
-test "parseListArgs verbosity -v" {
-    const args_arr = [_][:0]const u8{"-v"};
-    const opts = try parseListArgs(std.testing.allocator, &args_arr);
-    try std.testing.expectEqual(types.Verbosity.verbose, opts.common.verbosity);
-}
-
-test "parseListArgs verbosity --quiet --verbose conflict" {
-    const args_arr = [_][:0]const u8{ "--quiet", "--verbose" };
-    try std.testing.expectError(error.ConflictingVerbosity, parseListArgs(std.testing.allocator, &args_arr));
-}
-
-test "parseListArgs verbosity --verbose --quiet conflict" {
-    const args_arr = [_][:0]const u8{ "--verbose", "--quiet" };
-    try std.testing.expectError(error.ConflictingVerbosity, parseListArgs(std.testing.allocator, &args_arr));
-}
-
-test "parseAddResetArgs verbosity --verbose" {
-    const allocator = std.testing.allocator;
-    const args_arr = [_][:0]const u8{ "--all", "--verbose" };
-    var opts = try parseAddResetArgs(allocator, &args_arr);
-    defer deinitShaArgs(allocator, &opts.sha_args);
-    try std.testing.expectEqual(types.Verbosity.verbose, opts.common.verbosity);
-}
-
-test "parseAddResetArgs verbosity --quiet" {
-    const allocator = std.testing.allocator;
-    const args_arr = [_][:0]const u8{ "--all", "--quiet" };
-    var opts = try parseAddResetArgs(allocator, &args_arr);
-    defer deinitShaArgs(allocator, &opts.sha_args);
-    try std.testing.expectEqual(types.Verbosity.quiet, opts.common.verbosity);
-}
-
-test "parseStashArgs verbosity --verbose" {
-    const allocator = std.testing.allocator;
-    const args_arr = [_][:0]const u8{ "--all", "--verbose" };
-    var opts = try parseStashArgs(allocator, &args_arr);
-    defer deinitShaArgs(allocator, &opts.sha_args);
-    try std.testing.expectEqual(types.Verbosity.verbose, opts.common.verbosity);
-}
-
-test "parseStashArgs verbosity --quiet" {
-    const allocator = std.testing.allocator;
-    const args_arr = [_][:0]const u8{ "--all", "--quiet" };
-    var opts = try parseStashArgs(allocator, &args_arr);
-    defer deinitShaArgs(allocator, &opts.sha_args);
-    try std.testing.expectEqual(types.Verbosity.quiet, opts.common.verbosity);
-}
-
-test "parseCountArgs verbosity --verbose" {
-    const args_arr = [_][:0]const u8{"--verbose"};
-    const opts = try parseCountArgs(std.testing.allocator, &args_arr);
-    try std.testing.expectEqual(types.Verbosity.verbose, opts.common.verbosity);
-}
-
-test "parseCountArgs verbosity --quiet" {
-    const args_arr = [_][:0]const u8{"--quiet"};
-    const opts = try parseCountArgs(std.testing.allocator, &args_arr);
-    try std.testing.expectEqual(types.Verbosity.quiet, opts.common.verbosity);
 }
 
 test "parseAddResetArgs valid sha" {
@@ -890,27 +690,6 @@ test "parseAddResetArgs select all" {
     try std.testing.expect(opts.select_all);
 }
 
-test "parseAddResetArgs no-color" {
-    const allocator = std.testing.allocator;
-    const args_arr = [_][:0]const u8{ "--all", "--no-color" };
-    var opts = try parseAddResetArgs(allocator, &args_arr);
-    defer deinitShaArgs(allocator, &opts.sha_args);
-    try std.testing.expect(opts.common.no_color);
-}
-
-test "parseAddResetArgs with file flag" {
-    const allocator = std.testing.allocator;
-    const args_arr = [_][:0]const u8{
-        "abcd1234",
-        "--file",
-        "src/main.zig",
-    };
-    var opts = try parseAddResetArgs(allocator, &args_arr);
-    defer deinitShaArgs(allocator, &opts.sha_args);
-    defer deinitFileFilter(allocator, &opts.common.file_filter);
-    try std.testing.expectEqualStrings("src/main.zig", opts.common.file_filter.items[0]);
-}
-
 test "parseAddResetArgs multiple shas" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]const u8{
@@ -920,20 +699,6 @@ test "parseAddResetArgs multiple shas" {
     var opts = try parseAddResetArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expectEqual(@as(usize, 2), opts.sha_args.items.len);
-}
-
-test "parseAddResetArgs context" {
-    const allocator = std.testing.allocator;
-    const args_arr = [_][:0]const u8{ "--all", "--unified", "1" };
-    var opts = try parseAddResetArgs(allocator, &args_arr);
-    defer deinitShaArgs(allocator, &opts.sha_args);
-    try std.testing.expectEqual(@as(?u32, 1), opts.common.context);
-}
-
-test "parseAddResetArgs context missing arg" {
-    const allocator = std.testing.allocator;
-    const args_arr = [_][:0]const u8{ "--all", "--unified" };
-    try std.testing.expectError(error.MissingArgument, parseAddResetArgs(allocator, &args_arr));
 }
 
 test "parseDiffArgs valid sha" {
@@ -970,22 +735,6 @@ test "parseDiffArgs number defaults off" {
     try std.testing.expect(!opts.number);
 }
 
-test "parseDiffArgs porcelain flag" {
-    const allocator = std.testing.allocator;
-    const args_arr = [_][:0]const u8{ "abcd1234", "--porcelain" };
-    var opts = try parseDiffArgs(allocator, &args_arr);
-    defer deinitShaArgs(allocator, &opts.sha_args);
-    try std.testing.expectEqual(OutputMode.porcelain, opts.common.output);
-}
-
-test "parseDiffArgs no-color flag" {
-    const allocator = std.testing.allocator;
-    const args_arr = [_][:0]const u8{ "abcd1234", "--no-color" };
-    var opts = try parseDiffArgs(allocator, &args_arr);
-    defer deinitShaArgs(allocator, &opts.sha_args);
-    try std.testing.expect(opts.common.no_color);
-}
-
 test "parseDiffArgs unknown flag" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]const u8{ "abcd1234", "--unknown" };
@@ -995,20 +744,6 @@ test "parseDiffArgs unknown flag" {
 test "parseDiffArgs missing sha" {
     const allocator = std.testing.allocator;
     try std.testing.expectError(error.MissingArgument, parseDiffArgs(allocator, &.{}));
-}
-
-test "parseDiffArgs context" {
-    const allocator = std.testing.allocator;
-    const args_arr = [_][:0]const u8{ "abcd1234", "--unified", "2" };
-    var opts = try parseDiffArgs(allocator, &args_arr);
-    defer deinitShaArgs(allocator, &opts.sha_args);
-    try std.testing.expectEqual(@as(?u32, 2), opts.common.context);
-}
-
-test "parseDiffArgs context missing arg" {
-    const allocator = std.testing.allocator;
-    const args_arr = [_][:0]const u8{ "abcd1234", "--unified" };
-    try std.testing.expectError(error.MissingArgument, parseDiffArgs(allocator, &args_arr));
 }
 
 test "parseShaArg plain sha" {
@@ -1115,29 +850,6 @@ test "parseCountArgs staged" {
     try std.testing.expectEqual(DiffMode.staged, opts.mode);
 }
 
-test "parseCountArgs file filter" {
-    const args_arr = [_][:0]const u8{ "--file", "src/main.zig" };
-    var opts = try parseCountArgs(std.testing.allocator, &args_arr);
-    defer deinitFileFilter(std.testing.allocator, &opts.common.file_filter);
-    try std.testing.expectEqualStrings("src/main.zig", opts.common.file_filter.items[0]);
-}
-
-test "parseCountArgs context" {
-    const args_arr = [_][:0]const u8{ "--unified", "5" };
-    const opts = try parseCountArgs(std.testing.allocator, &args_arr);
-    try std.testing.expectEqual(@as(?u32, 5), opts.common.context);
-}
-
-test "parseCountArgs porcelain accepted silently" {
-    const opts = try parseCountArgs(std.testing.allocator, &[_][:0]const u8{"--porcelain"});
-    try std.testing.expectEqual(DiffMode.unstaged, opts.mode);
-}
-
-test "parseCountArgs no-color accepted silently" {
-    const opts = try parseCountArgs(std.testing.allocator, &[_][:0]const u8{"--no-color"});
-    try std.testing.expectEqual(DiffMode.unstaged, opts.mode);
-}
-
 test "parseCountArgs rejects positional args" {
     const args_arr = [_][:0]const u8{"abcd1234"};
     try std.testing.expectError(error.InvalidArgument, parseCountArgs(std.testing.allocator, &args_arr));
@@ -1146,16 +858,6 @@ test "parseCountArgs rejects positional args" {
 test "parseCountArgs rejects unknown flags" {
     const args_arr = [_][:0]const u8{"--unknown"};
     try std.testing.expectError(error.UnknownFlag, parseCountArgs(std.testing.allocator, &args_arr));
-}
-
-test "parseCountArgs file missing arg" {
-    const args_arr = [_][:0]const u8{"--file"};
-    try std.testing.expectError(error.MissingArgument, parseCountArgs(std.testing.allocator, &args_arr));
-}
-
-test "parseCountArgs context missing arg" {
-    const args_arr = [_][:0]const u8{"--unified"};
-    try std.testing.expectError(error.MissingArgument, parseCountArgs(std.testing.allocator, &args_arr));
 }
 
 test "parseCountArgs all flags combined" {
@@ -1199,39 +901,6 @@ test "parseCheckArgs exclusive flag" {
     var opts = try parseCheckArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expect(opts.exclusive);
-}
-
-test "parseCheckArgs porcelain flag" {
-    const allocator = std.testing.allocator;
-    const args_arr = [_][:0]const u8{ "abcd1234", "--porcelain" };
-    var opts = try parseCheckArgs(allocator, &args_arr);
-    defer deinitShaArgs(allocator, &opts.sha_args);
-    try std.testing.expectEqual(OutputMode.porcelain, opts.common.output);
-}
-
-test "parseCheckArgs no-color flag" {
-    const allocator = std.testing.allocator;
-    const args_arr = [_][:0]const u8{ "abcd1234", "--no-color" };
-    var opts = try parseCheckArgs(allocator, &args_arr);
-    defer deinitShaArgs(allocator, &opts.sha_args);
-    try std.testing.expect(opts.common.no_color);
-}
-
-test "parseCheckArgs file filter" {
-    const allocator = std.testing.allocator;
-    const args_arr = [_][:0]const u8{ "abcd1234", "--file", "src/main.zig" };
-    var opts = try parseCheckArgs(allocator, &args_arr);
-    defer deinitShaArgs(allocator, &opts.sha_args);
-    defer deinitFileFilter(allocator, &opts.common.file_filter);
-    try std.testing.expectEqualStrings("src/main.zig", opts.common.file_filter.items[0]);
-}
-
-test "parseCheckArgs context" {
-    const allocator = std.testing.allocator;
-    const args_arr = [_][:0]const u8{ "abcd1234", "--unified", "2" };
-    var opts = try parseCheckArgs(allocator, &args_arr);
-    defer deinitShaArgs(allocator, &opts.sha_args);
-    try std.testing.expectEqual(@as(?u32, 2), opts.common.context);
 }
 
 test "parseCheckArgs multiple shas" {
@@ -1331,39 +1000,6 @@ test "parseRestoreArgs dry-run" {
     var opts = try parseRestoreArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expect(opts.dry_run);
-}
-
-test "parseRestoreArgs file filter" {
-    const allocator = std.testing.allocator;
-    const args_arr = [_][:0]const u8{ "abcd1234", "--file", "src/main.zig" };
-    var opts = try parseRestoreArgs(allocator, &args_arr);
-    defer deinitShaArgs(allocator, &opts.sha_args);
-    defer deinitFileFilter(allocator, &opts.common.file_filter);
-    try std.testing.expectEqualStrings("src/main.zig", opts.common.file_filter.items[0]);
-}
-
-test "parseRestoreArgs porcelain" {
-    const allocator = std.testing.allocator;
-    const args_arr = [_][:0]const u8{ "--all", "--porcelain" };
-    var opts = try parseRestoreArgs(allocator, &args_arr);
-    defer deinitShaArgs(allocator, &opts.sha_args);
-    try std.testing.expectEqual(OutputMode.porcelain, opts.common.output);
-}
-
-test "parseRestoreArgs no-color" {
-    const allocator = std.testing.allocator;
-    const args_arr = [_][:0]const u8{ "--all", "--no-color" };
-    var opts = try parseRestoreArgs(allocator, &args_arr);
-    defer deinitShaArgs(allocator, &opts.sha_args);
-    try std.testing.expect(opts.common.no_color);
-}
-
-test "parseRestoreArgs context" {
-    const allocator = std.testing.allocator;
-    const args_arr = [_][:0]const u8{ "--all", "--unified", "2" };
-    var opts = try parseRestoreArgs(allocator, &args_arr);
-    defer deinitShaArgs(allocator, &opts.sha_args);
-    try std.testing.expectEqual(@as(?u32, 2), opts.common.context);
 }
 
 test "parseRestoreArgs rejects unknown flags" {
@@ -1490,37 +1126,13 @@ test "parseStashArgs message missing value" {
     try std.testing.expectError(error.MissingArgument, parseStashArgs(allocator, &args_arr));
 }
 
-test "parseStashArgs file filter" {
+test "parseStashArgs bare file flag" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]const u8{ "--file", "src/main.zig" };
     var opts = try parseStashArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     defer deinitFileFilter(allocator, &opts.common.file_filter);
     try std.testing.expectEqualStrings("src/main.zig", opts.common.file_filter.items[0]);
-}
-
-test "parseStashArgs porcelain" {
-    const allocator = std.testing.allocator;
-    const args_arr = [_][:0]const u8{ "--all", "--porcelain" };
-    var opts = try parseStashArgs(allocator, &args_arr);
-    defer deinitShaArgs(allocator, &opts.sha_args);
-    try std.testing.expectEqual(OutputMode.porcelain, opts.common.output);
-}
-
-test "parseStashArgs no-color" {
-    const allocator = std.testing.allocator;
-    const args_arr = [_][:0]const u8{ "--all", "--no-color" };
-    var opts = try parseStashArgs(allocator, &args_arr);
-    defer deinitShaArgs(allocator, &opts.sha_args);
-    try std.testing.expect(opts.common.no_color);
-}
-
-test "parseStashArgs context" {
-    const allocator = std.testing.allocator;
-    const args_arr = [_][:0]const u8{ "--all", "--unified", "2" };
-    var opts = try parseStashArgs(allocator, &args_arr);
-    defer deinitShaArgs(allocator, &opts.sha_args);
-    try std.testing.expectEqual(@as(?u32, 2), opts.common.context);
 }
 
 test "parseStashArgs rejects unknown flags" {
@@ -1557,22 +1169,6 @@ test "parseStashArgs old --pop flag rejected as unknown" {
 // --ref flag tests
 // ============================================================================
 
-test "parseListArgs --ref sets ref field" {
-    const args_arr = [_][:0]const u8{ "--ref", "main" };
-    const opts = try parseListArgs(std.testing.allocator, &args_arr);
-    try std.testing.expectEqualStrings("main", opts.common.ref.?);
-}
-
-test "parseListArgs --ref default null" {
-    const opts = try parseListArgs(std.testing.allocator, &.{});
-    try std.testing.expectEqual(@as(?[]const u8, null), opts.common.ref);
-}
-
-test "parseListArgs --ref missing value" {
-    const args_arr = [_][:0]const u8{"--ref"};
-    try std.testing.expectError(error.MissingArgument, parseListArgs(std.testing.allocator, &args_arr));
-}
-
 test "parseListArgs --ref with --staged allowed for single ref" {
     const args_arr = [_][:0]const u8{ "--ref", "HEAD", "--staged" };
     const opts = try parseListArgs(std.testing.allocator, &args_arr);
@@ -1598,37 +1194,15 @@ test "parseStashArgs --ref rejected" {
     try std.testing.expectError(error.InvalidArgument, parseStashArgs(allocator, &args_arr));
 }
 
-test "parseDiffArgs --ref sets ref field" {
-    const allocator = std.testing.allocator;
-    const args_arr = [_][:0]const u8{ "abcd1234", "--ref", "main" };
-    var opts = try parseDiffArgs(allocator, &args_arr);
-    defer deinitShaArgs(allocator, &opts.sha_args);
-    try std.testing.expectEqualStrings("main", opts.common.ref.?);
-}
-
 test "parseDiffArgs --ref range with --staged rejected" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]const u8{ "abcd1234", "--ref", "main..HEAD", "--staged" };
     try std.testing.expectError(error.InvalidArgument, parseDiffArgs(allocator, &args_arr));
 }
 
-test "parseCountArgs --ref sets ref field" {
-    const args_arr = [_][:0]const u8{ "--ref", "HEAD~1" };
-    const opts = try parseCountArgs(std.testing.allocator, &args_arr);
-    try std.testing.expectEqualStrings("HEAD~1", opts.common.ref.?);
-}
-
 test "parseCountArgs --ref range with --staged rejected" {
     const args_arr = [_][:0]const u8{ "--ref", "main..HEAD", "--staged" };
     try std.testing.expectError(error.InvalidArgument, parseCountArgs(std.testing.allocator, &args_arr));
-}
-
-test "parseCheckArgs --ref sets ref field" {
-    const allocator = std.testing.allocator;
-    const args_arr = [_][:0]const u8{ "abcd1234", "--ref", "main" };
-    var opts = try parseCheckArgs(allocator, &args_arr);
-    defer deinitShaArgs(allocator, &opts.sha_args);
-    try std.testing.expectEqualStrings("main", opts.common.ref.?);
 }
 
 test "parseCheckArgs --ref range with --staged rejected" {
@@ -1684,22 +1258,6 @@ test "parseCheckArgs --allow-empty default false" {
     var opts = try parseCheckArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expect(!opts.allow_empty);
-}
-
-test "parseAddResetArgs --ref sets ref field" {
-    const allocator = std.testing.allocator;
-    const args_arr = [_][:0]const u8{ "abcd1234", "--ref", "main" };
-    var opts = try parseAddResetArgs(allocator, &args_arr);
-    defer deinitShaArgs(allocator, &opts.sha_args);
-    try std.testing.expectEqualStrings("main", opts.common.ref.?);
-}
-
-test "parseRestoreArgs --ref sets ref field" {
-    const allocator = std.testing.allocator;
-    const args_arr = [_][:0]const u8{ "abcd1234", "--ref", "HEAD~1" };
-    var opts = try parseRestoreArgs(allocator, &args_arr);
-    defer deinitShaArgs(allocator, &opts.sha_args);
-    try std.testing.expectEqualStrings("HEAD~1", opts.common.ref.?);
 }
 
 // ============================================================================
@@ -1782,14 +1340,6 @@ test "parseCommitArgs rejects unknown flags" {
     try std.testing.expectError(error.UnknownFlag, parseCommitArgs(allocator, &args_arr));
 }
 
-test "parseCommitArgs --ref sets ref field" {
-    const allocator = std.testing.allocator;
-    const args_arr = [_][:0]const u8{ "abcd1234", "--ref", "main", "-m", "msg" };
-    var opts = try parseCommitArgs(allocator, &args_arr);
-    defer deinitShaArgs(allocator, &opts.sha_args);
-    try std.testing.expectEqualStrings("main", opts.common.ref.?);
-}
-
 test "parseCommitArgs all flags combined" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]const u8{
@@ -1863,51 +1413,128 @@ test "deinitFileFilter frees owned entries and the list" {
     deinitFileFilter(allocator, &list);
 }
 
-// Leak-detection tests: ensure parsers free file_filter when an error fires
-// after `--file` has been accumulated. std.testing.allocator fails on leak.
-
-test "parseListArgs leaks no memory when --file then --unknown" {
-    const args_arr = [_][:0]const u8{ "--file", "a.txt", "--file", "b.txt", "--unknown" };
-    try std.testing.expectError(error.UnknownFlag, parseListArgs(std.testing.allocator, &args_arr));
-}
-
-test "parseAddResetArgs leaks no memory when --file then --unknown" {
-    const args_arr = [_][:0]const u8{ "--file", "a.txt", "--unknown" };
-    try std.testing.expectError(error.UnknownFlag, parseAddResetArgs(std.testing.allocator, &args_arr));
-}
-
-test "parseDiffArgs leaks no memory when --file then --unknown" {
-    const args_arr = [_][:0]const u8{ "abcd1234", "--file", "a.txt", "--unknown" };
-    try std.testing.expectError(error.UnknownFlag, parseDiffArgs(std.testing.allocator, &args_arr));
-}
-
-test "parseCheckArgs leaks no memory when --file then --unknown" {
-    const args_arr = [_][:0]const u8{ "abcd1234", "--file", "a.txt", "--unknown" };
-    try std.testing.expectError(error.UnknownFlag, parseCheckArgs(std.testing.allocator, &args_arr));
-}
-
-test "parseRestoreArgs leaks no memory when --file then --unknown" {
-    const args_arr = [_][:0]const u8{ "--file", "a.txt", "--unknown" };
-    try std.testing.expectError(error.UnknownFlag, parseRestoreArgs(std.testing.allocator, &args_arr));
-}
-
-test "parseStashArgs leaks no memory when --file then --unknown" {
-    const args_arr = [_][:0]const u8{ "--file", "a.txt", "--unknown" };
-    try std.testing.expectError(error.UnknownFlag, parseStashArgs(std.testing.allocator, &args_arr));
-}
-
-test "parseCommitArgs leaks no memory when --file then --unknown" {
-    const args_arr = [_][:0]const u8{ "--file", "a.txt", "--unknown" };
-    try std.testing.expectError(error.UnknownFlag, parseCommitArgs(std.testing.allocator, &args_arr));
-}
-
-test "parseCountArgs leaks no memory when --file then --unknown" {
-    const args_arr = [_][:0]const u8{ "--file", "a.txt", "--unknown" };
-    try std.testing.expectError(error.UnknownFlag, parseCountArgs(std.testing.allocator, &args_arr));
-}
-
 test "parseListArgs leaks no memory when --file then --staged with range ref" {
     // The argument loop succeeds; validateRefStagedCombo fails after it.
     const args_arr = [_][:0]const u8{ "--file", "a.txt", "--ref", "main..HEAD", "--staged" };
     try std.testing.expectError(error.InvalidArgument, parseListArgs(std.testing.allocator, &args_arr));
+}
+
+// ============================================================================
+// Common-flag tests: every parser shares parseCommonFlag, so each common flag
+// is asserted once per parser from this table instead of copied per parser.
+// ============================================================================
+
+/// `base` is the least a parser needs to succeed, so each case can append the
+/// flag under test. `ref` and `three_way` record whether the parser keeps the
+/// flag or rejects it after parsing.
+const common_flag_cases = .{
+    .{ .name = "list", .parse = parseListArgs, .base = [_][:0]const u8{}, .ref = true, .three_way = false },
+    .{ .name = "add/reset", .parse = parseAddResetArgs, .base = [_][:0]const u8{"--all"}, .ref = true, .three_way = true },
+    .{ .name = "diff", .parse = parseDiffArgs, .base = [_][:0]const u8{"abcd1234"}, .ref = true, .three_way = false },
+    .{ .name = "count", .parse = parseCountArgs, .base = [_][:0]const u8{}, .ref = true, .three_way = false },
+    .{ .name = "check", .parse = parseCheckArgs, .base = [_][:0]const u8{"abcd1234"}, .ref = true, .three_way = false },
+    .{ .name = "restore", .parse = parseRestoreArgs, .base = [_][:0]const u8{"--all"}, .ref = true, .three_way = true },
+    .{ .name = "stash", .parse = parseStashArgs, .base = [_][:0]const u8{"--all"}, .ref = false, .three_way = false },
+    .{ .name = "commit", .parse = parseCommitArgs, .base = [_][:0]const u8{ "--all", "-m", "msg" }, .ref = true, .three_way = true },
+};
+
+fn ParseResult(comptime case: anytype) type {
+    return @typeInfo(@TypeOf(case.parse)).@"fn".return_type.?;
+}
+
+fn parseCase(comptime case: anytype, comptime extra: []const [:0]const u8) ParseResult(case) {
+    const argv = case.base ++ extra[0..extra.len].*;
+    return case.parse(std.testing.allocator, &argv);
+}
+
+fn expectCommonField(comptime case: anytype, comptime extra: []const [:0]const u8, comptime field: []const u8, expected: anytype) !void {
+    var opts = try parseCase(case, extra);
+    defer deinitOptions(std.testing.allocator, &opts);
+    const actual = @field(opts.common, field);
+    try std.testing.expectEqual(@as(@TypeOf(actual), expected), actual);
+}
+
+fn expectCommonFlags(comptime case: anytype) !void {
+    const t = std.testing;
+    {
+        var opts = try parseCase(case, &.{});
+        defer deinitOptions(t.allocator, &opts);
+        try t.expectEqual(OutputMode.human, opts.common.output);
+        try t.expect(!opts.common.no_color);
+        try t.expectEqual(@as(usize, 0), opts.common.file_filter.items.len);
+        try t.expectEqual(@as(?[]const u8, null), opts.common.ref);
+        try t.expectEqual(types.DiffFilter.all, opts.common.diff_filter);
+        try t.expectEqual(@as(?u32, null), opts.common.context);
+        try t.expectEqual(types.Verbosity.normal, opts.common.verbosity);
+        try t.expect(!opts.common.three_way);
+    }
+
+    try t.expectError(error.HelpRequested, parseCase(case, &.{"--help"}));
+    try t.expectError(error.HelpRequested, parseCase(case, &.{"-h"}));
+
+    try expectCommonField(case, &.{"--porcelain"}, "output", .porcelain);
+    try expectCommonField(case, &.{"--no-color"}, "no_color", true);
+
+    try expectCommonField(case, &.{ "--unified", "5" }, "context", 5);
+    try expectCommonField(case, &.{ "--unified", "0" }, "context", 0);
+    try expectCommonField(case, &.{"--unified=5"}, "context", 5);
+    try expectCommonField(case, &.{ "-U", "3" }, "context", 3);
+    try expectCommonField(case, &.{"-U3"}, "context", 3);
+    try expectCommonField(case, &.{"-U0"}, "context", 0);
+    try t.expectError(error.MissingArgument, parseCase(case, &.{"--unified"}));
+    try t.expectError(error.MissingArgument, parseCase(case, &.{"-U"}));
+    try t.expectError(error.InvalidArgument, parseCase(case, &.{ "--unified", "abc" }));
+    try t.expectError(error.InvalidArgument, parseCase(case, &.{"--unified=abc"}));
+    try t.expectError(error.InvalidArgument, parseCase(case, &.{"-Uabc"}));
+
+    try expectCommonField(case, &.{"--quiet"}, "verbosity", .quiet);
+    try expectCommonField(case, &.{"-q"}, "verbosity", .quiet);
+    try expectCommonField(case, &.{"--verbose"}, "verbosity", .verbose);
+    try expectCommonField(case, &.{"-v"}, "verbosity", .verbose);
+    try t.expectError(error.ConflictingVerbosity, parseCase(case, &.{ "--quiet", "--verbose" }));
+    try t.expectError(error.ConflictingVerbosity, parseCase(case, &.{ "--verbose", "--quiet" }));
+
+    try expectCommonField(case, &.{"--tracked-only"}, "diff_filter", .tracked_only);
+    try expectCommonField(case, &.{"--untracked-only"}, "diff_filter", .untracked_only);
+    try t.expectError(error.ConflictingFilter, parseCase(case, &.{ "--tracked-only", "--untracked-only" }));
+
+    {
+        var opts = try parseCase(case, &.{ "--file", "src/main.zig" });
+        defer deinitOptions(t.allocator, &opts);
+        try t.expectEqual(@as(usize, 1), opts.common.file_filter.items.len);
+        try t.expectEqualStrings("src/main.zig", opts.common.file_filter.items[0]);
+    }
+    {
+        var opts = try parseCase(case, &.{ "--file", "foo.txt", "--file", "bar.txt" });
+        defer deinitOptions(t.allocator, &opts);
+        try t.expectEqual(@as(usize, 2), opts.common.file_filter.items.len);
+        try t.expectEqualStrings("foo.txt", opts.common.file_filter.items[0]);
+        try t.expectEqualStrings("bar.txt", opts.common.file_filter.items[1]);
+    }
+    try t.expectError(error.MissingArgument, parseCase(case, &.{"--file"}));
+    // std.testing.allocator fails the test if the accumulated paths leak
+    // when a later argument errors.
+    try t.expectError(error.UnknownFlag, parseCase(case, &.{ "--file", "a.txt", "--file", "b.txt", "--unknown" }));
+
+    try t.expectError(error.MissingArgument, parseCase(case, &.{"--ref"}));
+    if (case.ref) {
+        var opts = try parseCase(case, &.{ "--ref", "main" });
+        defer deinitOptions(t.allocator, &opts);
+        try t.expectEqualStrings("main", opts.common.ref.?);
+    } else {
+        try t.expectError(error.InvalidArgument, parseCase(case, &.{ "--ref", "main" }));
+    }
+
+    if (case.three_way) {
+        try expectCommonField(case, &.{"--3way"}, "three_way", true);
+    } else {
+        try t.expectError(error.UnknownFlag, parseCase(case, &.{"--3way"}));
+    }
+}
+
+test "common flags parse identically for every command" {
+    inline for (common_flag_cases) |case| {
+        errdefer std.debug.print("common-flag case failed for: {s}\n", .{case.name});
+        try expectCommonFlags(case);
+    }
 }
