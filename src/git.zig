@@ -342,23 +342,24 @@ pub fn runGitCheckoutFiles(allocator: Allocator, file_paths: []const []const u8)
     allocator.free(out);
 }
 
-/// Paths changed by HEAD relative to its first parent (newline-separated;
-/// --root covers parentless commits). Returns an error instead of fatal.
+/// Paths changed by HEAD relative to its first parent (NUL-separated, so
+/// non-ASCII names arrive raw rather than C-quoted; --root covers parentless
+/// commits). Returns an error instead of fatal.
 pub fn runGitDiffTreeNames(allocator: Allocator) ![]u8 {
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(allocator);
-    try argv.appendSlice(allocator, &.{ "git", "diff-tree", "-r", "--name-only", "--no-commit-id" });
+    try argv.appendSlice(allocator, &.{ "git", "diff-tree", "-r", "--name-only", "-z", "--no-commit-id" });
     try argv.appendSlice(allocator, name_only_hygiene_flags);
     try argv.appendSlice(allocator, &.{ "--root", "HEAD" });
     return runGitCaptureErr(allocator, argv.items, .{}, error.DiffTreeFailed, .{ .trim = false });
 }
 
-/// Paths with staged changes (`git diff --cached --name-only`),
-/// newline-separated. Returns an error instead of fatal.
+/// Paths with staged changes (`git diff --cached --name-only -z`),
+/// NUL-separated. Returns an error instead of fatal.
 pub fn runGitDiffCachedNames(allocator: Allocator) ![]u8 {
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(allocator);
-    try argv.appendSlice(allocator, &.{ "git", "diff", "--cached", "--name-only" });
+    try argv.appendSlice(allocator, &.{ "git", "diff", "--cached", "--name-only", "-z" });
     try argv.appendSlice(allocator, name_only_hygiene_flags);
     return runGitCaptureErr(allocator, argv.items, .{}, error.DiffFailed, .{ .trim = false });
 }

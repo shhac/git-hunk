@@ -552,4 +552,43 @@ EC1116_REAL=0
     || fail "test 1116: staged diff changed"
 pass "test 1116: commit --dry-run fails exactly when the real commit does"
 
+# ============================================================================
+# Test 1117: a hook-added non-ASCII path is cleaned up too. git C-quotes such
+# names in newline listings, which never matched the raw path.
+# ============================================================================
+new_repo
+mkdir -p .git/hooks
+printf '#!/bin/sh\necho fixed > hook\303\251.txt\ngit add hook\303\251.txt\n' > .git/hooks/pre-commit
+chmod +x .git/hooks/pre-commit
+sed -i.bak '1s/.*/unstaged one 1117/' alpha.txt
+SHA1117="$(first_sha --oneline --file alpha.txt)"
+"$GIT_HUNK" commit "$SHA1117" -m "non-ascii hook add" > /dev/null 2>&1 \
+    || fail "test 1117: commit with non-ASCII hook file should succeed"
+git -c core.quotePath=false show --name-only --pretty=format: HEAD | grep -q "^hook"$'\303\251'".txt$" \
+    || fail "test 1117: hook-added file missing from commit"
+STATUS1117="$(git status --porcelain)"
+[[ -z "$STATUS1117" ]] \
+    || fail "test 1117: tree should be clean after commit, got: '$STATUS1117'"
+pass "test 1117: hook-added non-ASCII path is clean after commit"
+
+# ============================================================================
+# Test 1118: every file of a multi-file commit counts as a target in the hook
+# cleanup, not only the first file of each patch
+# ============================================================================
+new_repo
+mkdir -p .git/hooks
+printf '#!/bin/sh\necho fixed > hookfix.txt\ngit add hookfix.txt\n' > .git/hooks/pre-commit
+chmod +x .git/hooks/pre-commit
+sed -i.bak '1s/.*/multi alpha/' alpha.txt
+sed -i.bak '1s/.*/multi beta/' beta.txt
+sed -i.bak '1s/.*/multi gamma/' gamma.txt
+"$GIT_HUNK" commit --all -m "multi-file" > /dev/null 2>&1 \
+    || fail "test 1118: multi-file commit failed"
+[[ "$(git show --name-only --pretty=format: HEAD | grep -c .)" -eq 4 ]] \
+    || fail "test 1118: expected 3 targets + hook file in commit, got: '$(git show --name-only --pretty=format: HEAD)'"
+STATUS1118="$(git status --porcelain)"
+[[ -z "$STATUS1118" ]] \
+    || fail "test 1118: tree should be clean after commit, got: '$STATUS1118'"
+pass "test 1118: multi-file commit stays clean through hook cleanup"
+
 report_results

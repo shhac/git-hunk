@@ -73,6 +73,9 @@ pub const CommitContext = struct {
     allocator: Allocator,
     patches: []const []const u8,
     binary_paths: []const []const u8,
+    /// Every path a target hunk touches, text and binary alike. Compared
+    /// against git's own path listings to tell targets from hook-added files.
+    target_paths: []const []const u8,
     message: []const u8,
     amend: bool,
     three_way: bool,
@@ -188,24 +191,20 @@ fn syncRealIndex(ctx: CommitContext) void {
 fn syncHookCreatedPaths(arena: Allocator, ctx: CommitContext, user_staged_raw: ?[]const u8) !void {
     const changed_raw = try git.runGitDiffTreeNames(ctx.allocator);
     defer ctx.allocator.free(changed_raw);
-    const candidates = try computeHookCreatedPaths(arena, changed_raw, ctx.patches, ctx.binary_paths, user_staged_raw);
+    const candidates = try computeHookCreatedPaths(arena, changed_raw, ctx.target_paths, user_staged_raw);
     if (candidates.len > 0) {
         try git.runGitResetFilesLenient(ctx.allocator, candidates);
     }
 }
 
-/// True if `path` was a commit target (text patch or binary) or was staged
-/// by the user before the commit — i.e. anything that is NOT hook-created.
-fn isTargetOrUserStaged(path: []const u8, patches: []const []const u8, binary_paths: []const []const u8, user_staged_raw: ?[]const u8) bool {
-    for (patches) |p| {
-        const target = firstPatchPath(p) orelse continue;
-        if (std.mem.eql(u8, target, path)) return true;
-    }
-    for (binary_paths) |bp| {
-        if (std.mem.eql(u8, bp, path)) return true;
+/// True if `path` was a commit target or was staged by the user before the
+/// commit — i.e. anything that is NOT hook-created.
+fn isTargetOrUserStaged(path: []const u8, target_paths: []const []const u8, user_staged_raw: ?[]const u8) bool {
+    for (target_paths) |tp| {
+        if (std.mem.eql(u8, tp, path)) return true;
     }
     if (user_staged_raw) |raw| {
-        var it = std.mem.splitScalar(u8, raw, '\n');
+        var it = std.mem.splitScalar(u8, raw, 0);
         while (it.next()) |staged| {
             if (staged.len > 0 and std.mem.eql(u8, staged, path)) return true;
         }
@@ -213,21 +212,20 @@ fn isTargetOrUserStaged(path: []const u8, patches: []const []const u8, binary_pa
     return false;
 }
 
-/// Pure core of the hook-created-path cleanup: from the newline list of
-/// paths changed by the new commit, keep only those that were neither
+/// Pure core of the hook-created-path cleanup: from the NUL-separated list
+/// of paths changed by the new commit, keep only those that were neither
 /// commit targets nor user-staged. Results are arena-owned.
 fn computeHookCreatedPaths(
     arena: Allocator,
     changed_raw: []const u8,
-    patches: []const []const u8,
-    binary_paths: []const []const u8,
+    target_paths: []const []const u8,
     user_staged_raw: ?[]const u8,
 ) ![]const []const u8 {
     var candidates: std.ArrayList([]const u8) = .empty;
-    var it = std.mem.splitScalar(u8, changed_raw, '\n');
+    var it = std.mem.splitScalar(u8, changed_raw, 0);
     while (it.next()) |path| {
         if (path.len == 0) continue;
-        if (isTargetOrUserStaged(path, patches, binary_paths, user_staged_raw)) continue;
+        if (isTargetOrUserStaged(path, target_paths, user_staged_raw)) continue;
         try candidates.append(arena, try arena.dupe(u8, path));
     }
     return candidates.toOwnedSlice(arena);
@@ -269,34 +267,42 @@ test "computeHookCreatedPaths: hook-added path is a candidate" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    const out = try computeHookCreatedPaths(arena, "hookfix.txt\n", &.{}, &.{}, null);
+    const out = try computeHookCreatedPaths(arena, "hookfix.txt\x00", &.{}, null);
     try std.testing.expectEqual(@as(usize, 1), out.len);
     try std.testing.expectEqualStrings("hookfix.txt", out[0]);
 }
 
-test "computeHookCreatedPaths: text patch target is excluded" {
+test "computeHookCreatedPaths: target path is excluded" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    const patch = "diff --git a/target.txt b/target.txt\n--- a/target.txt\n+++ b/target.txt\n";
-    const out = try computeHookCreatedPaths(arena, "target.txt\nhookfix.txt\n", &.{patch}, &.{}, null);
+    const out = try computeHookCreatedPaths(arena, "target.txt\x00hookfix.txt\x00", &.{"target.txt"}, null);
     try std.testing.expectEqual(@as(usize, 1), out.len);
     try std.testing.expectEqualStrings("hookfix.txt", out[0]);
 }
 
-test "computeHookCreatedPaths: binary target is excluded" {
+test "computeHookCreatedPaths: every target of a multi-file commit is excluded" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    const out = try computeHookCreatedPaths(arena, "img.png\n", &.{}, &.{"img.png"}, null);
+    const out = try computeHookCreatedPaths(arena, "a.txt\x00b.txt\x00img.png\x00", &.{ "a.txt", "b.txt", "img.png" }, null);
     try std.testing.expectEqual(@as(usize, 0), out.len);
+}
+
+test "computeHookCreatedPaths: non-ASCII path compares raw, not C-quoted" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const out = try computeHookCreatedPaths(arena, "caf\xc3\xa9.txt\x00hook\xc3\xa9.txt\x00", &.{"caf\xc3\xa9.txt"}, null);
+    try std.testing.expectEqual(@as(usize, 1), out.len);
+    try std.testing.expectEqualStrings("hook\xc3\xa9.txt", out[0]);
 }
 
 test "computeHookCreatedPaths: user-staged path is excluded (incl. staged deletion)" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    const out = try computeHookCreatedPaths(arena, "keep.txt\nhookfix.txt\n", &.{}, &.{}, "keep.txt\nother.txt\n");
+    const out = try computeHookCreatedPaths(arena, "keep.txt\x00hookfix.txt\x00", &.{}, "keep.txt\x00other.txt\x00");
     try std.testing.expectEqual(@as(usize, 1), out.len);
     try std.testing.expectEqualStrings("hookfix.txt", out[0]);
 }
@@ -305,6 +311,6 @@ test "computeHookCreatedPaths: empty input yields no candidates" {
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    const out = try computeHookCreatedPaths(arena, "", &.{}, &.{}, null);
+    const out = try computeHookCreatedPaths(arena, "", &.{}, null);
     try std.testing.expectEqual(@as(usize, 0), out.len);
 }

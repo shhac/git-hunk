@@ -1096,6 +1096,7 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
         .allocator = allocator,
         .patches = patches,
         .binary_paths = binary_paths,
+        .target_paths = try patch_mod.collectUniqueFilePaths(arena, matched.items),
         .message = message,
         .amend = opts.amend,
         .three_way = opts.three_way,
