@@ -282,8 +282,8 @@ pub fn stashPop(allocator: Allocator, verbosity: Verbosity) !void {
 }
 
 pub const TrackedStashResult = struct {
-    /// Arena-owned patches (for reverse-apply to worktree during cleanup).
-    /// Multiple patches when typechanges are present.
+    /// Arena-owned patches, in order, for reverse-apply to the worktree during
+    /// cleanup. Multiple patches when typechanges are present.
     index_patches: []const []const u8,
     /// Allocator-owned stash tree SHA — caller must free.
     stash_tree: []const u8,
@@ -337,9 +337,7 @@ pub fn buildTrackedStashTree(
     defer tmp.deinit();
 
     try git.runGitReadTree(allocator, head_tree, &tmp.env_map);
-    for (head_patches) |hp| {
-        _ = try git.runGitApply(allocator, hp, .{ .target = .index, .env_map = &tmp.env_map });
-    }
+    _ = try git.applyPatches(allocator, head_patches, .{ .target = .index, .env_map = &tmp.env_map });
 
     const stash_tree = try git.runGitWriteTree(allocator, &tmp.env_map);
     return .{ .index_patches = index_patches, .stash_tree = stash_tree };
@@ -398,11 +396,8 @@ pub fn cleanupWorktree(
     untracked_matched: []const MatchedHunk,
 ) void {
     if (has_tracked) {
-        // Reverse order for typechange patches (undo create before undo delete)
-        var i: usize = index_patches.len;
-        while (i > 0) {
-            i -= 1;
-            _ = git.runGitApply(allocator, index_patches[i], .{ .reverse = true, .target = .worktree }) catch {
+        for (index_patches) |patch| {
+            _ = git.runGitApply(allocator, patch, .{ .reverse = true, .target = .worktree }) catch {
                 std.debug.print("warning: stash created but worktree changes could not be removed\n", .{});
                 std.debug.print("hint: use 'git stash pop' to undo or manually resolve\n", .{});
                 break;

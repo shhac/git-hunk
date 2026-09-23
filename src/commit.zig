@@ -99,9 +99,7 @@ fn seedTempIndex(allocator: Allocator) !git.TempIndex {
 pub fn checkTempIndexCommit(allocator: Allocator, patches: []const []const u8, ref: ?[]const u8) !void {
     var tmp = try seedTempIndex(allocator);
     defer tmp.deinit();
-    for (patches) |p| {
-        _ = try git.runGitApply(allocator, p, .{ .target = .index, .check_only = true, .ref = ref, .env_map = &tmp.env_map });
-    }
+    _ = try git.applyPatches(allocator, patches, .{ .target = .index, .check_only = true, .ref = ref, .env_map = &tmp.env_map });
 }
 
 /// Commit the target hunks through a throwaway GIT_INDEX_FILE index: build

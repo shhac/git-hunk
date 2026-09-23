@@ -107,19 +107,22 @@ pub fn partitionByKind(arena: Allocator, matches: []const MatchedHunk) !HunkPart
 /// direction must keep a different set of deselected lines as context.
 pub const ApplyDirection = enum { forward, reverse };
 
-/// Build one or more patches from matched hunks. Returns multiple patches when
-/// typechanges are present (same file with delete + create requires separate
-/// git-apply calls because git cannot apply both in a single patch).
-/// Sort matches into patch order, then build the combined per-file patches.
-/// Sorting first is a correctness precondition of buildCombinedPatches
-/// (typechange deletions must precede creations); this keeps the pair
-/// inseparable at call sites.
+/// Build one or more patches from matched hunks, in the order `direction`
+/// must apply them. Returns multiple patches when typechanges are present
+/// (same file with delete + create requires separate git-apply calls because
+/// git cannot apply both in a single patch): a forward apply deletes the old
+/// file before creating the new one, and a reverse apply undoes the creation
+/// before restoring the deleted file, so reverse gets the patches back to front.
+/// Sorts `matches` in place first: buildCombinedPatches relies on typechange
+/// deletions preceding creations, and this keeps the pair inseparable.
 pub fn sortAndBuildPatches(arena: Allocator, matches: []MatchedHunk, direction: ApplyDirection) ![]const []const u8 {
     std.mem.sort(MatchedHunk, matches, {}, matchedHunkPatchOrder);
-    return buildCombinedPatches(arena, matches, direction);
+    const patches = try buildCombinedPatches(arena, matches, direction);
+    if (direction == .reverse) std.mem.reverse([]const u8, patches);
+    return patches;
 }
 
-fn buildCombinedPatches(arena: Allocator, matches: []const MatchedHunk, direction: ApplyDirection) ![]const []const u8 {
+fn buildCombinedPatches(arena: Allocator, matches: []const MatchedHunk, direction: ApplyDirection) ![][]const u8 {
     var patches: std.ArrayList([]const u8) = .empty;
     var patch: std.ArrayList(u8) = .empty;
 
@@ -565,6 +568,35 @@ test "buildCombinedPatches typechange with other files" {
     try std.testing.expect(std.mem.indexOf(u8, patches[0], "deleted file") != null);
     // Second patch: b.txt creation
     try std.testing.expect(std.mem.indexOf(u8, patches[1], "new file mode 120000") != null);
+}
+
+test "sortAndBuildPatches reverse undoes a typechange's creation first" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var h_del = testMakeHunk("b.txt", 1, 1, 0, 0);
+    h_del.patch_header = "diff --git a/b.txt b/b.txt\ndeleted file mode 100644\n--- a/b.txt\n+++ /dev/null\n";
+    h_del.raw_lines = "@@ -1 +0,0 @@\n-world\n";
+    h_del.is_deleted_file = true;
+    var h_new = testMakeHunk("b.txt", 0, 0, 1, 1);
+    h_new.patch_header = "diff --git a/b.txt b/b.txt\nnew file mode 120000\n--- /dev/null\n+++ b/b.txt\n";
+    h_new.raw_lines = "@@ -0,0 +1 @@\n+a.txt\n";
+    h_new.is_new_file = true;
+    // Arrival order is irrelevant: the builder sorts before building.
+    var forward_in = [_]MatchedHunk{
+        .{ .hunk = &h_new, .line_spec = null },
+        .{ .hunk = &h_del, .line_spec = null },
+    };
+    var reverse_in = forward_in;
+
+    const forward = try sortAndBuildPatches(arena.allocator(), &forward_in, .forward);
+    try std.testing.expectEqual(@as(usize, 2), forward.len);
+    try std.testing.expect(std.mem.indexOf(u8, forward[0], "deleted file mode") != null);
+    try std.testing.expect(std.mem.indexOf(u8, forward[1], "new file mode") != null);
+
+    const reverse = try sortAndBuildPatches(arena.allocator(), &reverse_in, .reverse);
+    try std.testing.expectEqual(@as(usize, 2), reverse.len);
+    try std.testing.expect(std.mem.indexOf(u8, reverse[0], "new file mode") != null);
+    try std.testing.expect(std.mem.indexOf(u8, reverse[1], "deleted file mode") != null);
 }
 
 test "matchedHunkPatchOrder typechange sorts deleted before new" {

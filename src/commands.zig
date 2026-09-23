@@ -508,7 +508,7 @@ fn captureTargetHunks(
     }
 }
 
-/// Apply text patches in order (forward) or reverse order (unstage), then run
+/// Apply text patches forward (stage) or in reverse (unstage), then run
 /// git add/reset on `binary_paths`.
 /// Returns true if any of the patches landed with `--3way` conflicts.
 fn applyTextAndBinary(
@@ -524,18 +524,8 @@ fn applyTextAndBinary(
     if (text_matched.len > 0) {
         const reverse = action == .unstage;
         const patches = try patch_mod.sortAndBuildPatches(arena, text_matched, if (reverse) .reverse else .forward);
-        const apply_opts = git.ApplyOptions{ .reverse = reverse, .target = .index, .three_way = three_way, .ref = ref };
-        if (reverse) {
-            var i: usize = patches.len;
-            while (i > 0) {
-                i -= 1;
-                if (try git.runGitApply(allocator, patches[i], apply_opts) == .applied_with_conflicts) any_conflicts = true;
-            }
-        } else {
-            for (patches) |patch| {
-                if (try git.runGitApply(allocator, patch, apply_opts) == .applied_with_conflicts) any_conflicts = true;
-            }
-        }
+        const result = try git.applyPatches(allocator, patches, .{ .reverse = reverse, .target = .index, .three_way = three_way, .ref = ref });
+        any_conflicts = result == .applied_with_conflicts;
     }
     if (binary_paths.len > 0) {
         switch (action) {
@@ -618,16 +608,17 @@ fn dryRunApplyHunks(
     const reverse = action == .unstage;
     if (text_matched.len > 0) {
         const patches = try patch_mod.sortAndBuildPatches(arena, text_matched, if (reverse) .reverse else .forward);
-        var i: usize = patches.len;
-        while (i > 0) {
-            i -= 1;
-            _ = try git.runGitApply(allocator, patches[i], .{
-                .reverse = reverse,
-                .target = .index,
-                .check_only = true,
-                .ref = opts.common.ref,
-            });
-        }
+        // `--check` tests every patch against the untouched index, so order
+        // only decides which failure is reported first. Staging reports from
+        // the last patch back, the reverse of the order it applies in.
+        const check_order = try arena.dupe([]const u8, patches);
+        if (action == .stage) std.mem.reverse([]const u8, check_order);
+        _ = try git.applyPatches(allocator, check_order, .{
+            .reverse = reverse,
+            .target = .index,
+            .check_only = true,
+            .ref = opts.common.ref,
+        });
     }
 
     const verbs: struct { human: []const u8, porcelain: []const u8 } = switch (action) {
@@ -731,19 +722,15 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
     var any_restore_conflicts = false;
     if (text_matched.len > 0) {
         const patches = try patch_mod.sortAndBuildPatches(arena, text_matched, .reverse);
-        var i: usize = patches.len;
-        while (i > 0) {
-            i -= 1;
-            // git apply rejects --3way + --check; for dry-run we drop --3way.
-            const result = try git.runGitApply(allocator, patches[i], .{
-                .reverse = true,
-                .target = .worktree,
-                .check_only = opts.dry_run,
-                .three_way = opts.common.three_way and !opts.dry_run,
-                .ref = opts.common.ref,
-            });
-            if (result == .applied_with_conflicts) any_restore_conflicts = true;
-        }
+        // git apply rejects --3way + --check; for dry-run we drop --3way.
+        const result = try git.applyPatches(allocator, patches, .{
+            .reverse = true,
+            .target = .worktree,
+            .check_only = opts.dry_run,
+            .three_way = opts.common.three_way and !opts.dry_run,
+            .ref = opts.common.ref,
+        });
+        any_restore_conflicts = result == .applied_with_conflicts;
     }
 
     // Binary tracked hunks: restore from index

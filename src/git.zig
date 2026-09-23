@@ -259,6 +259,16 @@ pub const ApplyOptions = struct {
 
 pub const ApplyResult = enum { applied_clean, applied_with_conflicts };
 
+/// Apply `patches` one after another under the same options, stopping at the
+/// first that fails. Reports conflicts if any patch landed with them.
+pub fn applyPatches(allocator: Allocator, patches: []const []const u8, opts: ApplyOptions) !ApplyResult {
+    var result: ApplyResult = .applied_clean;
+    for (patches) |patch| {
+        if (try runGitApply(allocator, patch, opts) == .applied_with_conflicts) result = .applied_with_conflicts;
+    }
+    return result;
+}
+
 pub fn runGitApply(allocator: Allocator, patch: []const u8, opts: ApplyOptions) !ApplyResult {
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(allocator);
