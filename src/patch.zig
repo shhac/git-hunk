@@ -7,7 +7,9 @@ const MatchedHunk = types.MatchedHunk;
 const LineSpec = types.LineSpec;
 const LineRange = types.LineRange;
 
-pub fn findHunkByShaPrefix(hunks: []const Hunk, prefix: []const u8, file_filter: []const []const u8) !*const Hunk {
+pub const ShaLookupError = error{ NotFound, AmbiguousPrefix };
+
+pub fn findHunkByShaPrefix(hunks: []const Hunk, prefix: []const u8, file_filter: []const []const u8) ShaLookupError!*const Hunk {
     var match: ?*const Hunk = null;
     for (hunks) |*h| {
         if (!types.matchesFileFilter(h.file_path, file_filter)) continue;
@@ -31,14 +33,9 @@ fn matchedHunkPatchOrder(_: void, a: MatchedHunk, b: MatchedHunk) bool {
 pub fn collectUniqueFilePaths(arena: Allocator, matches: []const MatchedHunk) ![]const []const u8 {
     var list: std.ArrayList([]const u8) = .empty;
     for (matches) |m| {
-        var already_present = false;
         for (list.items) |fp| {
-            if (std.mem.eql(u8, fp, m.hunk.file_path)) {
-                already_present = true;
-                break;
-            }
-        }
-        if (!already_present) try list.append(arena, m.hunk.file_path);
+            if (std.mem.eql(u8, fp, m.hunk.file_path)) break;
+        } else try list.append(arena, m.hunk.file_path);
     }
     return list.items;
 }

@@ -14,7 +14,6 @@ const Hunk = types.Hunk;
 const LineRange = types.LineRange;
 const MatchedHunk = types.MatchedHunk;
 const DiffMode = types.DiffMode;
-const DiffFilter = types.DiffFilter;
 const ListOptions = types.ListOptions;
 const AddResetOptions = types.AddResetOptions;
 const DiffOptions = types.DiffOptions;
@@ -33,29 +32,27 @@ const runTempIndexCommit = commit_mod.runTempIndexCommit;
 const checkTempIndexCommit = commit_mod.checkTempIndexCommit;
 const printCommitResults = commit_mod.printCommitResults;
 
-/// Get diff output including untracked files (unstaged mode only).
-/// Returns the tracked diff output and, separately, the untracked diff output.
-/// Both must remain alive while hunks reference them (hunks contain sub-slices).
-/// Hunks from untracked files have `is_untracked = true`.
-fn getDiffWithUntracked(
-    allocator: Allocator,
-    arena: Allocator,
-    mode: DiffMode,
-    ref: ?[]const u8,
-    context: ?u32,
-    file_filter: []const []const u8,
-    diff_filter: DiffFilter,
-    hunks: *std.ArrayList(Hunk),
-) !struct { tracked: []u8, untracked: []u8 } {
-    // Skip tracked diffs when only untracked files are requested
-    const diff_output = if (diff_filter == .untracked_only)
-        try allocator.alloc(u8, 0)
-    else
-        try git.runGitDiffFiles(allocator, mode, ref, context, &.{});
-    errdefer allocator.free(diff_output);
+/// A command's parsed diff. Hunks are sub-slices of the diff text, and both
+/// live in the arena `loadHunks` was given.
+const Loaded = struct {
+    hunks: []Hunk,
+    /// The tracked part of the diff, which `reportSkippedPaths` re-reads.
+    tracked_diff: []const u8,
+};
 
-    if (diff_output.len > 0) {
-        try diff_mod.parseDiff(arena, diff_output, mode, hunks);
+/// Diff and parse the hunks a command works on: tracked changes for `mode`
+/// and `common.ref`, plus untracked files (unstaged mode only), each narrowed
+/// by `common.diff_filter`. Hunks from untracked files have `is_untracked = true`.
+fn loadHunks(arena: Allocator, mode: DiffMode, common: types.Common) !Loaded {
+    var hunks: std.ArrayList(Hunk) = .empty;
+
+    // Skip tracked diffs when only untracked files are requested
+    const tracked_diff: []const u8 = if (common.diff_filter == .untracked_only)
+        ""
+    else
+        try git.runGitDiffFiles(arena, mode, common.ref, common.context, &.{});
+    if (tracked_diff.len > 0) {
+        try diff_mod.parseDiff(arena, tracked_diff, mode, &hunks);
     }
 
     // Untracked files appear only when the worktree is the right-side endpoint:
@@ -63,24 +60,19 @@ fn getDiffWithUntracked(
     // - Single ref, unstaged: worktree is right side → include
     // - Staged (with or without ref): index is right side → exclude
     // - Range (contains ".."): no worktree involved → exclude
-    const is_range = if (ref) |r| std.mem.indexOf(u8, r, "..") != null else false;
-    if (mode == .unstaged and !is_range and diff_filter != .tracked_only) {
-        const untracked_diff = try git.diffUntrackedFiles(allocator, file_filter);
-        errdefer allocator.free(untracked_diff);
-
+    const is_range = if (common.ref) |r| std.mem.indexOf(u8, r, "..") != null else false;
+    if (mode == .unstaged and !is_range and common.diff_filter != .tracked_only) {
+        const untracked_diff = try git.diffUntrackedFiles(arena, common.file_filter.items);
         if (untracked_diff.len > 0) {
             const before_count = hunks.items.len;
-            try diff_mod.parseDiff(arena, untracked_diff, .unstaged, hunks);
-            // Mark newly-added hunks as untracked
+            try diff_mod.parseDiff(arena, untracked_diff, .unstaged, &hunks);
             for (hunks.items[before_count..]) |*h| {
                 h.is_untracked = true;
             }
         }
-
-        return .{ .tracked = diff_output, .untracked = untracked_diff };
     }
 
-    return .{ .tracked = diff_output, .untracked = try allocator.alloc(u8, 0) };
+    return .{ .hunks = hunks.items, .tracked_diff = tracked_diff };
 }
 
 /// Print a note naming changed paths that produced no hunk, so a tree git
@@ -103,23 +95,18 @@ fn reportSkippedPaths(arena: Allocator, tracked_diff: []const u8, hunks: []const
 }
 
 pub fn cmdList(allocator: Allocator, stdout: *std.Io.Writer, opts: ListOptions) !void {
-    // Use arena for all hunk-related allocations
     var arena_state = std.heap.ArenaAllocator.init(allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var hunks: std.ArrayList(Hunk) = .empty;
-    defer hunks.deinit(arena);
-
-    const diffs = try getDiffWithUntracked(allocator, arena, opts.mode, opts.common.ref, opts.common.context, opts.common.file_filter.items, opts.common.diff_filter, &hunks);
-    defer allocator.free(diffs.tracked);
-    defer allocator.free(diffs.untracked);
+    const loaded = try loadHunks(arena, opts.mode, opts.common);
+    const hunks = loaded.hunks;
 
     if (opts.common.verbosity == .verbose) {
-        try reportSkippedPaths(arena, diffs.tracked, hunks.items, opts.common.file_filter.items);
+        try reportSkippedPaths(arena, loaded.tracked_diff, hunks, opts.common.file_filter.items);
     }
 
-    if (hunks.items.len == 0) return;
+    if (hunks.len == 0) return;
 
     // Compute display parameters for human mode
     const use_color = format.shouldUseColor(opts.common.output, opts.common.no_color);
@@ -128,7 +115,7 @@ pub fn cmdList(allocator: Allocator, stdout: *std.Io.Writer, opts: ListOptions) 
     // Pre-pass: find max file path length for dynamic column width (human mode only)
     var max_path_len: usize = 0;
     if (opts.common.output == .human) {
-        for (hunks.items) |h| {
+        for (hunks) |h| {
             if (!types.matchesFileFilter(h.file_path, opts.common.file_filter.items)) continue;
             max_path_len = @max(max_path_len, h.file_path.len + @as(usize, if (h.is_symlink) 1 else 0));
         }
@@ -142,7 +129,7 @@ pub fn cmdList(allocator: Allocator, stdout: *std.Io.Writer, opts: ListOptions) 
     var file_count: usize = 0;
     var last_file: []const u8 = "";
 
-    for (hunks.items) |h| {
+    for (hunks) |h| {
         if (!types.matchesFileFilter(h.file_path, opts.common.file_filter.items)) continue;
         if (!std.mem.eql(u8, h.file_path, last_file)) {
             file_count += 1;
@@ -174,21 +161,16 @@ pub fn cmdCount(allocator: Allocator, stdout: *std.Io.Writer, opts: CountOptions
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var hunks: std.ArrayList(Hunk) = .empty;
-    defer hunks.deinit(arena);
-
-    const diffs = try getDiffWithUntracked(allocator, arena, opts.mode, opts.common.ref, opts.common.context, opts.common.file_filter.items, opts.common.diff_filter, &hunks);
-    defer allocator.free(diffs.tracked);
-    defer allocator.free(diffs.untracked);
+    const loaded = try loadHunks(arena, opts.mode, opts.common);
 
     var count: usize = 0;
-    for (hunks.items) |h| {
+    for (loaded.hunks) |h| {
         if (!types.matchesFileFilter(h.file_path, opts.common.file_filter.items)) continue;
         count += 1;
     }
 
     if (opts.common.verbosity == .verbose) {
-        try reportSkippedPaths(arena, diffs.tracked, hunks.items, opts.common.file_filter.items);
+        try reportSkippedPaths(arena, loaded.tracked_diff, loaded.hunks, opts.common.file_filter.items);
     }
 
     if (opts.common.verbosity != .quiet) {
@@ -222,14 +204,9 @@ fn runChecks(
 ) !CheckSummary {
     var unique_prefixes: std.ArrayList([]const u8) = .empty;
     for (sha_args) |sha_arg| {
-        var already = false;
         for (unique_prefixes.items) |p| {
-            if (std.mem.eql(u8, p, sha_arg.prefix)) {
-                already = true;
-                break;
-            }
-        }
-        if (!already) try unique_prefixes.append(arena, sha_arg.prefix);
+            if (std.mem.eql(u8, p, sha_arg.prefix)) break;
+        } else try unique_prefixes.append(arena, sha_arg.prefix);
     }
 
     var results: std.ArrayList(CheckResult) = .empty;
@@ -264,14 +241,9 @@ fn runChecks(
     if (exclusive) {
         for (hunks) |*h| {
             if (!types.matchesFileFilter(h.file_path, file_filter)) continue;
-            var was_matched = false;
             for (matched_sha_hexes.items) |sha_ptr| {
-                if (std.mem.eql(u8, &h.sha_hex, sha_ptr)) {
-                    was_matched = true;
-                    break;
-                }
-            }
-            if (!was_matched) {
+                if (std.mem.eql(u8, &h.sha_hex, sha_ptr)) break;
+            } else {
                 try unexpected.append(arena, h);
                 has_failure = true;
             }
@@ -356,14 +328,9 @@ pub fn cmdCheck(allocator: Allocator, stdout: *std.Io.Writer, opts: CheckOptions
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var hunks: std.ArrayList(Hunk) = .empty;
-    defer hunks.deinit(arena);
+    const loaded = try loadHunks(arena, opts.mode, opts.common);
 
-    const diffs = try getDiffWithUntracked(allocator, arena, opts.mode, opts.common.ref, opts.common.context, opts.common.file_filter.items, opts.common.diff_filter, &hunks);
-    defer allocator.free(diffs.tracked);
-    defer allocator.free(diffs.untracked);
-
-    const summary = try runChecks(arena, hunks.items, opts.sha_args.items, opts.common.file_filter.items, opts.exclusive);
+    const summary = try runChecks(arena, loaded.hunks, opts.sha_args.items, opts.common.file_filter.items, opts.exclusive);
 
     // --allow-empty with no SHAs: skip rendering "ok" entries (there are none) — only
     // unexpected hunks can fail. If there are none, exit successfully.
@@ -394,91 +361,108 @@ pub fn cmdReset(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpti
 
 const ApplyAction = enum { stage, unstage };
 
-/// Resolve SHA prefix args to matched hunks, deduplicating by full SHA and merging
-/// line specs. Appends results to `matched`. Exits on NotFound/AmbiguousPrefix errors.
+/// Resolve each SHA prefix arg to its hunk, folding repeats of one hunk into a
+/// single entry. Exits on a prefix that matches no hunk or several.
 fn resolveMatchedHunks(
     arena: Allocator,
     hunks: []const Hunk,
     sha_args: []const types.ShaArg,
     file_filter: []const []const u8,
-    matched: *std.ArrayList(MatchedHunk),
-) !void {
+) ![]MatchedHunk {
+    var matched: std.ArrayList(MatchedHunk) = .empty;
     for (sha_args) |sha_arg| {
-        const hunk = patch_mod.findHunkByShaPrefix(hunks, sha_arg.prefix, file_filter) catch |err| switch (err) {
-            error.NotFound => {
-                // A --file filter scopes hash lookup as well as bulk selection,
-                // so a live hash in an unlisted file reports as "no hunk
-                // matching" — which reads as a stale hash and sends people
-                // hunting for the wrong problem. Re-resolve without the filter
-                // to say which it actually was.
-                if (file_filter.len > 0) {
-                    if (patch_mod.findHunkByShaPrefix(hunks, sha_arg.prefix, &.{})) |outside| {
-                        std.debug.print(
-                            "error: no hunk matching '{s}' in the --file selection (it is in '{s}')\n" ++
-                                "hint: --file also scopes which hunks a hash can match; stage the files and the hashes in two commands\n",
-                            .{ sha_arg.prefix, outside.file_path },
-                        );
-                        std.process.exit(1);
-                    } else |_| {}
-                }
-                std.debug.print("error: no hunk matching '{s}'\n", .{sha_arg.prefix});
-                std.process.exit(1);
-            },
-            error.AmbiguousPrefix => {
-                std.debug.print("error: ambiguous prefix '{s}' — matches multiple hunks\n", .{sha_arg.prefix});
-                std.process.exit(1);
-            },
-        };
-        // Reject line-spec on binary hunks
+        const hunk = patch_mod.findHunkByShaPrefix(hunks, sha_arg.prefix, file_filter) catch |err|
+            exitUnresolvedPrefix(err, hunks, sha_arg.prefix, file_filter);
         if (hunk.is_binary and sha_arg.line_spec != null) {
             std.debug.print("error: line selection not supported for binary file '{s}'\n", .{hunk.file_path});
             std.process.exit(1);
         }
-        // Deduplicate: merge line specs for same hunk, or skip if already whole-hunk
-        var found_existing = false;
-        for (matched.items) |*existing| {
-            if (std.mem.eql(u8, &existing.hunk.sha_hex, &hunk.sha_hex)) {
-                // Merge: if either has no line_spec, result is whole hunk
-                if (existing.line_spec == null or sha_arg.line_spec == null) {
-                    existing.line_spec = null;
-                } else {
-                    // Merge ranges by concatenation
-                    const old_ranges = existing.line_spec.?.ranges;
-                    const new_ranges = sha_arg.line_spec.?.ranges;
-                    const merged = try arena.alloc(LineRange, old_ranges.len + new_ranges.len);
-                    @memcpy(merged[0..old_ranges.len], old_ranges);
-                    @memcpy(merged[old_ranges.len..], new_ranges);
-                    existing.line_spec = .{ .ranges = merged };
-                }
-                found_existing = true;
-                break;
-            }
-        }
-        if (!found_existing) {
-            try matched.append(arena, .{ .hunk = hunk, .line_spec = sha_arg.line_spec });
-        }
+        try mergeIntoMatched(arena, &matched, hunk, sha_arg.line_spec);
     }
+    return matched.items;
 }
 
-/// Resolve hunks: bulk mode (match all, optionally filtered by file) or SHA prefix matching.
-fn resolveHunksFromOpts(
+fn exitUnresolvedPrefix(
+    err: patch_mod.ShaLookupError,
+    hunks: []const Hunk,
+    prefix: []const u8,
+    file_filter: []const []const u8,
+) noreturn {
+    switch (err) {
+        error.NotFound => {
+            // A --file filter scopes hash lookup as well as bulk selection,
+            // so a live hash in an unlisted file reports as "no hunk
+            // matching" — which reads as a stale hash and sends people
+            // hunting for the wrong problem. Re-resolve without the filter
+            // to say which it actually was.
+            if (file_filter.len > 0) {
+                if (patch_mod.findHunkByShaPrefix(hunks, prefix, &.{})) |outside| {
+                    std.debug.print(
+                        "error: no hunk matching '{s}' in the --file selection (it is in '{s}')\n" ++
+                            "hint: --file also scopes which hunks a hash can match; stage the files and the hashes in two commands\n",
+                        .{ prefix, outside.file_path },
+                    );
+                    std.process.exit(1);
+                } else |_| {}
+            }
+            std.debug.print("error: no hunk matching '{s}'\n", .{prefix});
+        },
+        error.AmbiguousPrefix => {
+            std.debug.print("error: ambiguous prefix '{s}' — matches multiple hunks\n", .{prefix});
+        },
+    }
+    std.process.exit(1);
+}
+
+/// Add `hunk` to `matched`, or fold it into the entry already there for the
+/// same hunk so it is applied once.
+fn mergeIntoMatched(
+    arena: Allocator,
+    matched: *std.ArrayList(MatchedHunk),
+    hunk: *const Hunk,
+    line_spec: ?types.LineSpec,
+) !void {
+    for (matched.items) |*existing| {
+        if (!std.mem.eql(u8, &existing.hunk.sha_hex, &hunk.sha_hex)) continue;
+        existing.line_spec = try mergeLineSpecs(arena, existing.line_spec, line_spec);
+        return;
+    }
+    try matched.append(arena, .{ .hunk = hunk, .line_spec = line_spec });
+}
+
+/// Two selections from one hunk: a whole-hunk selection (null) absorbs the
+/// other, while two line selections combine their ranges.
+fn mergeLineSpecs(arena: Allocator, a: ?types.LineSpec, b: ?types.LineSpec) !?types.LineSpec {
+    const a_spec = a orelse return null;
+    const b_spec = b orelse return null;
+    return .{ .ranges = try std.mem.concat(arena, LineRange, &.{ a_spec.ranges, b_spec.ranges }) };
+}
+
+/// The hunks a command acts on: those its hash args name or, with none, every
+/// hunk in the --file scope. Exits when that selects nothing.
+fn selectHunks(
     arena: Allocator,
     hunks: []const Hunk,
     sha_args: []const types.ShaArg,
     file_filter: []const []const u8,
-    matched: *std.ArrayList(MatchedHunk),
-) !void {
-    if (sha_args.len == 0) {
-        for (hunks) |*h| {
-            if (!types.matchesFileFilter(h.file_path, file_filter)) continue;
-            try matched.append(arena, .{ .hunk = h, .line_spec = null });
-        }
-    } else {
-        try resolveMatchedHunks(arena, hunks, sha_args, file_filter, matched);
-    }
+) ![]MatchedHunk {
+    const matched = if (sha_args.len == 0)
+        try matchAllInScope(arena, hunks, file_filter)
+    else
+        try resolveMatchedHunks(arena, hunks, sha_args, file_filter);
+    exitIfNoMatches(matched.len, file_filter);
+    return matched;
 }
 
-/// Exit with an error message if no hunks were matched.
+fn matchAllInScope(arena: Allocator, hunks: []const Hunk, file_filter: []const []const u8) ![]MatchedHunk {
+    var matched: std.ArrayList(MatchedHunk) = .empty;
+    for (hunks) |*h| {
+        if (!types.matchesFileFilter(h.file_path, file_filter)) continue;
+        try matched.append(arena, .{ .hunk = h, .line_spec = null });
+    }
+    return matched.items;
+}
+
 /// Print "no [un]staged changes\n" and exit(1). Centralises the message so it
 /// can't drift across commands.
 fn exitNoChanges(mode: DiffMode) noreturn {
@@ -490,6 +474,7 @@ fn exitNoChanges(mode: DiffMode) noreturn {
     std.process.exit(1);
 }
 
+/// Exit with an error message if no hunks were matched.
 fn exitIfNoMatches(matched_len: usize, file_filter: []const []const u8) void {
     if (matched_len > 0) return;
     if (file_filter.len == 1) {
@@ -665,21 +650,11 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var hunks: std.ArrayList(Hunk) = .empty;
-    defer hunks.deinit(arena);
+    const hunks = (try loadHunks(arena, diff_mode, opts.common)).hunks;
+    if (hunks.len == 0) exitNoChanges(diff_mode);
+    const matched = try selectHunks(arena, hunks, opts.sha_args.items, opts.common.file_filter.items);
 
-    const diffs = try getDiffWithUntracked(allocator, arena, diff_mode, opts.common.ref, opts.common.context, opts.common.file_filter.items, opts.common.diff_filter, &hunks);
-    defer allocator.free(diffs.tracked);
-    defer allocator.free(diffs.untracked);
-
-    if (hunks.items.len == 0) exitNoChanges(diff_mode);
-
-    var matched: std.ArrayList(MatchedHunk) = .empty;
-    defer matched.deinit(arena);
-    try resolveHunksFromOpts(arena, hunks.items, opts.sha_args.items, opts.common.file_filter.items, &matched);
-    exitIfNoMatches(matched.items.len, opts.common.file_filter.items);
-
-    const partition = try patch_mod.partitionByKind(arena, matched.items);
+    const partition = try patch_mod.partitionByKind(arena, matched);
     const text_matched = try partition.combinedText(arena);
     const binary_paths = try partition.allBinaryPaths(arena);
     const binary_matched = try partition.combinedBinary(arena);
@@ -689,13 +664,13 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
     // once the patch has been applied and the target re-diffed, which is
     // exactly what a dry run must not do. Matches restore --dry-run.
     if (opts.dry_run) {
-        try dryRunApplyHunks(allocator, arena, stdout, opts, action, text_matched, matched.items);
+        try dryRunApplyHunks(allocator, arena, stdout, opts, action, text_matched, matched);
         return;
     }
 
     // Capture target-side hunks BEFORE and AFTER applying so buildResultGroups
     // can detect merges and map applied hunks to their post-apply hashes.
-    const file_paths = try patch_mod.collectUniqueFilePaths(arena, matched.items);
+    const file_paths = try patch_mod.collectUniqueFilePaths(arena, matched);
     const target_mode: DiffMode = switch (action) {
         .stage => .staged,
         .unstage => .unstaged,
@@ -729,29 +704,19 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
 }
 
 pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOptions) !void {
-    // Restore always operates on unstaged hunks (worktree vs index)
     var arena_state = std.heap.ArenaAllocator.init(allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var hunks: std.ArrayList(Hunk) = .empty;
-    defer hunks.deinit(arena);
-
-    const diffs = try getDiffWithUntracked(allocator, arena, .unstaged, opts.common.ref, opts.common.context, opts.common.file_filter.items, opts.common.diff_filter, &hunks);
-    defer allocator.free(diffs.tracked);
-    defer allocator.free(diffs.untracked);
-
-    if (hunks.items.len == 0) exitNoChanges(.unstaged);
-
-    var matched: std.ArrayList(MatchedHunk) = .empty;
-    defer matched.deinit(arena);
-    try resolveHunksFromOpts(arena, hunks.items, opts.sha_args.items, opts.common.file_filter.items, &matched);
-    exitIfNoMatches(matched.items.len, opts.common.file_filter.items);
+    // Restore always operates on unstaged hunks (worktree vs index)
+    const hunks = (try loadHunks(arena, .unstaged, opts.common)).hunks;
+    if (hunks.len == 0) exitNoChanges(.unstaged);
+    const matched = try selectHunks(arena, hunks, opts.sha_args.items, opts.common.file_filter.items);
 
     // Gate: untracked files require --force (restoring deletes them permanently)
     // Dry-run bypasses the gate — safe to preview without --force
     if (!opts.force and !opts.dry_run) {
-        for (matched.items) |m| {
+        for (matched) |m| {
             if (m.hunk.is_untracked) {
                 std.debug.print("error: {s} ({s}) is an untracked file -- use --force to delete\n", .{ m.hunk.sha_hex[0..7], m.hunk.file_path });
                 std.process.exit(1);
@@ -759,7 +724,7 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
         }
     }
 
-    const partition = try patch_mod.partitionByKind(arena, matched.items);
+    const partition = try patch_mod.partitionByKind(arena, matched);
     const text_matched = try partition.combinedText(arena);
 
     // Text hunks: reverse-apply patches to worktree
@@ -803,7 +768,7 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
     const porcelain_verb: []const u8 = if (opts.dry_run) "would-restore" else "restored";
     const summary_verb: []const u8 = if (opts.dry_run) "would be restored" else "restored";
 
-    const count = try format.printMatchedHunks(stdout, matched.items, verb, porcelain_verb, use_color, opts.common.output, opts.common.verbosity);
+    const count = try format.printMatchedHunks(stdout, matched, verb, porcelain_verb, use_color, opts.common.output, opts.common.verbosity);
     // Skip the "N hunks restored" summary when --3way left conflict markers:
     // the caller will exit non-zero with a clear error, and "N hunks restored"
     // would contradict that. The per-hunk lines above still show what was touched.
@@ -830,26 +795,15 @@ pub fn cmdDiff(allocator: Allocator, stdout: *std.Io.Writer, opts: DiffOptions) 
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var hunks: std.ArrayList(Hunk) = .empty;
-    defer hunks.deinit(arena);
-
-    const diffs = try getDiffWithUntracked(allocator, arena, opts.mode, opts.common.ref, opts.common.context, opts.common.file_filter.items, opts.common.diff_filter, &hunks);
-    defer allocator.free(diffs.tracked);
-    defer allocator.free(diffs.untracked);
-
-    if (hunks.items.len == 0) exitNoChanges(opts.mode);
-
-    // Resolve each SHA arg to a hunk, deduplicating by full SHA
-    var matched: std.ArrayList(MatchedHunk) = .empty;
-    defer matched.deinit(arena);
-
-    try resolveMatchedHunks(arena, hunks.items, opts.sha_args.items, opts.common.file_filter.items, &matched);
+    const hunks = (try loadHunks(arena, opts.mode, opts.common)).hunks;
+    if (hunks.len == 0) exitNoChanges(opts.mode);
+    const matched = try resolveMatchedHunks(arena, hunks, opts.sha_args.items, opts.common.file_filter.items);
 
     const use_color = format.shouldUseColor(opts.common.output, opts.common.no_color);
 
     // Print each matched hunk
     if (opts.common.verbosity != .quiet) {
-        for (matched.items) |m| {
+        for (matched) |m| {
             switch (opts.common.output) {
                 .human => {
                     try stdout.writeAll(m.hunk.patch_header);
@@ -970,28 +924,18 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var hunks: std.ArrayList(Hunk) = .empty;
-    defer hunks.deinit(arena);
-
     // When --all is used without --include-untracked, default to tracked-only
     // (matching git stash behavior). Explicit hashes bypass this.
-    const effective_filter = if (opts.select_all and !opts.include_untracked and opts.common.diff_filter == .all)
-        DiffFilter.tracked_only
-    else
-        opts.common.diff_filter;
+    var common = opts.common;
+    if (opts.select_all and !opts.include_untracked and common.diff_filter == .all) {
+        common.diff_filter = .tracked_only;
+    }
 
-    const diffs = try getDiffWithUntracked(allocator, arena, .unstaged, opts.common.ref, opts.common.context, opts.common.file_filter.items, effective_filter, &hunks);
-    defer allocator.free(diffs.tracked);
-    defer allocator.free(diffs.untracked);
+    const hunks = (try loadHunks(arena, .unstaged, common)).hunks;
+    if (hunks.len == 0) exitNoChanges(.unstaged);
+    const matched = try selectHunks(arena, hunks, opts.sha_args.items, opts.common.file_filter.items);
 
-    if (hunks.items.len == 0) exitNoChanges(.unstaged);
-
-    var matched: std.ArrayList(MatchedHunk) = .empty;
-    defer matched.deinit(arena);
-    try resolveHunksFromOpts(arena, hunks.items, opts.sha_args.items, opts.common.file_filter.items, &matched);
-    exitIfNoMatches(matched.items.len, opts.common.file_filter.items);
-
-    const partition = try patch_mod.partitionByKind(arena, matched.items);
+    const partition = try patch_mod.partitionByKind(arena, matched);
     var untracked_matched: std.ArrayList(MatchedHunk) = .empty;
     try untracked_matched.appendSlice(arena, partition.untracked_text);
     try untracked_matched.appendSlice(arena, partition.untracked_binary);
@@ -1017,7 +961,7 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
     }
     defer if (untracked_commit) |uc| allocator.free(uc);
 
-    const stash_msg = try buildStashMessage(arena, opts, matched.items);
+    const stash_msg = try buildStashMessage(arena, opts, matched);
 
     const wip_commit = if (untracked_commit) |uc|
         try git.runGitCommitTree(allocator, stash_build.tree, &.{ head.sha, idx_commit, uc }, stash_msg)
@@ -1036,7 +980,7 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
     }
     stash_mod.cleanupWorktree(allocator, has_tracked, has_untracked, stash_build.index_patches, untracked_matched.items);
 
-    try stash_mod.reportStashResults(stdout, opts, matched.items);
+    try stash_mod.reportStashResults(stdout, opts, matched);
 }
 
 pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptions) !void {
@@ -1049,23 +993,11 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
     // preview would be surprised to find their index changed.
     if (!opts.dry_run) try legacyRecoverIndexBackup(allocator);
 
-    // Resolve hunks (same pattern as cmdApplyHunks/cmdRestore).
-    var hunks: std.ArrayList(Hunk) = .empty;
-    defer hunks.deinit(arena);
+    const hunks = (try loadHunks(arena, .unstaged, opts.common)).hunks;
+    if (hunks.len == 0) exitNoChanges(.unstaged);
+    const matched = try selectHunks(arena, hunks, opts.sha_args.items, opts.common.file_filter.items);
 
-    const diffs = try getDiffWithUntracked(allocator, arena, .unstaged, opts.common.ref, opts.common.context, opts.common.file_filter.items, opts.common.diff_filter, &hunks);
-    defer allocator.free(diffs.tracked);
-    defer allocator.free(diffs.untracked);
-
-    if (hunks.items.len == 0) exitNoChanges(.unstaged);
-
-    var matched: std.ArrayList(MatchedHunk) = .empty;
-    defer matched.deinit(arena);
-
-    try resolveHunksFromOpts(arena, hunks.items, opts.sha_args.items, opts.common.file_filter.items, &matched);
-    exitIfNoMatches(matched.items.len, opts.common.file_filter.items);
-
-    const partition = try patch_mod.partitionByKind(arena, matched.items);
+    const partition = try patch_mod.partitionByKind(arena, matched);
     const text_matched = try partition.combinedText(arena);
     const binary_paths = try partition.allBinaryPaths(arena);
 
@@ -1083,7 +1015,7 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
             else => return err,
         };
         const use_color = format.shouldUseColor(opts.common.output, opts.common.no_color);
-        _ = try format.printMatchedHunks(stdout, matched.items, "would commit", "would-commit", use_color, opts.common.output, opts.common.verbosity);
+        _ = try format.printMatchedHunks(stdout, matched, "would commit", "would-commit", use_color, opts.common.output, opts.common.verbosity);
         return;
     }
 
@@ -1096,7 +1028,7 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
         .allocator = allocator,
         .patches = patches,
         .binary_paths = binary_paths,
-        .target_paths = try patch_mod.collectUniqueFilePaths(arena, matched.items),
+        .target_paths = try patch_mod.collectUniqueFilePaths(arena, matched),
         .message = message,
         .amend = opts.amend,
         .three_way = opts.common.three_way,
@@ -1108,7 +1040,7 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
     };
     defer allocator.free(commit_output);
 
-    try printCommitResults(stdout, opts, matched.items, commit_output);
+    try printCommitResults(stdout, opts, matched, commit_output);
 }
 
 // ============================================================================
@@ -1213,4 +1145,62 @@ test "runChecks: file_filter scopes both prefix lookup and unexpected scan" {
     const summary = try runChecks(arena, &.{ h_a, h_b }, &.{}, &filter, true);
     try std.testing.expectEqual(@as(usize, 1), summary.unexpected.len);
     try std.testing.expectEqualStrings("a.txt", summary.unexpected[0].file_path);
+}
+
+test "mergeIntoMatched: repeated line selections of one hunk accumulate ranges" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const h = types.testMakeHunk("a.txt", 1, 8, 1, 8);
+    const first = [_]LineRange{.{ .start = 2, .end = 2 }};
+    const second = [_]LineRange{.{ .start = 6, .end = 6 }};
+
+    var matched: std.ArrayList(MatchedHunk) = .empty;
+    try mergeIntoMatched(arena, &matched, &h, .{ .ranges = &first });
+    try mergeIntoMatched(arena, &matched, &h, .{ .ranges = &second });
+
+    try std.testing.expectEqual(@as(usize, 1), matched.items.len);
+    const ranges = matched.items[0].line_spec.?.ranges;
+    try std.testing.expectEqualSlices(LineRange, &.{ .{ .start = 2, .end = 2 }, .{ .start = 6, .end = 6 } }, ranges);
+}
+
+test "mergeIntoMatched: a whole-hunk selection absorbs a line selection in either order" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const h = types.testMakeHunk("a.txt", 1, 8, 1, 8);
+    const lines = [_]LineRange{.{ .start = 2, .end = 2 }};
+
+    var lines_first: std.ArrayList(MatchedHunk) = .empty;
+    try mergeIntoMatched(arena, &lines_first, &h, .{ .ranges = &lines });
+    try mergeIntoMatched(arena, &lines_first, &h, null);
+    try std.testing.expectEqual(@as(usize, 1), lines_first.items.len);
+    try std.testing.expect(lines_first.items[0].line_spec == null);
+
+    var whole_first: std.ArrayList(MatchedHunk) = .empty;
+    try mergeIntoMatched(arena, &whole_first, &h, null);
+    try mergeIntoMatched(arena, &whole_first, &h, .{ .ranges = &lines });
+    try std.testing.expectEqual(@as(usize, 1), whole_first.items.len);
+    try std.testing.expect(whole_first.items[0].line_spec == null);
+}
+
+test "mergeIntoMatched: different hunks keep separate entries in arrival order" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var h1 = types.testMakeHunk("a.txt", 1, 1, 1, 1);
+    @memset(&h1.sha_hex, '1');
+    var h2 = types.testMakeHunk("b.txt", 1, 1, 1, 1);
+    @memset(&h2.sha_hex, '2');
+
+    var matched: std.ArrayList(MatchedHunk) = .empty;
+    try mergeIntoMatched(arena, &matched, &h2, null);
+    try mergeIntoMatched(arena, &matched, &h1, null);
+
+    try std.testing.expectEqual(@as(usize, 2), matched.items.len);
+    try std.testing.expectEqualStrings("b.txt", matched.items[0].hunk.file_path);
+    try std.testing.expectEqualStrings("a.txt", matched.items[1].hunk.file_path);
 }

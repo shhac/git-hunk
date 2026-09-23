@@ -134,13 +134,9 @@ pub fn matchIndexToHead(
         // Use changed-lines range (not context range) for precision.
         const head_changed = changedLinesWorktreeRange(head_h) orelse
             worktreeRange(head_h.new_start, head_h.new_count);
-        var fully_contained = false;
-        for (target_ranges.items) |tr| {
-            if (head_changed.start >= tr.start and head_changed.end <= tr.end) {
-                fully_contained = true;
-                break;
-            }
-        }
+        const fully_contained = for (target_ranges.items) |tr| {
+            if (head_changed.start >= tr.start and head_changed.end <= tr.end) break true;
+        } else false;
 
         if (fully_contained) {
             try matches.append(arena, .{ .hunk = head_h, .line_spec = null });
@@ -162,28 +158,19 @@ fn tryFastPathShaMatch(
     selected_idx_hunks: []const *const Hunk,
     head_hunks: []const Hunk,
 ) !?[]const MatchedHunk {
-    for (selected_idx_hunks) |idx_h| {
-        var found = false;
-        for (head_hunks) |*head_h| {
-            if (std.mem.eql(u8, &idx_h.sha_hex, &head_h.sha_hex)) {
-                found = true;
-                break;
-            }
-        }
-        if (!found) return null;
+    const matches = try arena.alloc(MatchedHunk, selected_idx_hunks.len);
+    for (selected_idx_hunks, matches) |idx_h, *m| {
+        const head_h = findHunkBySha(head_hunks, &idx_h.sha_hex) orelse return null;
+        m.* = .{ .hunk = head_h, .line_spec = null };
     }
+    return matches;
+}
 
-    // All matched — build result using head hunk pointers
-    var matches: std.ArrayList(MatchedHunk) = .empty;
-    for (selected_idx_hunks) |idx_h| {
-        for (head_hunks) |*head_h| {
-            if (std.mem.eql(u8, &idx_h.sha_hex, &head_h.sha_hex)) {
-                try matches.append(arena, .{ .hunk = head_h, .line_spec = null });
-                break;
-            }
-        }
+fn findHunkBySha(hunks: []const Hunk, sha_hex: *const [40]u8) ?*const Hunk {
+    for (hunks) |*h| {
+        if (std.mem.eql(u8, &h.sha_hex, sha_hex)) return h;
     }
-    return matches.items;
+    return null;
 }
 
 /// Compute a LineSpec that selects only the body lines of `head_hunk` whose
