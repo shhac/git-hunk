@@ -994,4 +994,26 @@ for CMD248 in "add --all" "reset --all"; do
 done
 pass "test 248: add/reset with an unmatched --file exit 1 and say so"
 
+# ============================================================================
+# Test 249: reset --ref takes a hunk of that ref's diff back out of the index,
+# the mirror of add --ref. It used to reach git as `diff --cached X^..X`,
+# which git rejects with its usage text.
+# ============================================================================
+new_repo
+sed -i.bak '1s/.*/Changed in commit 249./' alpha.txt
+git commit -q -am "commit 249"
+SHA249="$(first_sha --oneline --ref HEAD)"
+[[ -n "$SHA249" ]] || fail "test 249: no hunk in HEAD's diff"
+"$GIT_HUNK" reset --ref HEAD "$SHA249" > /dev/null 2>&1 \
+    || fail "test 249: reset --ref HEAD <sha> should succeed"
+[[ "$(git show :alpha.txt | head -1)" == "$(git show HEAD~1:alpha.txt | head -1)" ]] \
+    || fail "test 249: index should hold the pre-commit line, got: '$(git show :alpha.txt | head -1)'"
+[[ "$(head -1 alpha.txt)" == "Changed in commit 249." ]] \
+    || fail "test 249: worktree should be untouched"
+"$GIT_HUNK" add --ref HEAD "$SHA249" > /dev/null 2>&1 \
+    || fail "test 249: add --ref HEAD <sha> should put the hunk back"
+git diff --cached --quiet \
+    || fail "test 249: index should match HEAD again, got: '$(git diff --cached --stat)'"
+pass "test 249: reset --ref reverses add --ref in the index"
+
 report_results

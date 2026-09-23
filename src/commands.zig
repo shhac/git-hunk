@@ -480,10 +480,12 @@ fn dryRunApplyHunks(
 
 fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOptions, action: ApplyAction) !void {
     // For staging: diff unstaged hunks (index vs worktree)
-    // For unstaging: diff staged hunks (HEAD vs index)
+    // For unstaging: diff staged hunks (HEAD vs index). A --ref instead names
+    // the diff the hunks come from, the one `list --ref` shows, which reset
+    // takes back out of the index just as add puts it in.
     const diff_mode: DiffMode = switch (action) {
         .stage => .unstaged,
-        .unstage => .staged,
+        .unstage => if (opts.common.ref == null) .staged else .unstaged,
     };
 
     var arena_state = std.heap.ArenaAllocator.init(allocator);
