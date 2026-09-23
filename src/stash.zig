@@ -274,6 +274,112 @@ fn computeLineSpecForRanges(
 // Stash orchestration helpers (push, pop, cleanup)
 // ============================================================================
 
+/// Bundles HEAD-side metadata used by cmdStash. All slices are gpa-owned.
+pub const HeadInfo = struct {
+    tree: []u8,
+    sha: []u8,
+    branch: ?[]u8,
+    msg: []u8,
+    branch_name: []const u8,
+
+    pub fn deinit(self: *HeadInfo, allocator: Allocator) void {
+        allocator.free(self.tree);
+        allocator.free(self.sha);
+        if (self.branch) |b| allocator.free(b);
+        allocator.free(self.msg);
+    }
+};
+
+/// Look up HEAD tree, HEAD sha, branch name, and HEAD commit summary in one
+/// place. Caller must call `deinit` on the returned struct.
+pub fn gatherHeadInfo(allocator: Allocator) !HeadInfo {
+    const tree = try git.runGitRevParse(allocator, "HEAD^{tree}");
+    errdefer allocator.free(tree);
+    const sha = try git.runGitRevParse(allocator, "HEAD");
+    errdefer allocator.free(sha);
+    const branch = try git.runGitSymbolicRef(allocator);
+    errdefer if (branch) |b| allocator.free(b);
+    const msg = try git.runGitLogOneline(allocator);
+    return .{ .tree = tree, .sha = sha, .branch = branch, .msg = msg, .branch_name = branch orelse "HEAD" };
+}
+
+/// Result of running both the tracked-text and tracked-binary tree pipelines.
+pub const StashTreeBuild = struct {
+    tree: []const u8,
+    /// Patches reverse-applied to worktree at cleanup. Empty if no tracked text hunks.
+    index_patches: []const []const u8,
+    /// True iff `tree` was allocated here and must be freed by the caller.
+    owns_tree: bool,
+};
+
+/// Construct the stash tree by layering tracked-binary blobs onto a tree built
+/// from tracked-text patches. Falls back to `head_tree` when there are neither.
+pub fn buildStashTree(
+    arena: Allocator,
+    allocator: Allocator,
+    partition: patch_mod.HunkPartition,
+    head_tree: []const u8,
+    context: ?u32,
+) !StashTreeBuild {
+    var tree: []const u8 = head_tree;
+    var index_patches: []const []const u8 = &.{};
+    var owns = false;
+    errdefer if (owns) allocator.free(tree);
+
+    if (partition.tracked_text.len > 0) {
+        const tracked_mut = try arena.dupe(MatchedHunk, partition.tracked_text);
+        const result = try buildTrackedStashTree(arena, allocator, tracked_mut, head_tree, context);
+        index_patches = result.index_patches;
+        tree = result.stash_tree;
+        owns = true;
+    }
+    if (partition.tracked_binary_paths.len > 0) {
+        const new_tree = try addBinaryFilesToTree(allocator, tree, partition.tracked_binary_paths);
+        if (owns) allocator.free(tree);
+        tree = new_tree;
+        owns = true;
+    }
+    return .{ .tree = tree, .index_patches = index_patches, .owns_tree = owns };
+}
+
+/// Build the stash message: user-provided `-m <msg>` or auto-generated from
+/// the file paths involved.
+pub fn buildStashMessage(arena: Allocator, opts: StashOptions, matched: []const MatchedHunk) ![]const u8 {
+    if (opts.message) |m| return m;
+    const all_file_paths = try patch_mod.collectUniqueFilePaths(arena, matched);
+    var msg_buf: std.ArrayList(u8) = .empty;
+    try msg_buf.appendSlice(arena, "git-hunk stash: ");
+    for (all_file_paths, 0..) |fp, i| {
+        if (i > 0) try msg_buf.appendSlice(arena, ", ");
+        try msg_buf.appendSlice(arena, fp);
+    }
+    return msg_buf.items;
+}
+
+/// Assemble the commit `git stash store` expects: the stashed tree on top of
+/// HEAD, with an index commit as second parent and, when untracked files were
+/// selected, an untracked-files commit as third. Returns the allocator-owned
+/// commit SHA.
+pub fn createStashCommit(
+    arena: Allocator,
+    allocator: Allocator,
+    head: HeadInfo,
+    tree: []const u8,
+    untracked_matched: []const MatchedHunk,
+    message: []const u8,
+) ![]const u8 {
+    const idx_msg = try std.fmt.allocPrint(arena, "index on {s}: {s}", .{ head.branch_name, head.msg });
+    const idx_commit = try git.runGitCommitTree(allocator, tree, &.{head.sha}, idx_msg);
+    defer allocator.free(idx_commit);
+
+    if (untracked_matched.len == 0) {
+        return git.runGitCommitTree(allocator, tree, &.{ head.sha, idx_commit }, message);
+    }
+    const untracked_commit = try buildUntrackedCommit(arena, allocator, head.sha, head.branch_name, head.msg, untracked_matched);
+    defer allocator.free(untracked_commit);
+    return git.runGitCommitTree(allocator, tree, &.{ head.sha, idx_commit, untracked_commit }, message);
+}
+
 pub fn stashPop(allocator: Allocator, verbosity: Verbosity) !void {
     try git.runGitStashPop(allocator);
     if (verbosity != .quiet) {
@@ -281,7 +387,7 @@ pub fn stashPop(allocator: Allocator, verbosity: Verbosity) !void {
     }
 }
 
-pub const TrackedStashResult = struct {
+const TrackedStashResult = struct {
     /// Arena-owned patches, in order, for reverse-apply to the worktree during
     /// cleanup. Multiple patches when typechanges are present.
     index_patches: []const []const u8,
@@ -292,7 +398,7 @@ pub const TrackedStashResult = struct {
 /// Build the stash tree for tracked hunks using a temporary git index.
 /// Sorts `tracked_matched` in place. Returns index_patch (arena-owned) and
 /// stash_tree (allocator-owned — caller must free).
-pub fn buildTrackedStashTree(
+fn buildTrackedStashTree(
     arena: Allocator,
     allocator: Allocator,
     tracked_matched: []MatchedHunk,
@@ -345,7 +451,7 @@ pub fn buildTrackedStashTree(
 
 /// Build a git commit containing only the untracked files.
 /// Returns an allocator-owned commit SHA — caller must free.
-pub fn buildUntrackedCommit(
+fn buildUntrackedCommit(
     arena: Allocator,
     allocator: Allocator,
     head_sha: []const u8,
@@ -416,7 +522,7 @@ pub fn cleanupWorktree(
 
 /// Add binary files to a stash tree via a temporary git index.
 /// Returns an allocator-owned tree SHA — caller must free.
-pub fn addBinaryFilesToTree(
+fn addBinaryFilesToTree(
     allocator: Allocator,
     current_tree: []const u8,
     binary_paths: []const []const u8,

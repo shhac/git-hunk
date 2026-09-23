@@ -704,22 +704,48 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
     if (hunks.len == 0) exitNoChanges(.unstaged);
     const matched = try selectHunks(arena, hunks, opts.sha_args.items, opts.common.file_filter.items);
 
-    // Gate: untracked files require --force (restoring deletes them permanently)
     // Dry-run bypasses the gate — safe to preview without --force
-    if (!opts.force and !opts.dry_run) {
-        for (matched) |m| {
-            if (m.hunk.is_untracked) {
-                std.debug.print("error: {s} ({s}) is an untracked file -- use --force to delete\n", .{ m.hunk.sha_hex[0..7], m.hunk.file_path });
-                std.process.exit(1);
-            }
-        }
-    }
+    if (!opts.force and !opts.dry_run) rejectUntrackedWithoutForce(matched);
 
+    const had_conflicts = try restoreWorktree(allocator, arena, matched, opts);
+
+    const use_color = format.shouldUseColor(opts.common.output, opts.common.no_color);
+    const verb: []const u8 = if (opts.dry_run) "would restore" else "restored";
+    const porcelain_verb: []const u8 = if (opts.dry_run) "would-restore" else "restored";
+    const summary_verb: []const u8 = if (opts.dry_run) "would be restored" else "restored";
+
+    const count = try format.printMatchedHunks(stdout, matched, verb, porcelain_verb, use_color, opts.common.output, opts.common.verbosity);
+
+    // Skip the "N hunks restored" summary when --3way left conflict markers:
+    // it would contradict the error. The per-hunk lines above still show what
+    // was touched.
+    if (had_conflicts) {
+        // Flush buffered stdout first so per-hunk lines appear before the stderr error.
+        try stdout.flush();
+        std.debug.print("error: --3way left conflict markers in the worktree — resolve before continuing\n", .{});
+        std.process.exit(1);
+    }
+    format.printHunkCountSummary(opts.common.verbosity, opts.common.output, count, summary_verb);
+}
+
+/// Exit if any selected hunk is an untracked file: restoring one deletes it
+/// permanently, so that takes --force.
+fn rejectUntrackedWithoutForce(matched: []const MatchedHunk) void {
+    for (matched) |m| {
+        if (!m.hunk.is_untracked) continue;
+        std.debug.print("error: {s} ({s}) is an untracked file -- use --force to delete\n", .{ m.hunk.sha_hex[0..7], m.hunk.file_path });
+        std.process.exit(1);
+    }
+}
+
+/// Undo `matched` in the worktree: reverse-apply text hunks, check tracked
+/// binaries out of the index, delete untracked binaries. A dry run only checks
+/// the text patches. Returns true if any patch landed with `--3way` conflicts.
+fn restoreWorktree(allocator: Allocator, arena: Allocator, matched: []const MatchedHunk, opts: RestoreOptions) !bool {
     const partition = try patch_mod.partitionByKind(arena, matched);
     const text_matched = try partition.combinedText(arena);
 
-    // Text hunks: reverse-apply patches to worktree
-    var any_restore_conflicts = false;
+    var any_conflicts = false;
     if (text_matched.len > 0) {
         const patches = try patch_mod.sortAndBuildPatches(arena, text_matched, .reverse);
         // git apply rejects --3way + --check; for dry-run we drop --3way.
@@ -730,45 +756,20 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
             .three_way = opts.common.three_way and !opts.dry_run,
             .ref = opts.common.ref,
         });
-        any_restore_conflicts = result == .applied_with_conflicts;
+        any_conflicts = result == .applied_with_conflicts;
     }
+    if (opts.dry_run) return any_conflicts;
 
-    // Binary tracked hunks: restore from index
-    if (partition.tracked_binary_paths.len > 0 and !opts.dry_run) {
+    if (partition.tracked_binary_paths.len > 0) {
         try git.runGitCheckoutFiles(allocator, partition.tracked_binary_paths);
     }
-
-    // Binary untracked hunks: delete files
-    if (partition.untracked_binary_paths.len > 0 and !opts.dry_run) {
-        const io = defaultIo();
-        for (partition.untracked_binary_paths) |fp| {
-            std.Io.Dir.cwd().deleteFile(io, fp) catch {
-                std.debug.print("warning: could not delete untracked binary file '{s}'\n", .{fp});
-            };
-        }
+    const io = defaultIo();
+    for (partition.untracked_binary_paths) |fp| {
+        std.Io.Dir.cwd().deleteFile(io, fp) catch {
+            std.debug.print("warning: could not delete untracked binary file '{s}'\n", .{fp});
+        };
     }
-
-    // Output
-    const use_color = format.shouldUseColor(opts.common.output, opts.common.no_color);
-
-    const verb: []const u8 = if (opts.dry_run) "would restore" else "restored";
-    const porcelain_verb: []const u8 = if (opts.dry_run) "would-restore" else "restored";
-    const summary_verb: []const u8 = if (opts.dry_run) "would be restored" else "restored";
-
-    const count = try format.printMatchedHunks(stdout, matched, verb, porcelain_verb, use_color, opts.common.output, opts.common.verbosity);
-    // Skip the "N hunks restored" summary when --3way left conflict markers:
-    // the caller will exit non-zero with a clear error, and "N hunks restored"
-    // would contradict that. The per-hunk lines above still show what was touched.
-    if (!any_restore_conflicts) {
-        format.printHunkCountSummary(opts.common.verbosity, opts.common.output, count, summary_verb);
-    }
-
-    if (any_restore_conflicts) {
-        // Flush buffered stdout first so per-hunk lines appear before the stderr error.
-        try stdout.flush();
-        std.debug.print("error: --3way left conflict markers in the worktree — resolve before continuing\n", .{});
-        std.process.exit(1);
-    }
+    return any_conflicts;
 }
 
 /// A selects-nothing LineSpec when `on`, else null. Lets `-n` reuse the
@@ -818,88 +819,6 @@ pub fn cmdDiff(allocator: Allocator, stdout: *std.Io.Writer, opts: DiffOptions) 
     }
 }
 
-/// Bundles HEAD-side metadata used by cmdStash. All slices are gpa-owned.
-const HeadInfo = struct {
-    tree: []u8,
-    sha: []u8,
-    branch: ?[]u8,
-    msg: []u8,
-    branch_name: []const u8,
-
-    fn deinit(self: *HeadInfo, allocator: Allocator) void {
-        allocator.free(self.tree);
-        allocator.free(self.sha);
-        if (self.branch) |b| allocator.free(b);
-        allocator.free(self.msg);
-    }
-};
-
-/// Look up HEAD tree, HEAD sha, branch name, and HEAD commit summary in one
-/// place. Caller must call `deinit` on the returned struct.
-fn gatherHeadInfo(allocator: Allocator) !HeadInfo {
-    const tree = try git.runGitRevParse(allocator, "HEAD^{tree}");
-    errdefer allocator.free(tree);
-    const sha = try git.runGitRevParse(allocator, "HEAD");
-    errdefer allocator.free(sha);
-    const branch = try git.runGitSymbolicRef(allocator);
-    errdefer if (branch) |b| allocator.free(b);
-    const msg = try git.runGitLogOneline(allocator);
-    return .{ .tree = tree, .sha = sha, .branch = branch, .msg = msg, .branch_name = branch orelse "HEAD" };
-}
-
-/// Result of running both the tracked-text and tracked-binary tree pipelines.
-const StashTreeBuild = struct {
-    tree: []const u8,
-    /// Patches reverse-applied to worktree at cleanup. Empty if no tracked text hunks.
-    index_patches: []const []const u8,
-    /// True iff `tree` was allocated by stash_mod and must be freed by the caller.
-    owns_tree: bool,
-};
-
-/// Construct the stash tree by layering tracked-binary blobs onto a tree built
-/// from tracked-text patches. Falls back to `head_tree` when there are neither.
-fn buildStashTree(
-    arena: Allocator,
-    allocator: Allocator,
-    partition: patch_mod.HunkPartition,
-    head_tree: []const u8,
-    context: ?u32,
-) !StashTreeBuild {
-    var tree: []const u8 = head_tree;
-    var index_patches: []const []const u8 = &.{};
-    var owns = false;
-    errdefer if (owns) allocator.free(tree);
-
-    if (partition.tracked_text.len > 0) {
-        const tracked_mut = try arena.dupe(MatchedHunk, partition.tracked_text);
-        const result = try stash_mod.buildTrackedStashTree(arena, allocator, tracked_mut, head_tree, context);
-        index_patches = result.index_patches;
-        tree = result.stash_tree;
-        owns = true;
-    }
-    if (partition.tracked_binary_paths.len > 0) {
-        const new_tree = try stash_mod.addBinaryFilesToTree(allocator, tree, partition.tracked_binary_paths);
-        if (owns) allocator.free(tree);
-        tree = new_tree;
-        owns = true;
-    }
-    return .{ .tree = tree, .index_patches = index_patches, .owns_tree = owns };
-}
-
-/// Build the stash message: user-provided `-m <msg>` or auto-generated from
-/// the file paths involved.
-fn buildStashMessage(arena: Allocator, opts: StashOptions, matched: []const MatchedHunk) ![]const u8 {
-    if (opts.message) |m| return m;
-    const all_file_paths = try patch_mod.collectUniqueFilePaths(arena, matched);
-    var msg_buf: std.ArrayList(u8) = .empty;
-    try msg_buf.appendSlice(arena, "git-hunk stash: ");
-    for (all_file_paths, 0..) |fp, i| {
-        if (i > 0) try msg_buf.appendSlice(arena, ", ");
-        try msg_buf.appendSlice(arena, fp);
-    }
-    return msg_buf.items;
-}
-
 pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions) !void {
     if (opts.pop) {
         try stash_mod.stashPop(allocator, opts.common.verbosity);
@@ -930,30 +849,14 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
     const has_binary_tracked = partition.tracked_binary.len > 0;
     const has_untracked = untracked_matched.items.len > 0;
 
-    var head = try gatherHeadInfo(allocator);
+    var head = try stash_mod.gatherHeadInfo(allocator);
     defer head.deinit(allocator);
 
-    const stash_build = try buildStashTree(arena, allocator, partition, head.tree, opts.common.context);
+    const stash_build = try stash_mod.buildStashTree(arena, allocator, partition, head.tree, opts.common.context);
     defer if (stash_build.owns_tree) allocator.free(stash_build.tree);
 
-    // Index commit (parent 2): captures tracked changes tree
-    const idx_msg = try std.fmt.allocPrint(arena, "index on {s}: {s}", .{ head.branch_name, head.msg });
-    const idx_commit = try git.runGitCommitTree(allocator, stash_build.tree, &.{head.sha}, idx_msg);
-    defer allocator.free(idx_commit);
-
-    // Untracked hunks pipeline (parent 3)
-    var untracked_commit: ?[]const u8 = null;
-    if (has_untracked) {
-        untracked_commit = try stash_mod.buildUntrackedCommit(arena, allocator, head.sha, head.branch_name, head.msg, untracked_matched.items);
-    }
-    defer if (untracked_commit) |uc| allocator.free(uc);
-
-    const stash_msg = try buildStashMessage(arena, opts, matched);
-
-    const wip_commit = if (untracked_commit) |uc|
-        try git.runGitCommitTree(allocator, stash_build.tree, &.{ head.sha, idx_commit, uc }, stash_msg)
-    else
-        try git.runGitCommitTree(allocator, stash_build.tree, &.{ head.sha, idx_commit }, stash_msg);
+    const stash_msg = try stash_mod.buildStashMessage(arena, opts, matched);
+    const wip_commit = try stash_mod.createStashCommit(arena, allocator, head, stash_build.tree, untracked_matched.items, stash_msg);
     defer allocator.free(wip_commit);
 
     try git.runGitStashStore(allocator, stash_msg, wip_commit);
