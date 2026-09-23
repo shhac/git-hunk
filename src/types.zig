@@ -71,6 +71,73 @@ pub const Hunk = struct {
     is_binary: bool,
     /// Patch header for applying: ---/+++ lines (and diff --git + mode for new/deleted).
     patch_header: []const u8,
+
+    pub fn bodyLines(self: *const Hunk) BodyLineIterator {
+        return .init(self.raw_lines);
+    }
+};
+
+/// One line of a hunk body, numbered the way line specs address it.
+pub const BodyLine = struct {
+    kind: Kind,
+    text: []const u8,
+    /// 1-based position among the context/removal/addition lines; null for
+    /// lines a line spec cannot select.
+    number: ?u32,
+
+    pub const Kind = enum {
+        /// Includes an empty line: git strips the leading space from blank
+        /// context lines under some configurations.
+        context,
+        removal,
+        addition,
+        /// "\ No newline at end of file", which qualifies the line before it.
+        no_newline,
+        other,
+
+        pub fn of(text: []const u8) Kind {
+            if (text.len == 0) return .context;
+            return switch (text[0]) {
+                ' ' => .context,
+                '-' => .removal,
+                '+' => .addition,
+                '\\' => .no_newline,
+                else => .other,
+            };
+        }
+    };
+};
+
+/// Walks the body of a hunk's `raw_lines`, numbering lines the way every
+/// line-spec consumer must: `diff -n` shows these numbers, and selection,
+/// patch filtering and HEAD matching all interpret a line spec through them.
+pub const BodyLineIterator = struct {
+    /// The `@@` line, without its newline.
+    header: []const u8,
+    rest: []const u8,
+    next_number: u32 = 1,
+
+    pub fn init(raw_lines: []const u8) BodyLineIterator {
+        const nl = std.mem.indexOfScalar(u8, raw_lines, '\n') orelse
+            return .{ .header = raw_lines, .rest = "" };
+        return .{ .header = raw_lines[0..nl], .rest = raw_lines[nl + 1 ..] };
+    }
+
+    /// A trailing newline ends the last line rather than starting an empty one.
+    pub fn next(self: *BodyLineIterator) ?BodyLine {
+        if (self.rest.len == 0) return null;
+        const end = std.mem.indexOfScalar(u8, self.rest, '\n') orelse self.rest.len;
+        const text = self.rest[0..end];
+        self.rest = if (end < self.rest.len) self.rest[end + 1 ..] else "";
+
+        const kind = BodyLine.Kind.of(text);
+        const number: ?u32 = switch (kind) {
+            .context, .removal, .addition => self.next_number,
+            .no_newline, .other => null,
+        };
+        if (number != null) self.next_number += 1;
+        return .{ .kind = kind, .text = text, .number = number };
+    }
 };
 
 pub const LineRange = struct {
@@ -357,4 +424,51 @@ test "matchesFileFilter requires exact equality (no prefix match)" {
     const filter = [_][]const u8{"a.txt"};
     try std.testing.expect(!matchesFileFilter("a.txt.bak", &filter));
     try std.testing.expect(!matchesFileFilter("dir/a.txt", &filter));
+}
+
+test "BodyLineIterator numbers body lines, skipping no-newline markers" {
+    var lines = BodyLineIterator.init("@@ -1,2 +1,3 @@ fn f()\n ctx\n-old\n+new\n\\ No newline at end of file\n+more");
+    try std.testing.expectEqualStrings("@@ -1,2 +1,3 @@ fn f()", lines.header);
+
+    const expected = [_]BodyLine{
+        .{ .kind = .context, .text = " ctx", .number = 1 },
+        .{ .kind = .removal, .text = "-old", .number = 2 },
+        .{ .kind = .addition, .text = "+new", .number = 3 },
+        .{ .kind = .no_newline, .text = "\\ No newline at end of file", .number = null },
+        .{ .kind = .addition, .text = "+more", .number = 4 },
+    };
+    for (expected) |want| {
+        const got = lines.next().?;
+        try std.testing.expectEqual(want.kind, got.kind);
+        try std.testing.expectEqualStrings(want.text, got.text);
+        try std.testing.expectEqual(want.number, got.number);
+    }
+    try std.testing.expect(lines.next() == null);
+}
+
+test "BodyLineIterator treats an empty line as numbered context" {
+    var lines = BodyLineIterator.init("@@ -1,3 +1,3 @@\n a\n\n b\n");
+    try std.testing.expectEqual(@as(?u32, 1), lines.next().?.number);
+    const blank = lines.next().?;
+    try std.testing.expectEqual(BodyLine.Kind.context, blank.kind);
+    try std.testing.expectEqualStrings("", blank.text);
+    try std.testing.expectEqual(@as(?u32, 2), blank.number);
+    try std.testing.expectEqual(@as(?u32, 3), lines.next().?.number);
+    // The trailing newline ends " b"; it does not start a fourth line.
+    try std.testing.expect(lines.next() == null);
+}
+
+test "BodyLineIterator leaves unrecognised lines unnumbered" {
+    var lines = BodyLineIterator.init("@@ -1 +1 @@\n+a\n?junk\n+b");
+    try std.testing.expectEqual(@as(?u32, 1), lines.next().?.number);
+    const junk = lines.next().?;
+    try std.testing.expectEqual(BodyLine.Kind.other, junk.kind);
+    try std.testing.expectEqual(@as(?u32, null), junk.number);
+    try std.testing.expectEqual(@as(?u32, 2), lines.next().?.number);
+}
+
+test "BodyLineIterator header-only input has no body" {
+    var lines = BodyLineIterator.init("@@ -1 +1 @@");
+    try std.testing.expectEqualStrings("@@ -1 +1 @@", lines.header);
+    try std.testing.expect(lines.next() == null);
 }

@@ -6,6 +6,7 @@ const Hunk = types.Hunk;
 const MatchedHunk = types.MatchedHunk;
 const LineSpec = types.LineSpec;
 const LineRange = types.LineRange;
+const BodyLine = types.BodyLine;
 
 pub const ShaLookupError = error{ NotFound, AmbiguousPrefix };
 
@@ -167,9 +168,9 @@ fn buildCombinedPatches(arena: Allocator, matches: []const MatchedHunk, directio
     return patches.items;
 }
 
-/// Build a filtered hunk patch containing only selected lines.
-/// Returns new raw_lines with a rewritten @@ header.
-///
+/// What becomes of one body line when a line spec filters its hunk.
+const LineFate = enum { keep, as_context, drop };
+
 /// Deselected lines must survive on whichever side `git apply` will match
 /// against the target, and vanish from the other:
 ///   - forward: the old side is matched, so a deselected '-' (a line the target
@@ -179,118 +180,71 @@ fn buildCombinedPatches(arena: Allocator, matches: []const MatchedHunk, directio
 ///     dropped.
 /// Getting this backwards produces a patch whose matched side disagrees with
 /// the target, which git rejects with "patch does not apply".
+fn lineFate(kind: BodyLine.Kind, selected: bool, direction: ApplyDirection) LineFate {
+    if (selected or kind == .context) return .keep;
+    const on_matched_side = switch (direction) {
+        .forward => kind == .removal,
+        .reverse => kind == .addition,
+    };
+    return if (on_matched_side) .as_context else .drop;
+}
+
+/// Build a filtered hunk patch containing only selected lines.
+/// Returns new raw_lines with a rewritten @@ header.
 fn buildFilteredHunkPatch(arena: Allocator, h: *const Hunk, line_spec: LineSpec, direction: ApplyDirection) ![]const u8 {
-    var result: std.ArrayList(u8) = .empty;
-    var filtered_body: std.ArrayList(u8) = .empty;
+    if (std.mem.indexOfScalar(u8, h.raw_lines, '\n') == null) return h.raw_lines;
 
-    // Manual newline iteration to avoid trailing empty element from splitScalar
-    // Skip the @@ header line
-    var pos: usize = 0;
-    if (std.mem.indexOfScalar(u8, h.raw_lines, '\n')) |nl| {
-        pos = nl + 1;
-    } else {
-        return h.raw_lines; // degenerate: no body
-    }
-
-    var new_old_count: u32 = 0;
-    var new_new_count: u32 = 0;
-    var line_num: u32 = 1;
+    var body: std.ArrayList(u8) = .empty;
+    var old_count: u32 = 0;
+    var new_count: u32 = 0;
+    // "\ No newline at end of file" qualifies the line before it, so it goes
+    // wherever that line went.
     var prev_kept = true;
     var has_changes = false;
 
-    while (pos < h.raw_lines.len) {
-        const end = std.mem.indexOfScalarPos(u8, h.raw_lines, pos, '\n') orelse h.raw_lines.len;
-        const line = h.raw_lines[pos..end];
-        pos = if (end < h.raw_lines.len) end + 1 else h.raw_lines.len;
-
-        if (line.len == 0) {
-            // Empty context line (git sometimes strips trailing space from blank lines)
-            try filtered_body.append(arena, '\n');
-            new_old_count += 1;
-            new_new_count += 1;
-            line_num += 1;
-            prev_kept = true;
+    var lines = h.bodyLines();
+    while (lines.next()) |line| {
+        const number = line.number orelse {
+            if (line.kind == .no_newline and prev_kept) {
+                try body.appendSlice(arena, line.text);
+                try body.append(arena, '\n');
+            }
             continue;
-        }
+        };
 
-        const first = line[0];
-        if (first == ' ') {
-            // Context: always keep
-            try filtered_body.appendSlice(arena, line);
-            try filtered_body.append(arena, '\n');
-            new_old_count += 1;
-            new_new_count += 1;
-            line_num += 1;
-            prev_kept = true;
-        } else if (first == '-') {
-            if (line_spec.containsLine(line_num)) {
-                // Selected removal: keep as -
-                try filtered_body.appendSlice(arena, line);
-                try filtered_body.append(arena, '\n');
-                new_old_count += 1;
-                has_changes = true;
-                prev_kept = true;
-            } else if (direction == .forward) {
-                // Deselected removal, forward: still present on the matched old
-                // side, so keep it as context.
-                try filtered_body.append(arena, ' ');
-                try filtered_body.appendSlice(arena, line[1..]);
-                try filtered_body.append(arena, '\n');
-                new_old_count += 1;
-                new_new_count += 1;
-                prev_kept = true;
-            } else {
-                // Deselected removal, reverse: absent from the matched new side.
-                prev_kept = false;
-            }
-            line_num += 1;
-        } else if (first == '+') {
-            if (line_spec.containsLine(line_num)) {
-                // Selected addition: keep as +
-                try filtered_body.appendSlice(arena, line);
-                try filtered_body.append(arena, '\n');
-                new_new_count += 1;
-                has_changes = true;
-                prev_kept = true;
-            } else if (direction == .reverse) {
-                // Deselected addition, reverse: already present on the matched
-                // new side, so keep it as context.
-                try filtered_body.append(arena, ' ');
-                try filtered_body.appendSlice(arena, line[1..]);
-                try filtered_body.append(arena, '\n');
-                new_old_count += 1;
-                new_new_count += 1;
-                prev_kept = true;
-            } else {
-                // Deselected addition, forward: absent from the matched old side.
-                prev_kept = false;
-            }
-            line_num += 1;
-        } else if (first == '\\') {
-            // "\ No newline at end of file" — keep if previous line was kept
-            if (prev_kept) {
-                try filtered_body.appendSlice(arena, line);
-                try filtered_body.append(arena, '\n');
-            }
-        }
+        const fate = lineFate(line.kind, line_spec.containsLine(number), direction);
+        prev_kept = fate != .drop;
+        const emitted_kind: BodyLine.Kind = switch (fate) {
+            .drop => continue,
+            .keep => blk: {
+                try body.appendSlice(arena, line.text);
+                break :blk line.kind;
+            },
+            .as_context => blk: {
+                try body.append(arena, ' ');
+                try body.appendSlice(arena, line.text[1..]);
+                break :blk .context;
+            },
+        };
+        try body.append(arena, '\n');
+        if (emitted_kind != .addition) old_count += 1;
+        if (emitted_kind != .removal) new_count += 1;
+        if (emitted_kind != .context) has_changes = true;
     }
 
     if (!has_changes) {
         std.debug.print("error: no changes in selected lines of hunk {s}\n", .{h.sha_hex[0..7]});
-        std.process.exit(1);
+        return error.NoSelectedLines;
     }
 
-    // Build the @@ header
-    try result.print(arena, "@@ -{d},{d} +{d},{d} @@", .{ h.old_start, new_old_count, h.new_start, new_new_count });
+    var result: std.ArrayList(u8) = .empty;
+    try result.print(arena, "@@ -{d},{d} +{d},{d} @@", .{ h.old_start, old_count, h.new_start, new_count });
     if (h.context.len > 0) {
         try result.append(arena, ' ');
         try result.appendSlice(arena, h.context);
     }
     try result.append(arena, '\n');
-
-    // Append the filtered body
-    try result.appendSlice(arena, filtered_body.items);
-
+    try result.appendSlice(arena, body.items);
     return result.items;
 }
 
@@ -492,6 +446,34 @@ test "buildFilteredHunkPatch no-newline marker with partial select" {
     try std.testing.expect(std.mem.indexOf(u8, result, "\\ No newline") == null);
     try std.testing.expect(std.mem.indexOf(u8, result, "-old1") != null);
     try std.testing.expect(std.mem.indexOf(u8, result, "+new1") != null);
+}
+
+test "buildFilteredHunkPatch rejects a selection with no changed lines" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var h = testMakeHunk("f.txt", 1, 3, 1, 3);
+    h.raw_lines = "@@ -1,3 +1,3 @@\n context\n-removed\n+added\n context2\n";
+    const ranges = [_]LineRange{.{ .start = 1, .end = 1 }}; // context only
+    try std.testing.expectError(
+        error.NoSelectedLines,
+        buildFilteredHunkPatch(arena.allocator(), &h, .{ .ranges = &ranges }, .forward),
+    );
+}
+
+test "lineFate keeps selected lines and mirrors deselected ones by direction" {
+    const Row = struct { kind: BodyLine.Kind, direction: ApplyDirection, fate: LineFate };
+    const deselected = [_]Row{
+        .{ .kind = .removal, .direction = .forward, .fate = .as_context },
+        .{ .kind = .addition, .direction = .forward, .fate = .drop },
+        .{ .kind = .removal, .direction = .reverse, .fate = .drop },
+        .{ .kind = .addition, .direction = .reverse, .fate = .as_context },
+    };
+    for (deselected) |row| {
+        try std.testing.expectEqual(row.fate, lineFate(row.kind, false, row.direction));
+        try std.testing.expectEqual(LineFate.keep, lineFate(row.kind, true, row.direction));
+    }
+    try std.testing.expectEqual(LineFate.keep, lineFate(.context, false, .forward));
+    try std.testing.expectEqual(LineFate.keep, lineFate(.context, false, .reverse));
 }
 
 test "buildCombinedPatches typechange splits into two patches" {

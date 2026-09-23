@@ -31,8 +31,8 @@ const fatal = types.fatal;
 
 pub fn main(init: std.process.Init) !void {
     run(init) catch |err| {
-        if (err == error.PatchFailed) {
-            // Descriptive message already printed by runGitApply
+        if (err == error.PatchFailed or err == error.NoSelectedLines) {
+            // Descriptive message already printed where the error arose
             std.process.exit(1);
         }
         fatal("{s}", .{@errorName(err)});

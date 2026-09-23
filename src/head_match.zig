@@ -44,48 +44,27 @@ fn inAnyRange(line: u32, ranges: []const WorktreeRange) bool {
 /// Returns null if the hunk has no changed lines (shouldn't happen in practice).
 fn changedLinesWorktreeRange(hunk: *const Hunk) ?WorktreeRange {
     var new_line = hunk.new_start;
-    var min_pos: ?u32 = null;
-    var max_pos: ?u32 = null;
+    var changed: ?WorktreeRange = null;
 
-    // Skip @@ header line
-    var pos: usize = 0;
-    if (std.mem.indexOfScalar(u8, hunk.raw_lines, '\n')) |nl| {
-        pos = nl + 1;
-    } else {
-        return null;
-    }
-
-    while (pos < hunk.raw_lines.len) {
-        const end = std.mem.indexOfScalarPos(u8, hunk.raw_lines, pos, '\n') orelse hunk.raw_lines.len;
-        const line = hunk.raw_lines[pos..end];
-        pos = if (end < hunk.raw_lines.len) end + 1 else hunk.raw_lines.len;
-
-        if (line.len == 0) {
-            // Empty context line
-            new_line += 1;
-            continue;
+    var lines = hunk.bodyLines();
+    while (lines.next()) |line| {
+        switch (line.kind) {
+            .context => new_line += 1,
+            // A removal sits at the worktree position it was removed from.
+            .removal => changed = widen(changed, new_line),
+            .addition => {
+                changed = widen(changed, new_line);
+                new_line += 1;
+            },
+            .no_newline, .other => {},
         }
-
-        const first = line[0];
-        if (first == ' ') {
-            new_line += 1;
-        } else if (first == '-') {
-            // Removal at current worktree position
-            if (min_pos == null or new_line < min_pos.?) min_pos = new_line;
-            if (max_pos == null or new_line > max_pos.?) max_pos = new_line;
-        } else if (first == '+') {
-            // Addition at current worktree position
-            if (min_pos == null or new_line < min_pos.?) min_pos = new_line;
-            if (max_pos == null or new_line > max_pos.?) max_pos = new_line;
-            new_line += 1;
-        }
-        // '\' lines: skip
     }
+    return changed;
+}
 
-    if (min_pos) |mn| {
-        return .{ .start = mn, .end = max_pos.? };
-    }
-    return null;
+fn widen(range: ?WorktreeRange, line: u32) WorktreeRange {
+    const r = range orelse return .{ .start = line, .end = line };
+    return .{ .start = @min(r.start, line), .end = @max(r.end, line) };
 }
 
 /// Match selected index-relative hunks to HEAD-relative hunks for stash construction.
@@ -180,7 +159,8 @@ fn findHunkBySha(hunks: []const Hunk, sha_hex: *const [40]u8) ?*const Hunk {
 /// - Context (` `) and empty lines: advance worktree position, not included in LineSpec
 /// - Removal (`-`): check worktree position, DON'T advance (removals don't occupy worktree lines)
 /// - Addition (`+`): check worktree position, then advance
-/// - `\ No newline`: skip — handled automatically by buildFilteredHunkPatch
+/// - `\ No newline`: skip — handled automatically by buildFilteredHunkPatch,
+///   which numbers body lines through the same `Hunk.bodyLines` iterator
 fn computeLineSpecForOverlap(
     arena: Allocator,
     head_hunk: *const Hunk,
@@ -198,77 +178,44 @@ fn computeLineSpecForRanges(
     target_ranges: []const WorktreeRange,
 ) !LineSpec {
     var new_line = head_hunk.new_start;
-    var body_line_num: u32 = 1;
-    var result_ranges: std.ArrayList(LineRange) = .empty;
+    var spec: LineSpecBuilder = .{};
 
-    // Track current contiguous range being built
-    var range_start: ?u32 = null;
-    var range_end: u32 = 0;
-
-    // Skip @@ header line
-    var pos: usize = 0;
-    if (std.mem.indexOfScalar(u8, head_hunk.raw_lines, '\n')) |nl| {
-        pos = nl + 1;
-    } else {
-        return .{ .ranges = &.{} };
-    }
-
-    while (pos < head_hunk.raw_lines.len) {
-        const end = std.mem.indexOfScalarPos(u8, head_hunk.raw_lines, pos, '\n') orelse head_hunk.raw_lines.len;
-        const line = head_hunk.raw_lines[pos..end];
-        pos = if (end < head_hunk.raw_lines.len) end + 1 else head_hunk.raw_lines.len;
-
-        if (line.len == 0) {
-            // Empty context line
+    var lines = head_hunk.bodyLines();
+    while (lines.next()) |line| {
+        const number = line.number orelse continue;
+        // Context never closes a run: a selection may span it.
+        if (line.kind == .context) {
             new_line += 1;
-            body_line_num += 1;
             continue;
         }
-
-        const first = line[0];
-        if (first == ' ') {
-            // Context: advances worktree position, not added to LineSpec
-            new_line += 1;
-            body_line_num += 1;
-        } else if (first == '-') {
-            // Removal: worktree position is new_line, does NOT advance
-            if (inAnyRange(new_line, target_ranges)) {
-                if (range_start == null) range_start = body_line_num;
-                range_end = body_line_num;
-            } else {
-                if (range_start) |rs| {
-                    try result_ranges.append(arena, .{ .start = rs, .end = range_end });
-                    range_start = null;
-                }
-            }
-            body_line_num += 1;
-        } else if (first == '+') {
-            // Addition: exists in worktree at new_line, then advance
-            if (inAnyRange(new_line, target_ranges)) {
-                if (range_start == null) range_start = body_line_num;
-                range_end = body_line_num;
-            } else {
-                if (range_start) |rs| {
-                    try result_ranges.append(arena, .{ .start = rs, .end = range_end });
-                    range_start = null;
-                }
-            }
-            new_line += 1;
-            body_line_num += 1;
-        } else if (first == '\\') {
-            // "\ No newline at end of file"
-            // Do NOT increment body_line_num — buildFilteredHunkPatch doesn't
-            // count these, and handles them via prev_kept tracking.
+        if (inAnyRange(new_line, target_ranges)) {
+            spec.extend(number);
+        } else {
+            try spec.close(arena);
         }
+        // A removal occupies no worktree line, so only an addition advances.
+        if (line.kind == .addition) new_line += 1;
     }
-
-    // Flush final range
-    if (range_start) |rs| {
-        try result_ranges.append(arena, .{ .start = rs, .end = range_end });
-    }
-
-    return .{ .ranges = try result_ranges.toOwnedSlice(arena) };
+    try spec.close(arena);
+    return .{ .ranges = try spec.ranges.toOwnedSlice(arena) };
 }
+
+/// Accumulates body-line numbers into contiguous runs of selected changes.
+const LineSpecBuilder = struct {
+    ranges: std.ArrayList(LineRange) = .empty,
+    open: ?LineRange = null,
+
+    fn extend(self: *LineSpecBuilder, number: u32) void {
+        const start = if (self.open) |r| r.start else number;
+        self.open = .{ .start = start, .end = number };
+    }
+
+    fn close(self: *LineSpecBuilder, arena: Allocator) !void {
+        const r = self.open orelse return;
+        try self.ranges.append(arena, r);
+        self.open = null;
+    }
+};
 
 // ============================================================================
 // Tests

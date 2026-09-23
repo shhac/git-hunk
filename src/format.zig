@@ -146,58 +146,39 @@ pub fn printRawLinesHuman(stdout: *std.Io.Writer, raw_lines: []const u8, use_col
 pub fn printRawLinesWithLineNumbers(stdout: *std.Io.Writer, raw_lines: []const u8, line_spec: LineSpec, use_color: bool) !void {
     if (raw_lines.len == 0) return;
 
-    const total_body_lines = countBodyLines(raw_lines);
-    const num_width = digitWidth(total_body_lines);
+    const num_width = digitWidth(countBodyLines(raw_lines));
 
-    var iter = std.mem.splitScalar(u8, raw_lines, '\n');
-    // Print the @@ header without line number.
-    if (iter.next()) |header_line| {
-        if (use_color) {
-            try stdout.print("\x1b[36m{s}{s}\n", .{ header_line, COLOR_RESET });
-        } else {
-            try stdout.print("{s}\n", .{header_line});
-        }
+    var lines = types.BodyLineIterator.init(raw_lines);
+    if (use_color) {
+        try stdout.print("\x1b[36m{s}{s}\n", .{ lines.header, COLOR_RESET });
+    } else {
+        try stdout.print("{s}\n", .{lines.header});
     }
 
     var num_buf: [16]u8 = undefined;
-    var line_num: u32 = 1;
-    while (iter.next()) |line| {
-        const first: ?u8 = if (line.len == 0) ' ' else line[0];
-        if (first) |f| {
-            if (f == ' ' or f == '+' or f == '-') {
-                const selected = line_spec.containsLine(line_num);
-                const num_str = formatNumPadded(&num_buf, line_num, num_width);
-                try printNumberedBodyLine(stdout, line, num_str, selected, use_color);
-                line_num += 1;
-                continue;
-            }
+    while (lines.next()) |line| {
+        if (line.number) |number| {
+            const num_str = formatNumPadded(&num_buf, number, num_width);
+            try printNumberedBodyLine(stdout, line, num_str, line_spec.containsLine(number), use_color);
+            continue;
         }
-
-        if (line.len > 0 and line[0] == '\\') {
-            // "\ No newline" marker — pad to align with line numbers.
-            const pad = num_width + 2;
+        // Pad the "\ No newline" marker to align with the numbered lines.
+        if (line.kind == .no_newline) {
             var p: usize = 0;
-            while (p < pad) : (p += 1) try stdout.writeByte(' ');
-            try stdout.print("{s}\n", .{line});
-        } else {
-            try stdout.print("{s}\n", .{line});
+            while (p < num_width + 2) : (p += 1) try stdout.writeByte(' ');
         }
+        try stdout.print("{s}\n", .{line.text});
     }
 }
 
 const COLOR_BOLD = "\x1b[1m";
 
-/// Count body lines (context, +, - lines after the @@ header) in a raw hunk.
+/// Count the numbered body lines (context, +, -) in a raw hunk.
 fn countBodyLines(raw_lines: []const u8) u32 {
     var total: u32 = 0;
-    var iter = std.mem.splitScalar(u8, raw_lines, '\n');
-    _ = iter.next(); // skip @@ header
-    while (iter.next()) |line| {
-        if (line.len == 0) {
-            total += 1;
-        } else if (line[0] == ' ' or line[0] == '+' or line[0] == '-') {
-            total += 1;
-        }
+    var lines = types.BodyLineIterator.init(raw_lines);
+    while (lines.next()) |line| {
+        if (line.number != null) total += 1;
     }
     return total;
 }
@@ -213,18 +194,16 @@ fn digitWidth(n: u32) usize {
 /// Print a single numbered body line: `>num: line` (selected) or ` num: line`,
 /// with +/- line content colored when `use_color` is true and the prefix made
 /// bold when selected.
-fn printNumberedBodyLine(stdout: *std.Io.Writer, line: []const u8, num_str: []const u8, selected: bool, use_color: bool) !void {
+fn printNumberedBodyLine(stdout: *std.Io.Writer, line: types.BodyLine, num_str: []const u8, selected: bool, use_color: bool) !void {
     const marker: u8 = if (selected) '>' else ' ';
-    const first: u8 = if (line.len == 0) ' ' else line[0];
-    const line_color: []const u8 = if (use_color and first == '+')
-        COLOR_GREEN
-    else if (use_color and first == '-')
-        COLOR_RED
-    else
-        "";
+    const line_color: []const u8 = if (!use_color) "" else switch (line.kind) {
+        .addition => COLOR_GREEN,
+        .removal => COLOR_RED,
+        else => "",
+    };
     const prefix_color: []const u8 = if (use_color and selected) COLOR_BOLD else "";
     const reset: []const u8 = if (line_color.len > 0 or prefix_color.len > 0) COLOR_RESET else "";
-    try stdout.print("{s}{c}{s}:{s}{s}{s}\n", .{ prefix_color, marker, num_str, line_color, line, reset });
+    try stdout.print("{s}{c}{s}:{s}{s}{s}\n", .{ prefix_color, marker, num_str, line_color, line.text, reset });
 }
 
 /// Format a number right-aligned in a fixed-width field.
@@ -418,6 +397,10 @@ pub fn getTerminalWidth() u16 {
 
 const testMakeHunk = types.testMakeHunk;
 
+fn testBodyLine(text: []const u8) types.BodyLine {
+    return .{ .kind = .of(text), .text = text, .number = 1 };
+}
+
 test "printRawLines plain context line, no color, no indent" {
     var buf: [256]u8 = undefined;
     var w = std.Io.Writer.fixed(&buf);
@@ -560,21 +543,21 @@ test "digitWidth basic cases" {
 test "printNumberedBodyLine non-selected non-color" {
     var buf: [64]u8 = undefined;
     var w = std.Io.Writer.fixed(&buf);
-    try printNumberedBodyLine(&w, "+added", "3", false, false);
+    try printNumberedBodyLine(&w, testBodyLine("+added"), "3", false, false);
     try std.testing.expectEqualStrings(" 3:+added\n", w.buffered());
 }
 
 test "printNumberedBodyLine selected gets > marker" {
     var buf: [64]u8 = undefined;
     var w = std.Io.Writer.fixed(&buf);
-    try printNumberedBodyLine(&w, " context", "5", true, false);
+    try printNumberedBodyLine(&w, testBodyLine(" context"), "5", true, false);
     try std.testing.expectEqualStrings(">5: context\n", w.buffered());
 }
 
 test "printNumberedBodyLine color: + line gets green" {
     var buf: [128]u8 = undefined;
     var w = std.Io.Writer.fixed(&buf);
-    try printNumberedBodyLine(&w, "+added", "1", false, true);
+    try printNumberedBodyLine(&w, testBodyLine("+added"), "1", false, true);
     const out = w.buffered();
     try std.testing.expect(std.mem.indexOf(u8, out, COLOR_GREEN) != null);
     try std.testing.expect(std.mem.indexOf(u8, out, COLOR_RESET) != null);
@@ -584,7 +567,7 @@ test "printNumberedBodyLine color: + line gets green" {
 test "printNumberedBodyLine empty line + selected + color: bold marker, no line-color" {
     var buf: [128]u8 = undefined;
     var w = std.Io.Writer.fixed(&buf);
-    try printNumberedBodyLine(&w, "", "1", true, true);
+    try printNumberedBodyLine(&w, testBodyLine(""), "1", true, true);
     const out = w.buffered();
     // Empty line is treated as context (no +/-): no green/red, but bold prefix.
     try std.testing.expect(std.mem.indexOf(u8, out, COLOR_BOLD) != null);
@@ -596,7 +579,7 @@ test "printNumberedBodyLine empty line + selected + color: bold marker, no line-
 test "printNumberedBodyLine color + selected: bold + green" {
     var buf: [128]u8 = undefined;
     var w = std.Io.Writer.fixed(&buf);
-    try printNumberedBodyLine(&w, "+added", "1", true, true);
+    try printNumberedBodyLine(&w, testBodyLine("+added"), "1", true, true);
     const out = w.buffered();
     try std.testing.expect(std.mem.indexOf(u8, out, COLOR_BOLD) != null);
     try std.testing.expect(std.mem.indexOf(u8, out, COLOR_GREEN) != null);
