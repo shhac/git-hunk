@@ -51,7 +51,7 @@ fn getDiffWithUntracked(
     const diff_output = if (diff_filter == .untracked_only)
         try allocator.alloc(u8, 0)
     else
-        try git.runGitDiff(allocator, mode, ref, context);
+        try git.runGitDiffFiles(allocator, mode, ref, context, &.{});
     errdefer allocator.free(diff_output);
 
     if (diff_output.len > 0) {
@@ -896,7 +896,7 @@ const HeadInfo = struct {
 /// Look up HEAD tree, HEAD sha, branch name, and HEAD commit summary in one
 /// place. Caller must call `deinit` on the returned struct.
 fn gatherHeadInfo(allocator: Allocator) !HeadInfo {
-    const tree = try git.runGitRevParseTree(allocator);
+    const tree = try git.runGitRevParse(allocator, "HEAD^{tree}");
     errdefer allocator.free(tree);
     const sha = try git.runGitRevParse(allocator, "HEAD");
     errdefer allocator.free(sha);
