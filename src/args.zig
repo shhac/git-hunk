@@ -65,11 +65,17 @@ fn applyCommonFlags(allocator: Allocator, common: *CommonFlags, opts: anytype) !
 ///
 /// Entries are owned copies rather than borrowed argv slices because
 /// `--files-from` synthesises paths from file contents, which do not outlive
-/// the read buffer. `--file` duplicates its argument so both sources free the
-/// same way.
+/// the read buffer. `--file` owns its resolved argument too, so both sources
+/// free the same way.
 pub fn deinitFileFilter(allocator: Allocator, file_filter: []const []const u8) void {
     for (file_filter) |p| allocator.free(p);
     if (file_filter.len > 0) allocator.free(file_filter);
+}
+
+/// Free everything a `parse*Args` result owns.
+pub fn deinitOptions(allocator: Allocator, opts: anytype) void {
+    if (comptime @hasField(@TypeOf(opts.*), "sha_args")) deinitShaArgs(allocator, &opts.sha_args);
+    deinitFileFilter(allocator, opts.file_filter);
 }
 
 /// Free a still-in-progress CommonFlags file filter (entries + list). Used on
@@ -91,9 +97,7 @@ fn parseCommonFlag(allocator: Allocator, arg: []const u8, i: *usize, args: []con
     } else if (std.mem.eql(u8, arg, "--file")) {
         i.* += 1;
         if (i.* >= args.len) return error.MissingArgument;
-        const owned = try allocator.dupe(u8, args[i.*]);
-        errdefer allocator.free(owned);
-        try c.file_filter.append(allocator, owned);
+        try appendRepoRelative(allocator, &c.file_filter, args[i.*]);
         return true;
     } else if (std.mem.eql(u8, arg, "--files-from")) {
         i.* += 1;
@@ -569,7 +573,7 @@ fn isValidShaPrefix(arg: []const u8) bool {
 const max_files_from_bytes: usize = 16 * 1024 * 1024;
 
 /// Read newline- or NUL-separated paths from `source` ("-" means stdin) and
-/// append owned copies to `list`.
+/// append owned, repo-relative copies to `list`.
 ///
 /// The separator is detected rather than flagged: NUL is not a legal byte in a
 /// path, so its presence unambiguously means the producer used `-z`
@@ -610,10 +614,16 @@ fn appendPathsFromFile(allocator: Allocator, source: []const u8, list: *std.Arra
         // Tolerate CRLF and stray trailing whitespace from hand-written lists.
         const path = std.mem.trim(u8, raw, " \t\r\n");
         if (path.len == 0) continue;
-        const owned = try allocator.dupe(u8, path);
-        errdefer allocator.free(owned);
-        try list.append(allocator, owned);
+        try appendRepoRelative(allocator, list, path);
     }
+}
+
+/// Append an owned, repo-relative copy of a path the user typed from their
+/// own directory: the process has already chdir'd to the repo root.
+fn appendRepoRelative(allocator: Allocator, list: *std.ArrayList([]const u8), path: []const u8) !void {
+    const owned = try path_mod.resolveToRepoRelative(allocator, types.getRepoPrefix(), path);
+    errdefer allocator.free(owned);
+    try list.append(allocator, owned);
 }
 
 fn looksLikePathArg(arg: []const u8) bool {

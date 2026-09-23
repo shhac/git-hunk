@@ -68,119 +68,65 @@ fn run(init: std.process.Init) !void {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
     const prefix = path_mod.chdirToRepoRoot(arena) catch "";
-    // Parsing runs after the chdir, so anything that opens a user-supplied path
-    // during parsing (--files-from) needs the prefix to stay cwd-relative.
+    // Parsing runs after the chdir, so every user-supplied path it reads
+    // (--file, --files-from) needs the prefix to stay cwd-relative.
     types.setRepoPrefix(prefix);
 
-    if (std.mem.eql(u8, subcmd, "list")) {
-        var opts = args_mod.parseListArgs(allocator, process_args[2..]) catch |err|
-            handleParseError(stdout, err, .list);
-        defer args_mod.deinitFileFilter(allocator, opts.file_filter);
-        try resolveFileFilter(allocator, arena, prefix, opts.file_filter);
-        try expandRefShorthand(arena, &opts.ref, opts.mode == .staged);
-        try commands.cmdList(allocator, stdout, opts);
-    } else if (std.mem.eql(u8, subcmd, "add")) {
-        var opts = args_mod.parseAddResetArgs(allocator, process_args[2..]) catch |err|
-            handleParseError(stdout, err, .add);
-        defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
-        defer args_mod.deinitFileFilter(allocator, opts.file_filter);
-        try resolveFileFilter(allocator, arena, prefix, opts.file_filter);
-        try expandRefShorthand(arena, &opts.ref, false);
-        try commands.cmdAdd(allocator, stdout, opts);
-    } else if (std.mem.eql(u8, subcmd, "reset")) {
-        var opts = args_mod.parseAddResetArgs(allocator, process_args[2..]) catch |err|
-            handleParseError(stdout, err, .reset);
-        defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
-        defer args_mod.deinitFileFilter(allocator, opts.file_filter);
-        try resolveFileFilter(allocator, arena, prefix, opts.file_filter);
-        try expandRefShorthand(arena, &opts.ref, false);
-        try commands.cmdReset(allocator, stdout, opts);
-    } else if (std.mem.eql(u8, subcmd, "count")) {
-        var opts = args_mod.parseCountArgs(allocator, process_args[2..]) catch |err|
-            handleParseError(stdout, err, .count);
-        defer args_mod.deinitFileFilter(allocator, opts.file_filter);
-        try resolveFileFilter(allocator, arena, prefix, opts.file_filter);
-        try expandRefShorthand(arena, &opts.ref, opts.mode == .staged);
-        try commands.cmdCount(allocator, stdout, opts);
-    } else if (std.mem.eql(u8, subcmd, "check")) {
-        var opts = args_mod.parseCheckArgs(allocator, process_args[2..]) catch |err|
-            handleParseError(stdout, err, .check);
-        defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
-        defer args_mod.deinitFileFilter(allocator, opts.file_filter);
-        try resolveFileFilter(allocator, arena, prefix, opts.file_filter);
-        try expandRefShorthand(arena, &opts.ref, opts.mode == .staged);
-        try commands.cmdCheck(allocator, stdout, opts);
-    } else if (std.mem.eql(u8, subcmd, "restore")) {
-        var opts = args_mod.parseRestoreArgs(allocator, process_args[2..]) catch |err|
-            handleParseError(stdout, err, .restore);
-        defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
-        defer args_mod.deinitFileFilter(allocator, opts.file_filter);
-        try resolveFileFilter(allocator, arena, prefix, opts.file_filter);
-        try expandRefShorthand(arena, &opts.ref, false);
-        try commands.cmdRestore(allocator, stdout, opts);
-    } else if (std.mem.eql(u8, subcmd, "diff")) {
-        var opts = args_mod.parseDiffArgs(allocator, process_args[2..]) catch |err|
-            handleParseError(stdout, err, .diff);
-        defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
-        defer args_mod.deinitFileFilter(allocator, opts.file_filter);
-        try resolveFileFilter(allocator, arena, prefix, opts.file_filter);
-        try expandRefShorthand(arena, &opts.ref, opts.mode == .staged);
-        try commands.cmdDiff(allocator, stdout, opts);
-    } else if (std.mem.eql(u8, subcmd, "stash")) {
-        var opts = args_mod.parseStashArgs(allocator, process_args[2..]) catch |err|
-            handleParseError(stdout, err, .stash);
-        defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
-        defer args_mod.deinitFileFilter(allocator, opts.file_filter);
-        try resolveFileFilter(allocator, arena, prefix, opts.file_filter);
-        try expandRefShorthand(arena, &opts.ref, false);
-        try commands.cmdStash(allocator, stdout, opts);
-    } else if (std.mem.eql(u8, subcmd, "commit")) {
-        var opts = args_mod.parseCommitArgs(allocator, process_args[2..]) catch |err|
-            handleParseError(stdout, err, .commit);
-        defer args_mod.deinitShaArgs(allocator, &opts.sha_args);
-        defer args_mod.deinitFileFilter(allocator, opts.file_filter);
-        try resolveFileFilter(allocator, arena, prefix, opts.file_filter);
-        try expandRefShorthand(arena, &opts.ref, false);
-        try commands.cmdCommit(allocator, stdout, opts);
-    } else if (std.mem.eql(u8, subcmd, "--version") or std.mem.eql(u8, subcmd, "-V")) {
+    if (std.mem.eql(u8, subcmd, "--version") or std.mem.eql(u8, subcmd, "-V")) {
         try stdout.print("git-hunk {s}\n", .{build_options.version});
-    } else if (std.mem.eql(u8, subcmd, "--help") or std.mem.eql(u8, subcmd, "-h") or std.mem.eql(u8, subcmd, "help")) {
-        if (process_args.len > 2) {
-            if (help.commandFromString(process_args[2])) |cmd| {
-                try help.printCommandHelp(stdout, cmd);
-            } else {
-                std.debug.print("error: unknown command '{s}'\n", .{process_args[2]});
-                try printUsage(stdout);
-                try stdout.flush();
-                std.process.exit(1);
-            }
-        } else {
-            try printUsage(stdout);
-        }
-    } else {
-        std.debug.print("error: unknown command '{s}'\n", .{subcmd});
-        try printUsage(stdout);
         try stdout.flush();
-        std.process.exit(1);
+        return;
+    }
+    if (std.mem.eql(u8, subcmd, "--help") or std.mem.eql(u8, subcmd, "-h") or std.mem.eql(u8, subcmd, "help")) {
+        try printHelp(stdout, if (process_args.len > 2) process_args[2] else null);
+        try stdout.flush();
+        return;
+    }
+
+    const cmd = help.commandFromString(subcmd) orelse try exitUnknownCommand(stdout, subcmd);
+    const sub_args = process_args[2..];
+    switch (cmd) {
+        .list => try runSubcommand(allocator, arena, stdout, sub_args, .list, args_mod.parseListArgs, commands.cmdList),
+        .diff => try runSubcommand(allocator, arena, stdout, sub_args, .diff, args_mod.parseDiffArgs, commands.cmdDiff),
+        .add => try runSubcommand(allocator, arena, stdout, sub_args, .add, args_mod.parseAddResetArgs, commands.cmdAdd),
+        .reset => try runSubcommand(allocator, arena, stdout, sub_args, .reset, args_mod.parseAddResetArgs, commands.cmdReset),
+        .restore => try runSubcommand(allocator, arena, stdout, sub_args, .restore, args_mod.parseRestoreArgs, commands.cmdRestore),
+        .count => try runSubcommand(allocator, arena, stdout, sub_args, .count, args_mod.parseCountArgs, commands.cmdCount),
+        .check => try runSubcommand(allocator, arena, stdout, sub_args, .check, args_mod.parseCheckArgs, commands.cmdCheck),
+        .stash => try runSubcommand(allocator, arena, stdout, sub_args, .stash, args_mod.parseStashArgs, commands.cmdStash),
+        .commit => try runSubcommand(allocator, arena, stdout, sub_args, .commit, args_mod.parseCommitArgs, commands.cmdCommit),
     }
     try stdout.flush();
 }
 
-/// Rewrite each `--file`/`--files-from` path to be repo-relative, in place.
-///
-/// Entries stay owned by `allocator` (see `args.deinitFileFilter`): the
-/// resolved path is copied back onto the same allocator and the old entry
-/// freed, so the caller's `deinitFileFilter` remains correct. `arena` holds
-/// only the short-lived resolution scratch.
-fn resolveFileFilter(allocator: std.mem.Allocator, arena: std.mem.Allocator, prefix: []const u8, filter: []const []const u8) !void {
-    if (prefix.len == 0) return;
-    const spine: [][]const u8 = @constCast(filter);
-    for (spine) |*entry| {
-        const resolved = try path_mod.resolveToRepoRelative(arena, prefix, entry.*);
-        const owned = try allocator.dupe(u8, resolved);
-        allocator.free(entry.*);
-        entry.* = owned;
-    }
+/// The lifecycle every subcommand shares: parse, expand `--ref`, run, free.
+fn runSubcommand(
+    allocator: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    stdout: *std.Io.Writer,
+    sub_args: []const [:0]const u8,
+    comptime cmd: help.Command,
+    comptime parse: anytype,
+    comptime exec: anytype,
+) !void {
+    var opts = parse(allocator, sub_args) catch |err| handleParseError(stdout, err, cmd);
+    defer args_mod.deinitOptions(allocator, &opts);
+    const is_staged = @hasField(@TypeOf(opts), "mode") and opts.mode == .staged;
+    try expandRefShorthand(arena, &opts.ref, is_staged);
+    try exec(allocator, stdout, opts);
+}
+
+fn printHelp(stdout: *std.Io.Writer, topic: ?[]const u8) !void {
+    const name = topic orelse return printUsage(stdout);
+    const cmd = help.commandFromString(name) orelse try exitUnknownCommand(stdout, name);
+    try help.printCommandHelp(stdout, cmd);
+}
+
+fn exitUnknownCommand(stdout: *std.Io.Writer, name: []const u8) !noreturn {
+    std.debug.print("error: unknown command '{s}'\n", .{name});
+    try printUsage(stdout);
+    try stdout.flush();
+    std.process.exit(1);
 }
 
 /// Expand a single-ref `--ref <commit>` into the equivalent range `<commit>^..<commit>`

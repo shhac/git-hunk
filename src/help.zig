@@ -18,18 +18,7 @@ pub const Command = enum {
 };
 
 pub fn commandFromString(s: []const u8) ?Command {
-    const map = std.StaticStringMap(Command).initComptime(.{
-        .{ "list", .list },
-        .{ "diff", .diff },
-        .{ "add", .add },
-        .{ "reset", .reset },
-        .{ "restore", .restore },
-        .{ "count", .count },
-        .{ "check", .check },
-        .{ "stash", .stash },
-        .{ "commit", .commit },
-    });
-    return map.get(s);
+    return std.meta.stringToEnum(Command, s);
 }
 
 pub fn printCommandHelp(stdout: *std.Io.Writer, cmd: Command) !void {
