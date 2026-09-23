@@ -500,8 +500,10 @@ pub fn parseCommitArgs(allocator: Allocator, args: []const [:0]const u8) !Commit
     return opts;
 }
 
+/// Lowercase only, as Git 3.0 requires of object IDs. Hunk hashes are printed
+/// lowercase, so an uppercase prefix could never match anything.
 fn isHexDigit(c: u8) bool {
-    return (c >= '0' and c <= '9') or (c >= 'a' and c <= 'f') or (c >= 'A' and c <= 'F');
+    return (c >= '0' and c <= '9') or (c >= 'a' and c <= 'f');
 }
 
 pub fn deinitShaArgs(allocator: Allocator, sha_args: *std.ArrayList(ShaArg)) void {
@@ -533,6 +535,10 @@ fn parseShaArg(allocator: Allocator, arg: []const u8) !ShaArg {
         }
         for (sha_part) |c| {
             if (isHexDigit(c)) continue;
+            if (std.ascii.isHex(c)) {
+                std.debug.print("error: hunk hashes are lowercase hex: '{s}'\n", .{sha_part});
+                return error.InvalidArgument;
+            }
             std.debug.print("error: invalid hex in sha prefix: '{s}'\n", .{sha_part});
             return error.InvalidArgument;
         }
@@ -1127,6 +1133,11 @@ test "parseShaArg sha too short with line spec" {
     try std.testing.expectError(error.InvalidArgument, parseShaArg(allocator, "abc:1-3"));
 }
 
+test "parseShaArg uppercase hex" {
+    const allocator = std.testing.allocator;
+    try std.testing.expectError(error.InvalidArgument, parseShaArg(allocator, "ABCD1234"));
+}
+
 test "parseShaArg empty line spec" {
     const allocator = std.testing.allocator;
     try std.testing.expectError(error.InvalidArgument, parseShaArg(allocator, "abcd1234:"));
@@ -1358,8 +1369,8 @@ test "isHexDigit lower hex" {
     for ("abcdef") |c| try std.testing.expect(isHexDigit(c));
 }
 
-test "isHexDigit upper hex" {
-    for ("ABCDEF") |c| try std.testing.expect(isHexDigit(c));
+test "isHexDigit rejects upper hex" {
+    for ("ABCDEF") |c| try std.testing.expect(!isHexDigit(c));
 }
 
 test "isHexDigit non-hex" {

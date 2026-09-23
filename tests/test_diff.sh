@@ -231,6 +231,19 @@ echo "$OUT917" | grep -qi 'too short' || fail "test 917: expected 'too short' in
 pass "test 917: diff SHA too short exits 1 with error"
 
 # ============================================================================
+# Test 917b: an uppercase prefix is rejected by name rather than matching
+# nothing — hunk hashes are lowercase, as Git 3.0 requires of object IDs
+# ============================================================================
+new_repo
+sed -i.bak '1s/.*/Changed alpha./' alpha.txt
+UPPER917B="$(first_sha | tr 'a-f' 'A-F')"
+if OUT917B="$("$GIT_HUNK" diff --no-color "$UPPER917B" 2>&1)"; then
+    fail "test 917b: expected exit 1 for uppercase SHA '$UPPER917B'"
+fi
+echo "$OUT917B" | grep -q 'lowercase' || fail "test 917b: expected 'lowercase' in error, got: '$OUT917B'"
+pass "test 917b: diff rejects an uppercase SHA prefix"
+
+# ============================================================================
 # Test 918: diff with no SHA exits 1
 # ============================================================================
 new_repo
