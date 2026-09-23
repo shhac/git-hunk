@@ -3,6 +3,7 @@ const build_options = @import("build_options");
 const types = @import("types.zig");
 const args_mod = @import("args.zig");
 const commands = @import("commands.zig");
+const git = @import("git.zig");
 const help = @import("help.zig");
 const path_mod = @import("path.zig");
 
@@ -182,11 +183,6 @@ fn resolveFileFilter(allocator: std.mem.Allocator, arena: std.mem.Allocator, pre
     }
 }
 
-/// Well-known empty-tree SHA in git. `git diff <empty-tree>..<commit>` shows
-/// the full content of `<commit>` as additions — used to handle parentless
-/// commits where `<commit>^` doesn't exist.
-const EMPTY_TREE_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
-
 /// Expand a single-ref `--ref <commit>` into the equivalent range `<commit>^..<commit>`
 /// (matching `git show <commit>` semantics). For commits without a parent (initial
 /// commits), expands to `<empty-tree>..<commit>` so the full content is shown.
@@ -203,7 +199,7 @@ fn expandRefShorthand(arena: std.mem.Allocator, ref: *?[]const u8, is_staged: bo
     ref.* = if (try refHasParent(arena, r))
         try std.fmt.allocPrint(arena, "{s}^..{s}", .{ r, r })
     else
-        try std.fmt.allocPrint(arena, "{s}..{s}", .{ EMPTY_TREE_SHA, r });
+        try std.fmt.allocPrint(arena, "{s}..{s}", .{ try git.runGitEmptyTree(arena), r });
 }
 
 /// Returns true if `git rev-parse --verify <ref>^` succeeds — i.e. the ref has

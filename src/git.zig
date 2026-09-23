@@ -471,7 +471,8 @@ fn diffSingleUntrackedSymlink(allocator: Allocator, file_path: []const u8) !?[]u
     };
     const target = target_buf[0..target_len];
 
-    const blob_sha = computeGitBlobSha(target);
+    const blob_sha = try runGitCapture(allocator, &.{ "git", "hash-object", "--stdin" }, .{ .stdin_data = target }, "git hash-object --stdin");
+    defer allocator.free(blob_sha);
     return try std.fmt.allocPrint(
         allocator,
         "diff --git a/{s} b/{s}\n" ++
@@ -484,19 +485,6 @@ fn diffSingleUntrackedSymlink(allocator: Allocator, file_path: []const u8) !?[]u
             "\\ No newline at end of file\n",
         .{ file_path, file_path, blob_sha[0..7], file_path, target },
     );
-}
-
-fn computeGitBlobSha(content: []const u8) [40]u8 {
-    var hasher = std.crypto.hash.Sha1.init(.{});
-
-    var header_buf: [64]u8 = undefined;
-    const header = std.fmt.bufPrint(&header_buf, "blob {d}\x00", .{content.len}) catch unreachable;
-    hasher.update(header);
-    hasher.update(content);
-
-    var digest: [std.crypto.hash.Sha1.digest_length]u8 = undefined;
-    hasher.final(&digest);
-    return std.fmt.bytesToHex(digest, .lower);
 }
 
 // ─── Stash plumbing helpers ───────────────────────────────────────────
@@ -566,6 +554,14 @@ pub fn runGitHashObject(allocator: Allocator, file_path: []const u8) ![]u8 {
 /// Run `git hash-object -w --stdin` with the given content piped in. Returns the trimmed blob SHA.
 pub fn runGitHashObjectStdin(allocator: Allocator, content: []const u8) ![]u8 {
     return runGitCapture(allocator, &.{ "git", "hash-object", "-w", "--stdin" }, .{ .stdin_data = content }, "git hash-object --stdin");
+}
+
+/// Return the empty tree's object ID in this repository's object format.
+/// `git diff <empty-tree>..<commit>` shows the full content of `<commit>` as
+/// additions, which is how a parentless commit gets a diff at all. Asked of
+/// git rather than hardcoded because the ID differs between SHA-1 and SHA-256.
+pub fn runGitEmptyTree(allocator: Allocator) ![]u8 {
+    return runGitCapture(allocator, &.{ "git", "hash-object", "-t", "tree", "--stdin" }, .{ .stdin_data = "" }, "git hash-object -t tree");
 }
 
 /// Run `git update-index --add --cacheinfo <mode>,<blob_hash>,<file_path>` with custom GIT_INDEX_FILE env.

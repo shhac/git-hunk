@@ -264,22 +264,25 @@ pass "test 118: --ref <commit> shorthand ignores worktree state"
 
 # ============================================================================
 # Test 119: --ref <initial-commit> works (no parent — diff against empty tree)
-# Regression for the parent-less commit edge case.
+# Regression for the parent-less commit edge case, in both object formats: the
+# empty tree's ID differs between them, so a hardcoded one breaks one format.
 # ============================================================================
-INIT_REPO=$(mktemp -d)
-cd "$INIT_REPO"
-git init -q
-git config user.email t@t.test
-git config user.name t
-echo "first content" > first.txt
-git add first.txt && git commit -q -m "initial"
-INIT_SHA=$(git rev-parse HEAD)
+for FMT119 in sha1 sha256; do
+    INIT_REPO=$(mktemp -d)
+    cd "$INIT_REPO"
+    git init -q --object-format="$FMT119"
+    git config user.email t@t.test
+    git config user.name t
+    echo "first content" > first.txt
+    git add first.txt && git commit -q -m "initial"
+    INIT_SHA=$(git rev-parse HEAD)
 
-OUT119=$("$GIT_HUNK" list --ref "$INIT_SHA" --porcelain --oneline 2>&1) || true
-echo "$OUT119" | grep -q "first.txt" \
-    || fail "test 119: --ref <initial-commit> should show its hunks; got: '$OUT119'"
-pass "test 119: --ref <initial-commit> handled (no parent → diff against empty tree)"
-cd /tmp && rm -rf "$INIT_REPO"
+    OUT119=$("$GIT_HUNK" list --ref "$INIT_SHA" --porcelain --oneline 2>&1) || true
+    echo "$OUT119" | grep -q "first.txt" \
+        || fail "test 119: --ref <initial-commit> should show its hunks in a $FMT119 repo; got: '$OUT119'"
+    pass "test 119: --ref <initial-commit> handled in a $FMT119 repo (no parent → diff against empty tree)"
+    cd /tmp && rm -rf "$INIT_REPO"
+done
 
 # ============================================================================
 # Test 120: --staged + --ref <single-ref> keeps staged-vs-ref semantics

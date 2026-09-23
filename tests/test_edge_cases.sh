@@ -548,6 +548,28 @@ MODE862_OPENCODE="$(git ls-files -s .opencode/commands | awk '{print $1}')"
 pass "test 862: untracked symlinks to directories are listed and staged"
 
 # ============================================================================
+# Test 863: an untracked symlink's synthesized diff names the blob by the
+# repo's own object format (git-hunk builds this diff itself, so nothing else
+# picks the hash function for it)
+# ============================================================================
+for FMT863 in sha1 sha256; do
+    REPO863="$(mktemp -d)"
+    cd "$REPO863"
+    git init -q --object-format="$FMT863"
+    mkdir target863
+    ln -s target863 link863
+
+    SHA863="$("$GIT_HUNK" list --porcelain --oneline 2>/dev/null | grep "link863" | cut -f1)"
+    [[ -n "$SHA863" ]] || fail "test 863: no hunk for untracked symlink in a $FMT863 repo"
+    INDEX863="$("$GIT_HUNK" diff "$SHA863" | grep '^index ')"
+    WANT863="$(printf 'target863' | git hash-object --stdin | cut -c1-7)"
+    [[ "$INDEX863" == "index 0000000..$WANT863" ]] \
+        || fail "test 863: expected 'index 0000000..$WANT863' in a $FMT863 repo, got '$INDEX863'"
+    pass "test 863: untracked symlink diff uses the $FMT863 blob ID"
+    cd /tmp && rm -rf "$REPO863"
+done
+
+# ============================================================================
 # T20 — Typechange support (file replaced by symlink)
 # ============================================================================
 
