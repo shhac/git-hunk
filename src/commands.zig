@@ -111,25 +111,25 @@ pub fn cmdList(allocator: Allocator, stdout: *std.Io.Writer, opts: ListOptions) 
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
-    const diffs = try getDiffWithUntracked(allocator, arena, opts.mode, opts.ref, opts.context, opts.file_filter, opts.diff_filter, &hunks);
+    const diffs = try getDiffWithUntracked(allocator, arena, opts.mode, opts.common.ref, opts.common.context, opts.common.file_filter.items, opts.common.diff_filter, &hunks);
     defer allocator.free(diffs.tracked);
     defer allocator.free(diffs.untracked);
 
-    if (opts.verbosity == .verbose) {
-        try reportSkippedPaths(arena, diffs.tracked, hunks.items, opts.file_filter);
+    if (opts.common.verbosity == .verbose) {
+        try reportSkippedPaths(arena, diffs.tracked, hunks.items, opts.common.file_filter.items);
     }
 
     if (hunks.items.len == 0) return;
 
     // Compute display parameters for human mode
-    const use_color = format.shouldUseColor(opts.output, opts.no_color);
-    const term_width = if (use_color or opts.output == .human) format.getTerminalWidth() else 80;
+    const use_color = format.shouldUseColor(opts.common.output, opts.common.no_color);
+    const term_width = if (use_color or opts.common.output == .human) format.getTerminalWidth() else 80;
 
     // Pre-pass: find max file path length for dynamic column width (human mode only)
     var max_path_len: usize = 0;
-    if (opts.output == .human) {
+    if (opts.common.output == .human) {
         for (hunks.items) |h| {
-            if (!types.matchesFileFilter(h.file_path, opts.file_filter)) continue;
+            if (!types.matchesFileFilter(h.file_path, opts.common.file_filter.items)) continue;
             max_path_len = @max(max_path_len, h.file_path.len + @as(usize, if (h.is_symlink) 1 else 0));
         }
     }
@@ -143,19 +143,19 @@ pub fn cmdList(allocator: Allocator, stdout: *std.Io.Writer, opts: ListOptions) 
     var last_file: []const u8 = "";
 
     for (hunks.items) |h| {
-        if (!types.matchesFileFilter(h.file_path, opts.file_filter)) continue;
+        if (!types.matchesFileFilter(h.file_path, opts.common.file_filter.items)) continue;
         if (!std.mem.eql(u8, h.file_path, last_file)) {
             file_count += 1;
             last_file = h.file_path;
         }
         hunk_count += 1;
-        if (opts.verbosity != .quiet) {
-            switch (opts.output) {
+        if (opts.common.verbosity != .quiet) {
+            switch (opts.common.output) {
                 .human => try format.printHunkHuman(stdout, h, opts.mode, col_width, term_width, use_color),
                 .porcelain => try format.printHunkPorcelain(stdout, h, opts.mode),
             }
             if (!opts.oneline) {
-                switch (opts.output) {
+                switch (opts.common.output) {
                     .human => try format.printDiffHuman(stdout, h, use_color),
                     .porcelain => try format.printDiffPorcelain(stdout, h),
                 }
@@ -164,7 +164,7 @@ pub fn cmdList(allocator: Allocator, stdout: *std.Io.Writer, opts: ListOptions) 
     }
 
     // Count summary (verbose + human output only, when there are hunks)
-    if (opts.verbosity == .verbose and opts.output == .human and hunk_count > 0) {
+    if (opts.common.verbosity == .verbose and opts.common.output == .human and hunk_count > 0) {
         std.debug.print("{d} hunks across {d} files\n", .{ hunk_count, file_count });
     }
 }
@@ -177,21 +177,21 @@ pub fn cmdCount(allocator: Allocator, stdout: *std.Io.Writer, opts: CountOptions
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
-    const diffs = try getDiffWithUntracked(allocator, arena, opts.mode, opts.ref, opts.context, opts.file_filter, opts.diff_filter, &hunks);
+    const diffs = try getDiffWithUntracked(allocator, arena, opts.mode, opts.common.ref, opts.common.context, opts.common.file_filter.items, opts.common.diff_filter, &hunks);
     defer allocator.free(diffs.tracked);
     defer allocator.free(diffs.untracked);
 
     var count: usize = 0;
     for (hunks.items) |h| {
-        if (!types.matchesFileFilter(h.file_path, opts.file_filter)) continue;
+        if (!types.matchesFileFilter(h.file_path, opts.common.file_filter.items)) continue;
         count += 1;
     }
 
-    if (opts.verbosity == .verbose) {
-        try reportSkippedPaths(arena, diffs.tracked, hunks.items, opts.file_filter);
+    if (opts.common.verbosity == .verbose) {
+        try reportSkippedPaths(arena, diffs.tracked, hunks.items, opts.common.file_filter.items);
     }
 
-    if (opts.verbosity != .quiet) {
+    if (opts.common.verbosity != .quiet) {
         try stdout.print("{d}\n", .{count});
     }
 }
@@ -359,21 +359,21 @@ pub fn cmdCheck(allocator: Allocator, stdout: *std.Io.Writer, opts: CheckOptions
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
-    const diffs = try getDiffWithUntracked(allocator, arena, opts.mode, opts.ref, opts.context, opts.file_filter, opts.diff_filter, &hunks);
+    const diffs = try getDiffWithUntracked(allocator, arena, opts.mode, opts.common.ref, opts.common.context, opts.common.file_filter.items, opts.common.diff_filter, &hunks);
     defer allocator.free(diffs.tracked);
     defer allocator.free(diffs.untracked);
 
-    const summary = try runChecks(arena, hunks.items, opts.sha_args.items, opts.file_filter, opts.exclusive);
+    const summary = try runChecks(arena, hunks.items, opts.sha_args.items, opts.common.file_filter.items, opts.exclusive);
 
     // --allow-empty with no SHAs: skip rendering "ok" entries (there are none) — only
     // unexpected hunks can fail. If there are none, exit successfully.
     if (opts.allow_empty and opts.sha_args.items.len == 0 and !summary.has_failure) return;
 
-    if (opts.verbosity != .quiet) {
-        if (opts.output == .porcelain) {
+    if (opts.common.verbosity != .quiet) {
+        if (opts.common.output == .porcelain) {
             try renderCheckPorcelain(stdout, summary);
         } else {
-            const use_color = format.shouldUseColor(opts.output, opts.no_color);
+            const use_color = format.shouldUseColor(opts.common.output, opts.common.no_color);
             try renderCheckHuman(stdout, summary, use_color);
         }
     }
@@ -571,7 +571,7 @@ fn renderApplyResults(
     binary_matched: []const MatchedHunk,
     had_conflicts: bool,
 ) !void {
-    const use_color = format.shouldUseColor(opts.output, opts.no_color);
+    const use_color = format.shouldUseColor(opts.common.output, opts.common.no_color);
     const verb: []const u8 = switch (action) {
         .stage => "staged",
         .unstage => "unstaged",
@@ -582,8 +582,8 @@ fn renderApplyResults(
     for (result_groups) |rg| {
         count += rg.applied.len;
         merged_count += rg.consumed.len;
-        if (opts.verbosity != .quiet) {
-            switch (opts.output) {
+        if (opts.common.verbosity != .quiet) {
+            switch (opts.common.output) {
                 .human => try printResultGroupHuman(stdout, verb, rg, use_color),
                 .porcelain => try printResultGroupPorcelain(stdout, verb, rg),
             }
@@ -591,8 +591,8 @@ fn renderApplyResults(
     }
     for (binary_matched) |m| {
         count += 1;
-        if (opts.verbosity != .quiet) {
-            try format.printMatchedHunkLine(stdout, verb, verb, m, use_color, opts.output);
+        if (opts.common.verbosity != .quiet) {
+            try format.printMatchedHunkLine(stdout, verb, verb, m, use_color, opts.common.output);
         }
     }
 
@@ -601,7 +601,7 @@ fn renderApplyResults(
     // Mixing "N hunks staged" with that error would be self-contradictory.
     if (had_conflicts) return;
 
-    if (opts.verbosity == .verbose and opts.output == .human) {
+    if (opts.common.verbosity == .verbose and opts.common.output == .human) {
         if (count == 1 and merged_count == 0) {
             std.debug.print("1 hunk {s}\n", .{verb});
         } else if (count == 1 and merged_count > 0) {
@@ -612,7 +612,7 @@ fn renderApplyResults(
             std.debug.print("{d} hunks {s} ({d} merged)\n", .{ count, verb, merged_count });
         }
     }
-    if (action == .stage and opts.verbosity == .verbose and opts.output == .human) {
+    if (action == .stage and opts.common.verbosity == .verbose and opts.common.output == .human) {
         std.debug.print("hint: staged hashes differ from unstaged -- use 'git hunk list --staged' to see them\n", .{});
     }
 }
@@ -640,7 +640,7 @@ fn dryRunApplyHunks(
                 .reverse = reverse,
                 .target = .index,
                 .check_only = true,
-                .ref = opts.ref,
+                .ref = opts.common.ref,
             });
         }
     }
@@ -649,8 +649,8 @@ fn dryRunApplyHunks(
         .stage => .{ .human = "would stage", .porcelain = "would-stage" },
         .unstage => .{ .human = "would unstage", .porcelain = "would-unstage" },
     };
-    const use_color = format.shouldUseColor(opts.output, opts.no_color);
-    _ = try format.printMatchedHunks(stdout, matched, verbs.human, verbs.porcelain, use_color, opts.output, opts.verbosity);
+    const use_color = format.shouldUseColor(opts.common.output, opts.common.no_color);
+    _ = try format.printMatchedHunks(stdout, matched, verbs.human, verbs.porcelain, use_color, opts.common.output, opts.common.verbosity);
 }
 
 fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOptions, action: ApplyAction) !void {
@@ -668,7 +668,7 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
-    const diffs = try getDiffWithUntracked(allocator, arena, diff_mode, opts.ref, opts.context, opts.file_filter, opts.diff_filter, &hunks);
+    const diffs = try getDiffWithUntracked(allocator, arena, diff_mode, opts.common.ref, opts.common.context, opts.common.file_filter.items, opts.common.diff_filter, &hunks);
     defer allocator.free(diffs.tracked);
     defer allocator.free(diffs.untracked);
 
@@ -676,8 +676,8 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
 
     var matched: std.ArrayList(MatchedHunk) = .empty;
     defer matched.deinit(arena);
-    try resolveHunksFromOpts(arena, hunks.items, opts.sha_args.items, opts.file_filter, &matched);
-    exitIfNoMatches(matched.items.len, opts.file_filter);
+    try resolveHunksFromOpts(arena, hunks.items, opts.sha_args.items, opts.common.file_filter.items, &matched);
+    exitIfNoMatches(matched.items.len, opts.common.file_filter.items);
 
     const partition = try patch_mod.partitionByKind(arena, matched.items);
     const text_matched = try partition.combinedText(arena);
@@ -702,13 +702,13 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
     };
     var old_target_hunks: std.ArrayList(Hunk) = .empty;
     defer old_target_hunks.deinit(arena);
-    if (text_matched.len > 0) try captureTargetHunks(arena, target_mode, opts.context, file_paths, &old_target_hunks);
+    if (text_matched.len > 0) try captureTargetHunks(arena, target_mode, opts.common.context, file_paths, &old_target_hunks);
 
-    const had_conflicts = try applyTextAndBinary(allocator, arena, action, text_matched, binary_paths, opts.ref, opts.three_way);
+    const had_conflicts = try applyTextAndBinary(allocator, arena, action, text_matched, binary_paths, opts.common.ref, opts.common.three_way);
 
     var new_hunks: std.ArrayList(Hunk) = .empty;
     defer new_hunks.deinit(arena);
-    if (text_matched.len > 0) try captureTargetHunks(arena, target_mode, opts.context, file_paths, &new_hunks);
+    if (text_matched.len > 0) try captureTargetHunks(arena, target_mode, opts.common.context, file_paths, &new_hunks);
 
     const result_groups = try buildResultGroups(arena, text_matched, old_target_hunks.items, new_hunks.items);
     try renderApplyResults(stdout, opts, action, result_groups, binary_matched, had_conflicts);
@@ -737,7 +737,7 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
-    const diffs = try getDiffWithUntracked(allocator, arena, .unstaged, opts.ref, opts.context, opts.file_filter, opts.diff_filter, &hunks);
+    const diffs = try getDiffWithUntracked(allocator, arena, .unstaged, opts.common.ref, opts.common.context, opts.common.file_filter.items, opts.common.diff_filter, &hunks);
     defer allocator.free(diffs.tracked);
     defer allocator.free(diffs.untracked);
 
@@ -745,8 +745,8 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
 
     var matched: std.ArrayList(MatchedHunk) = .empty;
     defer matched.deinit(arena);
-    try resolveHunksFromOpts(arena, hunks.items, opts.sha_args.items, opts.file_filter, &matched);
-    exitIfNoMatches(matched.items.len, opts.file_filter);
+    try resolveHunksFromOpts(arena, hunks.items, opts.sha_args.items, opts.common.file_filter.items, &matched);
+    exitIfNoMatches(matched.items.len, opts.common.file_filter.items);
 
     // Gate: untracked files require --force (restoring deletes them permanently)
     // Dry-run bypasses the gate — safe to preview without --force
@@ -774,8 +774,8 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
                 .reverse = true,
                 .target = .worktree,
                 .check_only = opts.dry_run,
-                .three_way = opts.three_way and !opts.dry_run,
-                .ref = opts.ref,
+                .three_way = opts.common.three_way and !opts.dry_run,
+                .ref = opts.common.ref,
             });
             if (result == .applied_with_conflicts) any_restore_conflicts = true;
         }
@@ -797,18 +797,18 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
     }
 
     // Output
-    const use_color = format.shouldUseColor(opts.output, opts.no_color);
+    const use_color = format.shouldUseColor(opts.common.output, opts.common.no_color);
 
     const verb: []const u8 = if (opts.dry_run) "would restore" else "restored";
     const porcelain_verb: []const u8 = if (opts.dry_run) "would-restore" else "restored";
     const summary_verb: []const u8 = if (opts.dry_run) "would be restored" else "restored";
 
-    const count = try format.printMatchedHunks(stdout, matched.items, verb, porcelain_verb, use_color, opts.output, opts.verbosity);
+    const count = try format.printMatchedHunks(stdout, matched.items, verb, porcelain_verb, use_color, opts.common.output, opts.common.verbosity);
     // Skip the "N hunks restored" summary when --3way left conflict markers:
     // the caller will exit non-zero with a clear error, and "N hunks restored"
     // would contradict that. The per-hunk lines above still show what was touched.
     if (!any_restore_conflicts) {
-        format.printHunkCountSummary(opts.verbosity, opts.output, count, summary_verb);
+        format.printHunkCountSummary(opts.common.verbosity, opts.common.output, count, summary_verb);
     }
 
     if (any_restore_conflicts) {
@@ -833,7 +833,7 @@ pub fn cmdDiff(allocator: Allocator, stdout: *std.Io.Writer, opts: DiffOptions) 
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
-    const diffs = try getDiffWithUntracked(allocator, arena, opts.mode, opts.ref, opts.context, opts.file_filter, opts.diff_filter, &hunks);
+    const diffs = try getDiffWithUntracked(allocator, arena, opts.mode, opts.common.ref, opts.common.context, opts.common.file_filter.items, opts.common.diff_filter, &hunks);
     defer allocator.free(diffs.tracked);
     defer allocator.free(diffs.untracked);
 
@@ -843,14 +843,14 @@ pub fn cmdDiff(allocator: Allocator, stdout: *std.Io.Writer, opts: DiffOptions) 
     var matched: std.ArrayList(MatchedHunk) = .empty;
     defer matched.deinit(arena);
 
-    try resolveMatchedHunks(arena, hunks.items, opts.sha_args.items, opts.file_filter, &matched);
+    try resolveMatchedHunks(arena, hunks.items, opts.sha_args.items, opts.common.file_filter.items, &matched);
 
-    const use_color = format.shouldUseColor(opts.output, opts.no_color);
+    const use_color = format.shouldUseColor(opts.common.output, opts.common.no_color);
 
     // Print each matched hunk
-    if (opts.verbosity != .quiet) {
+    if (opts.common.verbosity != .quiet) {
         for (matched.items) |m| {
-            switch (opts.output) {
+            switch (opts.common.output) {
                 .human => {
                     try stdout.writeAll(m.hunk.patch_header);
                     if (m.hunk.is_binary) {
@@ -961,7 +961,7 @@ fn buildStashMessage(arena: Allocator, opts: StashOptions, matched: []const Matc
 
 pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions) !void {
     if (opts.pop) {
-        try stash_mod.stashPop(allocator, opts.verbosity);
+        try stash_mod.stashPop(allocator, opts.common.verbosity);
         return;
     }
 
@@ -975,12 +975,12 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
 
     // When --all is used without --include-untracked, default to tracked-only
     // (matching git stash behavior). Explicit hashes bypass this.
-    const effective_filter = if (opts.select_all and !opts.include_untracked and opts.diff_filter == .all)
+    const effective_filter = if (opts.select_all and !opts.include_untracked and opts.common.diff_filter == .all)
         DiffFilter.tracked_only
     else
-        opts.diff_filter;
+        opts.common.diff_filter;
 
-    const diffs = try getDiffWithUntracked(allocator, arena, .unstaged, opts.ref, opts.context, opts.file_filter, effective_filter, &hunks);
+    const diffs = try getDiffWithUntracked(allocator, arena, .unstaged, opts.common.ref, opts.common.context, opts.common.file_filter.items, effective_filter, &hunks);
     defer allocator.free(diffs.tracked);
     defer allocator.free(diffs.untracked);
 
@@ -988,8 +988,8 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
 
     var matched: std.ArrayList(MatchedHunk) = .empty;
     defer matched.deinit(arena);
-    try resolveHunksFromOpts(arena, hunks.items, opts.sha_args.items, opts.file_filter, &matched);
-    exitIfNoMatches(matched.items.len, opts.file_filter);
+    try resolveHunksFromOpts(arena, hunks.items, opts.sha_args.items, opts.common.file_filter.items, &matched);
+    exitIfNoMatches(matched.items.len, opts.common.file_filter.items);
 
     const partition = try patch_mod.partitionByKind(arena, matched.items);
     var untracked_matched: std.ArrayList(MatchedHunk) = .empty;
@@ -1002,7 +1002,7 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
     var head = try gatherHeadInfo(allocator);
     defer head.deinit(allocator);
 
-    const stash_build = try buildStashTree(arena, allocator, partition, head.tree, opts.context);
+    const stash_build = try buildStashTree(arena, allocator, partition, head.tree, opts.common.context);
     defer if (stash_build.owns_tree) allocator.free(stash_build.tree);
 
     // Index commit (parent 2): captures tracked changes tree
@@ -1053,7 +1053,7 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
-    const diffs = try getDiffWithUntracked(allocator, arena, .unstaged, opts.ref, opts.context, opts.file_filter, opts.diff_filter, &hunks);
+    const diffs = try getDiffWithUntracked(allocator, arena, .unstaged, opts.common.ref, opts.common.context, opts.common.file_filter.items, opts.common.diff_filter, &hunks);
     defer allocator.free(diffs.tracked);
     defer allocator.free(diffs.untracked);
 
@@ -1062,8 +1062,8 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
     var matched: std.ArrayList(MatchedHunk) = .empty;
     defer matched.deinit(arena);
 
-    try resolveHunksFromOpts(arena, hunks.items, opts.sha_args.items, opts.file_filter, &matched);
-    exitIfNoMatches(matched.items.len, opts.file_filter);
+    try resolveHunksFromOpts(arena, hunks.items, opts.sha_args.items, opts.common.file_filter.items, &matched);
+    exitIfNoMatches(matched.items.len, opts.common.file_filter.items);
 
     const partition = try patch_mod.partitionByKind(arena, matched.items);
     const text_matched = try partition.combinedText(arena);
@@ -1078,12 +1078,12 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
     // Dry-run: validate patches against what the commit would build on and show what would be committed.
     // Checked before the message requirement — a preview has nothing to write a message onto.
     if (opts.dry_run) {
-        checkTempIndexCommit(allocator, patches, opts.ref) catch |err| switch (err) {
+        checkTempIndexCommit(allocator, patches, opts.common.ref) catch |err| switch (err) {
             error.ReadTreeFailed => std.process.exit(1),
             else => return err,
         };
-        const use_color = format.shouldUseColor(opts.output, opts.no_color);
-        _ = try format.printMatchedHunks(stdout, matched.items, "would commit", "would-commit", use_color, opts.output, opts.verbosity);
+        const use_color = format.shouldUseColor(opts.common.output, opts.common.no_color);
+        _ = try format.printMatchedHunks(stdout, matched.items, "would commit", "would-commit", use_color, opts.common.output, opts.common.verbosity);
         return;
     }
 
@@ -1099,8 +1099,8 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
         .target_paths = try patch_mod.collectUniqueFilePaths(arena, matched.items),
         .message = message,
         .amend = opts.amend,
-        .three_way = opts.three_way,
-        .ref = opts.ref,
+        .three_way = opts.common.three_way,
+        .ref = opts.common.ref,
     }) catch |err| switch (err) {
         // git's own stderr has already been shown; exit without extra noise.
         error.ReadTreeFailed, error.CommitFailed, error.AddFailed => std.process.exit(1),

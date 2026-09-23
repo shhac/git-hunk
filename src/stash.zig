@@ -450,10 +450,10 @@ pub fn addBinaryFilesToTree(
 
 /// Print per-hunk stash results and summary to stdout/stderr.
 pub fn reportStashResults(stdout: *std.Io.Writer, opts: StashOptions, matched: []const MatchedHunk) !void {
-    const use_color = format.shouldUseColor(opts.output, opts.no_color);
-    const count = try format.printMatchedHunks(stdout, matched, "stashed", "stashed", use_color, opts.output, opts.verbosity);
-    format.printHunkCountSummary(opts.verbosity, opts.output, count, "stashed");
-    if (opts.verbosity == .verbose and opts.output == .human) {
+    const use_color = format.shouldUseColor(opts.common.output, opts.common.no_color);
+    const count = try format.printMatchedHunks(stdout, matched, "stashed", "stashed", use_color, opts.common.output, opts.common.verbosity);
+    format.printHunkCountSummary(opts.common.verbosity, opts.common.output, count, "stashed");
+    if (opts.common.verbosity == .verbose and opts.common.output == .human) {
         std.debug.print("hint: use 'git stash list' to see stashed entries, 'git hunk stash pop' to restore\n", .{});
     }
 }

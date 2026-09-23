@@ -112,7 +112,7 @@ fn runSubcommand(
     var opts = parse(allocator, sub_args) catch |err| handleParseError(stdout, err, cmd);
     defer args_mod.deinitOptions(allocator, &opts);
     const is_staged = @hasField(@TypeOf(opts), "mode") and opts.mode == .staged;
-    try expandRefShorthand(arena, &opts.ref, is_staged);
+    try expandRefShorthand(arena, &opts.common.ref, is_staged);
     try exec(allocator, stdout, opts);
 }
 

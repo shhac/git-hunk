@@ -107,119 +107,86 @@ pub const OutputMode = enum { human, porcelain };
 
 pub const Verbosity = enum { quiet, normal, verbose };
 
-pub const ListOptions = struct {
-    mode: DiffMode = .unstaged,
+/// Flags every subcommand parses through the same code path. A command that
+/// has no use for one (count's output mode, stash's ref) still accepts it
+/// here and decides for itself whether to ignore or reject it.
+pub const Common = struct {
     diff_filter: DiffFilter = .all,
-    file_filter: []const []const u8 = &.{},
+    /// Owned, repo-relative paths. Owned rather than borrowed from argv because
+    /// `--files-from` synthesises paths from file contents, which do not
+    /// outlive the read buffer.
+    file_filter: std.ArrayList([]const u8) = .empty,
     ref: ?[]const u8 = null,
     output: OutputMode = .human,
-    oneline: bool = false,
     no_color: bool = false,
     context: ?u32 = null,
     verbosity: Verbosity = .normal,
+    /// Pass `--3way` to git apply: fall back to a 3-way merge if context drifted.
+    /// Only commands that apply patches accept it; the rest reject it at parse time.
+    three_way: bool = false,
+};
+
+pub const ListOptions = struct {
+    common: Common = .{},
+    mode: DiffMode = .unstaged,
+    oneline: bool = false,
 };
 
 pub const AddResetOptions = struct {
     sha_args: std.ArrayList(ShaArg),
-    diff_filter: DiffFilter = .all,
-    file_filter: []const []const u8 = &.{},
-    ref: ?[]const u8 = null,
+    common: Common = .{},
     select_all: bool = false,
-    /// Pass `--3way` to git apply: fall back to a 3-way merge if context drifted.
-    three_way: bool = false,
     /// Validate the patch against the index and report what would happen,
     /// touching neither the index nor the worktree.
     dry_run: bool = false,
-    verbosity: Verbosity = .normal,
-    output: OutputMode = .human,
-    no_color: bool = false,
-    context: ?u32 = null,
 };
 
 pub const DiffOptions = struct {
     sha_args: std.ArrayList(ShaArg),
-    diff_filter: DiffFilter = .all,
-    file_filter: []const []const u8 = &.{},
-    ref: ?[]const u8 = null,
+    common: Common = .{},
     mode: DiffMode = .unstaged,
-    output: OutputMode = .human,
-    no_color: bool = false,
-    context: ?u32 = null,
-    verbosity: Verbosity = .normal,
     /// Number hunk body lines in human output. A line spec already implies the
     /// numbered gutter; this requests it without one.
     number: bool = false,
 };
 
 pub const CountOptions = struct {
+    common: Common = .{},
     mode: DiffMode = .unstaged,
-    diff_filter: DiffFilter = .all,
-    file_filter: []const []const u8 = &.{},
-    ref: ?[]const u8 = null,
-    context: ?u32 = null,
-    verbosity: Verbosity = .normal,
 };
 
 pub const CheckOptions = struct {
     sha_args: std.ArrayList(ShaArg),
-    diff_filter: DiffFilter = .all,
-    file_filter: []const []const u8 = &.{},
-    ref: ?[]const u8 = null,
+    common: Common = .{},
     mode: DiffMode = .unstaged,
     exclusive: bool = false,
     allow_empty: bool = false,
-    output: OutputMode = .human,
-    no_color: bool = false,
-    context: ?u32 = null,
-    verbosity: Verbosity = .normal,
 };
 
 pub const RestoreOptions = struct {
     sha_args: std.ArrayList(ShaArg),
-    diff_filter: DiffFilter = .all,
-    file_filter: []const []const u8 = &.{},
-    ref: ?[]const u8 = null,
+    common: Common = .{},
     select_all: bool = false,
     dry_run: bool = false,
     force: bool = false,
-    /// Pass `--3way` to git apply: fall back to a 3-way merge if context drifted.
-    three_way: bool = false,
-    output: OutputMode = .human,
-    no_color: bool = false,
-    context: ?u32 = null,
-    verbosity: Verbosity = .normal,
 };
 
 pub const StashOptions = struct {
     sha_args: std.ArrayList(ShaArg),
-    diff_filter: DiffFilter = .all,
-    file_filter: []const []const u8 = &.{},
-    ref: ?[]const u8 = null,
+    common: Common = .{},
     select_all: bool = false,
     pop: bool = false,
     include_untracked: bool = false,
     message: ?[]const u8 = null,
-    verbosity: Verbosity = .normal,
-    output: OutputMode = .human,
-    no_color: bool = false,
-    context: ?u32 = null,
 };
 
 pub const CommitOptions = struct {
     sha_args: std.ArrayList(ShaArg),
+    common: Common = .{},
     message: ?[]const u8 = null,
     amend: bool = false,
     dry_run: bool = false,
     select_all: bool = false,
-    /// Pass `--3way` to git apply: fall back to a 3-way merge if context drifted.
-    three_way: bool = false,
-    diff_filter: DiffFilter = .all,
-    file_filter: []const []const u8 = &.{},
-    ref: ?[]const u8 = null,
-    verbosity: Verbosity = .normal,
-    output: OutputMode = .human,
-    no_color: bool = false,
-    context: ?u32 = null,
 };
 
 /// Compute the stable SHA1 fingerprint of a hunk: SHA1(file_path || \x00 ||
