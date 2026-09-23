@@ -40,19 +40,13 @@ fn parseCommonFlag(allocator: Allocator, arg: []const u8, i: *usize, args: []con
     if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
         return error.HelpRequested;
     } else if (std.mem.eql(u8, arg, "--file")) {
-        i.* += 1;
-        if (i.* >= args.len) return error.MissingArgument;
-        try appendRepoRelative(allocator, &c.file_filter, args[i.*]);
+        try appendRepoRelative(allocator, &c.file_filter, try takeValue(args, i));
         return true;
     } else if (std.mem.eql(u8, arg, "--files-from")) {
-        i.* += 1;
-        if (i.* >= args.len) return error.MissingArgument;
-        try appendPathsFromFile(allocator, args[i.*], &c.file_filter);
+        try appendPathsFromFile(allocator, try takeValue(args, i), &c.file_filter);
         return true;
     } else if (std.mem.eql(u8, arg, "--ref")) {
-        i.* += 1;
-        if (i.* >= args.len) return error.MissingArgument;
-        c.ref = args[i.*];
+        c.ref = try takeValue(args, i);
         return true;
     } else if (std.mem.eql(u8, arg, "--tracked-only")) {
         if (c.diff_filter == .untracked_only) return error.ConflictingFilter;
@@ -68,23 +62,14 @@ fn parseCommonFlag(allocator: Allocator, arg: []const u8, i: *usize, args: []con
     } else if (std.mem.eql(u8, arg, "--porcelain")) {
         c.output = .porcelain;
         return true;
+    } else if (std.mem.eql(u8, arg, "--unified") or std.mem.eql(u8, arg, "-U")) {
+        c.context = try parseContext(try takeValue(args, i));
+        return true;
     } else if (std.mem.startsWith(u8, arg, "--unified=")) {
-        const val = arg["--unified=".len..];
-        c.context = std.fmt.parseInt(u32, val, 10) catch return error.InvalidArgument;
+        c.context = try parseContext(arg["--unified=".len..]);
         return true;
-    } else if (std.mem.eql(u8, arg, "--unified")) {
-        i.* += 1;
-        if (i.* >= args.len) return error.MissingArgument;
-        c.context = std.fmt.parseInt(u32, args[i.*], 10) catch return error.InvalidArgument;
-        return true;
-    } else if (std.mem.startsWith(u8, arg, "-U") and arg.len > 2) {
-        const val = arg[2..];
-        c.context = std.fmt.parseInt(u32, val, 10) catch return error.InvalidArgument;
-        return true;
-    } else if (std.mem.eql(u8, arg, "-U")) {
-        i.* += 1;
-        if (i.* >= args.len) return error.MissingArgument;
-        c.context = std.fmt.parseInt(u32, args[i.*], 10) catch return error.InvalidArgument;
+    } else if (std.mem.startsWith(u8, arg, "-U")) {
+        c.context = try parseContext(arg["-U".len..]);
         return true;
     } else if (std.mem.eql(u8, arg, "--quiet") or std.mem.eql(u8, arg, "-q")) {
         if (c.verbosity == .verbose) return error.ConflictingVerbosity;
@@ -99,6 +84,43 @@ fn parseCommonFlag(allocator: Allocator, arg: []const u8, i: *usize, args: []con
         return true;
     }
     return false;
+}
+
+/// Advance past a value-taking flag and return its value.
+fn takeValue(args: []const [:0]const u8, i: *usize) error{MissingArgument}![]const u8 {
+    i.* += 1;
+    if (i.* >= args.len) return error.MissingArgument;
+    return args[i.*];
+}
+
+fn parseContext(val: []const u8) error{InvalidArgument}!u32 {
+    return std.fmt.parseInt(u32, val, 10) catch error.InvalidArgument;
+}
+
+/// Parse a positional hunk hash (with optional `:lines` spec) and append it.
+fn appendShaArg(allocator: Allocator, sha_args: *std.ArrayList(ShaArg), arg: []const u8) !void {
+    const sha_arg = parseShaArg(allocator, arg) catch return error.InvalidArgument;
+    errdefer if (sha_arg.line_spec) |ls| allocator.free(ls.ranges);
+    try sha_args.append(allocator, sha_arg);
+}
+
+/// Like `appendShaArg`, for commands that act on whole hunks only: a `:lines`
+/// spec is an error rather than silently widened to the whole hunk.
+fn appendWholeHunkShaArg(comptime cmd: []const u8, allocator: Allocator, sha_args: *std.ArrayList(ShaArg), arg: []const u8) !void {
+    const sha_arg = parseShaArg(allocator, arg) catch return error.InvalidArgument;
+    if (sha_arg.line_spec) |ls| {
+        allocator.free(ls.ranges);
+        std.debug.print("error: line specs not supported for " ++ cmd ++ "\n", .{});
+        return error.InvalidArgument;
+    }
+    try sha_args.append(allocator, sha_arg);
+}
+
+/// Commands that act on a selection need something to select.
+fn requireSelection(opts: anytype) error{MissingArgument}!void {
+    if (opts.sha_args.items.len > 0 or opts.select_all or opts.common.file_filter.items.len > 0) return;
+    std.debug.print("error: at least one <sha> argument required (or use --all or --file <path>)\n", .{});
+    return error.MissingArgument;
 }
 
 fn accepts3way(comptime cmd: []const u8) bool {
@@ -173,17 +195,13 @@ pub fn parseAddResetArgs(allocator: Allocator, args: []const [:0]const u8) !AddR
         } else if (std.mem.startsWith(u8, arg, "-")) {
             return unknownFlag(arg);
         } else {
-            const sha_arg = parseShaArg(allocator, arg) catch return error.InvalidArgument;
-            try opts.sha_args.append(allocator, sha_arg);
+            try appendShaArg(allocator, &opts.sha_args, arg);
         }
     }
     try rejectUnsupported3way("add", opts.common);
     try rejectUnsupported3way("reset", opts.common);
 
-    if (opts.sha_args.items.len == 0 and !opts.select_all and opts.common.file_filter.items.len == 0) {
-        std.debug.print("error: at least one <sha> argument required (or use --all or --file <path>)\n", .{});
-        return error.MissingArgument;
-    }
+    try requireSelection(opts);
 
     return opts;
 }
@@ -204,8 +222,7 @@ pub fn parseDiffArgs(allocator: Allocator, args: []const [:0]const u8) !DiffOpti
         } else if (std.mem.startsWith(u8, arg, "-")) {
             return unknownFlag(arg);
         } else {
-            const sha_arg = parseShaArg(allocator, arg) catch return error.InvalidArgument;
-            try opts.sha_args.append(allocator, sha_arg);
+            try appendShaArg(allocator, &opts.sha_args, arg);
         }
     }
     try rejectUnsupported3way("diff", opts.common);
@@ -262,13 +279,7 @@ pub fn parseCheckArgs(allocator: Allocator, args: []const [:0]const u8) !CheckOp
         } else if (std.mem.startsWith(u8, arg, "-")) {
             return unknownFlag(arg);
         } else {
-            const sha_arg = parseShaArg(allocator, arg) catch return error.InvalidArgument;
-            if (sha_arg.line_spec) |ls| {
-                allocator.free(ls.ranges);
-                std.debug.print("error: line specs not supported for check\n", .{});
-                return error.InvalidArgument;
-            }
-            try opts.sha_args.append(allocator, sha_arg);
+            try appendWholeHunkShaArg("check", allocator, &opts.sha_args, arg);
         }
     }
     try rejectUnsupported3way("check", opts.common);
@@ -301,16 +312,12 @@ pub fn parseRestoreArgs(allocator: Allocator, args: []const [:0]const u8) !Resto
         } else if (std.mem.startsWith(u8, arg, "-")) {
             return unknownFlag(arg);
         } else {
-            const sha_arg = parseShaArg(allocator, arg) catch return error.InvalidArgument;
-            try opts.sha_args.append(allocator, sha_arg);
+            try appendShaArg(allocator, &opts.sha_args, arg);
         }
     }
     try rejectUnsupported3way("restore", opts.common);
 
-    if (opts.sha_args.items.len == 0 and !opts.select_all and opts.common.file_filter.items.len == 0) {
-        std.debug.print("error: at least one <sha> argument required (or use --all or --file <path>)\n", .{});
-        return error.MissingArgument;
-    }
+    try requireSelection(opts);
 
     return opts;
 }
@@ -321,31 +328,20 @@ pub fn parseStashArgs(allocator: Allocator, args: []const [:0]const u8) !StashOp
     };
     errdefer deinitOptions(allocator, &opts);
 
-    var i: usize = 0;
-
-    // Check for subcommand: push or pop
-    if (i < args.len) {
-        const first = args[i];
-        if (std.mem.eql(u8, first, "pop")) {
-            // pop subcommand: reject all other flags/args
-            i += 1;
-            while (i < args.len) : (i += 1) {
-                const arg = args[i];
-                if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
-                    return error.HelpRequested;
-                }
-                std.debug.print("error: pop does not accept arguments or flags\n", .{});
-                return error.InvalidArgument;
-            }
-            opts.pop = true;
-            return opts;
-        } else if (std.mem.eql(u8, first, "push")) {
-            // Explicit push: skip keyword, parse rest as normal
-            i += 1;
+    const first: []const u8 = if (args.len > 0) args[0] else "";
+    if (std.mem.eql(u8, first, "pop")) {
+        if (args.len > 1) {
+            const extra = args[1];
+            if (std.mem.eql(u8, extra, "--help") or std.mem.eql(u8, extra, "-h")) return error.HelpRequested;
+            std.debug.print("error: pop does not accept arguments or flags\n", .{});
+            return error.InvalidArgument;
         }
-        // Otherwise: not a subcommand keyword, treat as flags/hash (implicit push)
+        opts.pop = true;
+        return opts;
     }
 
+    // `push` is optional: without it, the first argument is already a flag or hash.
+    var i: usize = if (std.mem.eql(u8, first, "push")) 1 else 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
         if (try parseCommonFlag(allocator, arg, &i, args, &opts.common)) continue;
@@ -354,19 +350,11 @@ pub fn parseStashArgs(allocator: Allocator, args: []const [:0]const u8) !StashOp
         } else if (std.mem.eql(u8, arg, "--include-untracked") or std.mem.eql(u8, arg, "-u")) {
             opts.include_untracked = true;
         } else if (std.mem.eql(u8, arg, "--message") or std.mem.eql(u8, arg, "-m")) {
-            i += 1;
-            if (i >= args.len) return error.MissingArgument;
-            opts.message = args[i];
+            opts.message = try takeValue(args, &i);
         } else if (std.mem.startsWith(u8, arg, "-")) {
             return unknownFlag(arg);
         } else {
-            const sha_arg = parseShaArg(allocator, arg) catch return error.InvalidArgument;
-            if (sha_arg.line_spec) |ls| {
-                allocator.free(ls.ranges);
-                std.debug.print("error: line specs not supported for stash\n", .{});
-                return error.InvalidArgument;
-            }
-            try opts.sha_args.append(allocator, sha_arg);
+            try appendWholeHunkShaArg("stash", allocator, &opts.sha_args, arg);
         }
     }
     try rejectUnsupported3way("stash", opts.common);
@@ -382,10 +370,7 @@ pub fn parseStashArgs(allocator: Allocator, args: []const [:0]const u8) !StashOp
         return error.InvalidArgument;
     }
 
-    if (opts.sha_args.items.len == 0 and !opts.select_all and opts.common.file_filter.items.len == 0) {
-        std.debug.print("error: at least one <sha> argument required (or use --all or --file <path>)\n", .{});
-        return error.MissingArgument;
-    }
+    try requireSelection(opts);
 
     return opts;
 }
@@ -406,9 +391,7 @@ pub fn parseCommitArgs(allocator: Allocator, args: []const [:0]const u8) !Commit
         if (std.mem.eql(u8, arg, "--all")) {
             opts.select_all = true;
         } else if (std.mem.eql(u8, arg, "--message") or std.mem.eql(u8, arg, "-m")) {
-            i += 1;
-            if (i >= args.len) return error.MissingArgument;
-            opts.message = args[i];
+            opts.message = try takeValue(args, &i);
         } else if (std.mem.eql(u8, arg, "--amend")) {
             opts.amend = true;
         } else if (std.mem.eql(u8, arg, "--dry-run")) {
@@ -416,16 +399,12 @@ pub fn parseCommitArgs(allocator: Allocator, args: []const [:0]const u8) !Commit
         } else if (std.mem.startsWith(u8, arg, "-")) {
             return unknownFlag(arg);
         } else {
-            const sha_arg = parseShaArg(allocator, arg) catch return error.InvalidArgument;
-            try opts.sha_args.append(allocator, sha_arg);
+            try appendShaArg(allocator, &opts.sha_args, arg);
         }
     }
     try rejectUnsupported3way("commit", opts.common);
 
-    if (opts.sha_args.items.len == 0 and !opts.select_all and opts.common.file_filter.items.len == 0) {
-        std.debug.print("error: at least one <sha> argument required (or use --all or --file <path>)\n", .{});
-        return error.MissingArgument;
-    }
+    try requireSelection(opts);
 
     if (opts.message == null and !opts.dry_run) {
         std.debug.print("error: -m <message> is required\n", .{});
@@ -457,27 +436,7 @@ fn parseShaArg(allocator: Allocator, arg: []const u8) !ShaArg {
     const sha_part = if (colon_pos) |pos| arg[0..pos] else arg;
     const line_part: ?[]const u8 = if (colon_pos) |pos| arg[pos + 1 ..] else null;
 
-    // Validate SHA prefix
-    if (!isValidShaPrefix(sha_part)) {
-        if (looksLikePathArg(sha_part) or pathExists(sha_part)) {
-            std.debug.print("error: '{s}' looks like a path, not a hunk hash\n", .{sha_part});
-            std.debug.print("hint: run 'git hunk list --oneline' to find hashes; use '--file <path>' to narrow by path\n", .{});
-            return error.InvalidArgument;
-        }
-        if (sha_part.len < 4) {
-            std.debug.print("error: sha prefix too short (minimum 4 chars): '{s}'\n", .{sha_part});
-            return error.InvalidArgument;
-        }
-        for (sha_part) |c| {
-            if (isHexDigit(c)) continue;
-            if (std.ascii.isHex(c)) {
-                std.debug.print("error: hunk hashes are lowercase hex: '{s}'\n", .{sha_part});
-                return error.InvalidArgument;
-            }
-            std.debug.print("error: invalid hex in sha prefix: '{s}'\n", .{sha_part});
-            return error.InvalidArgument;
-        }
-    }
+    if (!isValidShaPrefix(sha_part)) return invalidShaPrefix(sha_part);
 
     // Parse optional line spec
     const line_spec: ?LineSpec = if (line_part) |spec| blk: {
@@ -489,6 +448,28 @@ fn parseShaArg(allocator: Allocator, arg: []const u8) !ShaArg {
     } else null;
 
     return .{ .prefix = sha_part, .line_spec = line_spec };
+}
+
+/// Explain why `sha_part` failed `isValidShaPrefix`, most helpful reason first.
+fn invalidShaPrefix(sha_part: []const u8) error{InvalidArgument} {
+    if (looksLikePathArg(sha_part) or pathExists(sha_part)) {
+        std.debug.print("error: '{s}' looks like a path, not a hunk hash\n", .{sha_part});
+        std.debug.print("hint: run 'git hunk list --oneline' to find hashes; use '--file <path>' to narrow by path\n", .{});
+        return error.InvalidArgument;
+    }
+    if (sha_part.len < 4) {
+        std.debug.print("error: sha prefix too short (minimum 4 chars): '{s}'\n", .{sha_part});
+        return error.InvalidArgument;
+    }
+    const first_bad = for (sha_part) |c| {
+        if (!isHexDigit(c)) break c;
+    } else 0;
+    if (std.ascii.isHex(first_bad)) {
+        std.debug.print("error: hunk hashes are lowercase hex: '{s}'\n", .{sha_part});
+        return error.InvalidArgument;
+    }
+    std.debug.print("error: invalid hex in sha prefix: '{s}'\n", .{sha_part});
+    return error.InvalidArgument;
 }
 
 fn isValidShaPrefix(arg: []const u8) bool {
