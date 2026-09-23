@@ -329,20 +329,20 @@ fn exitNoChanges(mode: DiffMode) noreturn {
     std.process.exit(1);
 }
 
-/// Exit with an error message if no hunks were matched.
+/// Exit with an error message if no hunks were matched. Only a file filter
+/// can leave nothing matched: callers exit earlier on an empty diff, and an
+/// unmatched hash exits in `resolveMatchedHunks`.
 fn exitIfNoMatches(matched_len: usize, file_filter: []const []const u8) void {
     if (matched_len > 0) return;
     if (file_filter.len == 1) {
         std.debug.print("no hunks matching file '{s}'\n", .{file_filter[0]});
-    } else if (file_filter.len > 1) {
+    } else {
         std.debug.print("no hunks matching files: ", .{});
         for (file_filter, 0..) |f, idx| {
             if (idx > 0) std.debug.print(", ", .{});
             std.debug.print("'{s}'", .{f});
         }
         std.debug.print("\n", .{});
-    } else {
-        std.debug.print("no unstaged changes\n", .{});
     }
     std.process.exit(1);
 }
@@ -742,10 +742,6 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
     const binary_paths = try partition.allBinaryPaths(arena);
 
     const patches = try patch_mod.sortAndBuildPatches(arena, text_matched, .forward);
-    if (patches.len == 0 and binary_paths.len == 0) {
-        std.debug.print("error: no hunks to commit\n", .{});
-        std.process.exit(1);
-    }
 
     // Dry-run: validate patches against what the commit would build on and show what would be committed.
     // Checked before the message requirement — a preview has nothing to write a message onto.
@@ -758,10 +754,8 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
         return;
     }
 
-    const message = opts.message orelse {
-        std.debug.print("error: -m <message> is required\n", .{});
-        std.process.exit(1);
-    };
+    // parseCommitArgs rejects a missing -m unless this is a dry run.
+    const message = opts.message.?;
 
     const commit_output = runTempIndexCommit(.{
         .allocator = allocator,

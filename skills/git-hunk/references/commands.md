@@ -321,7 +321,6 @@ git-hunk commit --dry-run a3f7 -m "check first"       # preview without committi
 | `error: --staged is not supported by commit` | `--staged` flag used |
 | `error: commit aborted by hook` | Pre-commit or commit-msg hook rejected the commit |
 | `error: patch did not apply cleanly` | Hunks don't apply to a clean HEAD index |
-| `error: no hunks to commit` | Resolved hunks produce an empty patch |
 | `warning: commit succeeded but index sync failed` | Post-commit index sync failed (non-fatal) |
 
 ---
