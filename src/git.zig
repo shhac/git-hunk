@@ -231,14 +231,23 @@ const ApplyOptions = struct {
     reverse: bool = false,
     target: ApplyTarget = .index,
     check_only: bool = false,
-    /// Pass `--3way` to git apply: fall back to a 3-way merge when the patch
-    /// context doesn't apply cleanly. Useful for cherry-picking or reverting
-    /// hunks from far enough back that surrounding lines have drifted.
+    /// Fall back to a 3-way merge when the patch context doesn't apply
+    /// cleanly. Useful for cherry-picking or reverting hunks from far enough
+    /// back that surrounding lines have drifted.
     ///
-    /// With `target = .worktree` (restore), conflicts produce `<<<<<<<` markers
-    /// in the file. With `target = .index` (add/commit), conflicts produce
-    /// **unmerged index entries** — the user must `git add` the resolved file
-    /// or use `git checkout --merge` to materialise the conflict in the worktree.
+    /// With `target = .index` (add/commit), conflicts produce **unmerged index
+    /// entries** — the user must `git add` the resolved file or use
+    /// `git checkout --merge` to materialise the conflict in the worktree.
+    ///
+    /// With `target = .worktree` (restore), the index is left alone: a patch
+    /// that applies is applied to the worktree only, so a hunk of the current
+    /// diff (which always reverse-applies) makes this a no-op, as
+    /// `git restore --merge` is on a path with nothing to merge. Only a merge
+    /// that conflicts touches the index, recording the conflict there as
+    /// `git apply --3way` and `git stash apply` do: `<<<<<<<` markers in the
+    /// file and unmerged entries for it. As with those, a file merged this
+    /// way must match the index first.
+    ///
     /// `git apply` rejects `--3way` together with `--check`, so dry-run paths
     /// must drop this flag.
     three_way: bool = false,
@@ -280,6 +289,80 @@ pub fn applyPatches(allocator: Allocator, patches: []const []const u8, opts: App
 }
 
 pub fn runGitApply(allocator: Allocator, patch: []const u8, opts: ApplyOptions) !ApplyResult {
+    if (opts.three_way and opts.target == .worktree and !opts.check_only) return mergeIntoWorktree(allocator, patch, opts);
+    return execGitApply(allocator, patch, opts, .report);
+}
+
+/// `git apply --3way` implies `--index`: it would stage every path it
+/// restores. So the patch is applied to the worktree alone when it can be,
+/// and only merged when it cannot, against a copy of the index; the real
+/// index then gains just the conflicts, where git keeps them for the user
+/// to resolve.
+fn mergeIntoWorktree(allocator: Allocator, patch: []const u8, opts: ApplyOptions) !ApplyResult {
+    var direct = opts;
+    direct.three_way = false;
+    if (execGitApply(allocator, patch, direct, .silent)) |result| {
+        return result;
+    } else |err| if (err != error.PatchFailed) return err;
+
+    var tmp = try createTempIndex(allocator, "merge-");
+    defer tmp.deinit();
+    try copyIndexTo(allocator, tmp.path_z);
+    var merge = opts;
+    merge.env_map = &tmp.env_map;
+    const result = try execGitApply(allocator, patch, merge, .report);
+    if (result == .applied_with_conflicts) try recordConflicts(allocator, &tmp.env_map);
+    return result;
+}
+
+/// Seed `dest` with the index as it stands. A repository that has never had
+/// an index has nothing to copy, and git reads a missing one as empty.
+fn copyIndexTo(allocator: Allocator, dest: []const u8) !void {
+    const index_path = try runGitCapture(allocator, &.{ "git", "rev-parse", "--git-path", "index" }, .{}, "git rev-parse --git-path", .{});
+    defer allocator.free(index_path);
+    const cwd = std.Io.Dir.cwd();
+    std.Io.Dir.copyFile(cwd, index_path, cwd, dest, types.getIo(), .{}) catch |err| switch (err) {
+        error.FileNotFound => {},
+        else => return err,
+    };
+}
+
+/// Copy the unmerged entries from the index `merged_env` names into the real
+/// index, each replacing that path's stage 0 entry.
+fn recordConflicts(allocator: Allocator, merged_env: *const EnvMap) !void {
+    const unmerged = try runGitCapture(allocator, &.{ "git", "ls-files", "-u", "-z" }, .{ .env_map = merged_env }, "git ls-files -u", .{ .trim = false });
+    defer allocator.free(unmerged);
+
+    var index_info: std.ArrayList(u8) = .empty;
+    defer index_info.deinit(allocator);
+    var previous_path: []const u8 = "";
+    var entries = std.mem.splitScalar(u8, unmerged, 0);
+    while (entries.next()) |entry| {
+        // "<mode> <id> <stage>\t<path>", which --index-info reads back as is.
+        const tab = std.mem.indexOfScalar(u8, entry, '\t') orelse continue;
+        const path = entry[tab + 1 ..];
+        var fields = std.mem.splitScalar(u8, entry[0..tab], ' ');
+        _ = fields.next();
+        const id = fields.next() orelse continue;
+        if (!std.mem.eql(u8, path, previous_path)) {
+            // Mode 0 drops the path's entries so the stages can take its place.
+            try index_info.appendSlice(allocator, "0 ");
+            try index_info.appendNTimes(allocator, '0', id.len);
+            try index_info.print(allocator, "\t{s}\x00", .{path});
+            previous_path = path;
+        }
+        try index_info.appendSlice(allocator, entry);
+        try index_info.append(allocator, 0);
+    }
+    if (index_info.items.len == 0) return;
+    const out = try runGitCapture(allocator, &.{ "git", "update-index", "-z", "--index-info" }, .{ .stdin_data = index_info.items }, "git update-index --index-info", .{ .trim = false });
+    allocator.free(out);
+}
+
+/// Whether a failed apply prints git's complaint and ours.
+const FailureReport = enum { report, silent };
+
+fn execGitApply(allocator: Allocator, patch: []const u8, opts: ApplyOptions, failure_report: FailureReport) !ApplyResult {
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(allocator);
     try argv.appendSlice(allocator, &.{ "git", "apply" });
@@ -316,6 +399,7 @@ pub fn runGitApply(allocator: Allocator, patch: []const u8, opts: ApplyOptions) 
         return .applied_with_conflicts;
     }
     if (result.exit_code != 0) {
+        if (failure_report == .silent) return error.PatchFailed;
         if (result.stderr.len > 0) std.debug.print("{s}", .{result.stderr});
         if (!opts.explain_failure) return error.PatchFailed;
         const try_3way: []const u8 = if (opts.three_way) "" else " (try --3way)";

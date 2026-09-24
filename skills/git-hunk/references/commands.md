@@ -436,7 +436,7 @@ git-hunk restore [<sha[:lines]>...] [--file <path>] [--all] [--dry-run] [--porce
 | `--files-from <path>` | Read file paths from `<path>`, one per line; `-` reads stdin. Composes with repeated `--file` (the lists are merged). NUL-separated input is auto-detected, so `git ls-files -z \| git hunk add --files-from -` is safe for paths containing newlines. |
 | `--all` | Restore all unstaged hunks. No SHA arguments required. |
 | `--ref <refspec>` | Source the diff from a git ref. **Single commit** (e.g. `HEAD~1`, `abc1234`) means that commit's changes against its first parent. **Range** (e.g. `main..HEAD`) is the diff between two commits, as `git diff` reads it. An unresolvable ref fails with `error: bad revision '<ref>'`. Enables cherry-picking or reverting individual hunks from past commits (pair with `--3way` when context has drifted). |
-| `--3way` | When applying a patch fails because surrounding context has drifted, fall back to a 3-way merge instead of erroring. Either succeeds cleanly or leaves `<<<<<<<` conflict markers in the worktree. Useful for undoing hunks from history with `--ref`. |
+| `--3way` | When applying a patch fails because surrounding context has drifted, fall back to a 3-way merge instead of erroring. Either succeeds cleanly or leaves `<<<<<<<` conflict markers in the worktree. Useful for undoing hunks from history with `--ref`; without `--ref` the hunk always applies and `--3way` changes nothing. |
 | `--dry-run` | Preview what would be restored without modifying the worktree. Uses `git apply --check`. |
 | `--force` | Required to restore untracked files, which git has no copy of (a whole one is deleted). |
 | `--porcelain` | Tab-separated machine-readable output. |
@@ -471,7 +471,7 @@ git-hunk restore a3f7c21 --no-color                  # disable color output
 - All matched hunks are applied in a single `git apply` invocation (atomic).
 - With `--all`, restores every unstaged hunk. With `--file` and no SHAs, restores all hunks in that file.
 - With `--dry-run`, validates via `git apply --reverse --check` without modifying the worktree.
-- Staged changes are unaffected — only the worktree is modified.
+- Staged changes are unaffected — only the worktree is modified. With `--3way` too: a hunk that applies, directly or merged, changes the worktree alone. Only a merge that conflicts touches the index, recording the conflict as `git apply --3way` and `git stash apply` do (`<<<<<<<` markers in the file, unmerged entries with what was staged as "ours"); resolve it and `git add` the file, as for any conflict. A file that needs merging must match the index first (`error: <path>: does not match index` otherwise).
 - On success, prints one line per restored hunk to stdout: `restored {sha7}  {file}`. SHA in yellow for human mode.
 - With `--dry-run`, verb is `would restore` (human) or `would-restore` (porcelain).
 - With `--verbose`, prints a count summary to stderr: `N hunk(s) restored` or `N hunk(s) would be restored`.

@@ -458,13 +458,14 @@ echo "still bad" >> buggy.txt
 SHA521=$("$GIT_HUNK" list --ref "$HIST_C" --porcelain --oneline --file buggy.txt | head -1 | cut -f1)
 [[ -n "$SHA521" ]] || fail "test 521: no hunk found for C"
 
-# Without --3way the worktree state mismatch may or may not work. Try with --3way.
-"$GIT_HUNK" restore --ref "$HIST_C" --3way "$SHA521" > /dev/null 2>&1 || true
-# After undo, the buggy line should be gone (or at least have a conflict marker
-# bracketing it).
-grep -qE "(buggy line|<<<<<<<)" buggy.txt && \
-    grep -q "still bad" buggy.txt \
-    || fail "test 521: post-undo state should preserve unrelated edits"
+# The worktree has an unrelated edit the index does not, and --3way must
+# neither trip over it nor stage the undo.
+INDEX521="$(git ls-files -s buggy.txt)"
+"$GIT_HUNK" restore --ref "$HIST_C" --3way "$SHA521" > /dev/null 2>&1 \
+    || fail "test 521: undoing C's hunk with --3way failed"
+[[ "$(bytes_of buggy.txt)" == "$(want_bytes 'working line\nstill bad\n')" ]] \
+    || fail "test 521: the buggy line should be gone and the unrelated edit kept, got: '$(cat buggy.txt)'"
+[[ "$(git ls-files -s buggy.txt)" == "$INDEX521" ]] || fail "test 521: the undo should not be staged"
 pass "test 521: e2e undo-hunk-from-history preserves unrelated worktree edits"
 
 # ============================================================================
@@ -564,5 +565,80 @@ if grep -q "NEW-1" mixspec.txt; then fail "test 527: NEW-1 should have been rest
 if grep -q "OLD-2" mixspec.txt; then fail "test 527: OLD-2 should stay deleted"; fi
 grep -q "NEW-2" mixspec.txt || fail "test 527: NEW-2 should remain"
 pass "test 527: restore mixed add+delete hunk with partial spec"
+
+# ============================================================================
+# Test 528: restore --3way changes the worktree and leaves the index alone,
+# except to record a conflict. `git apply --3way` implies --index, so without
+# --ref every restore --3way failed ("does not match index") or, for a partial
+# restore of a deletion, wrote conflict markers; with --ref a clean restore
+# was silently staged.
+# ============================================================================
+lines528() { for i in $(seq 1 20); do echo "line $i"; done; }
+index528() { git ls-files -s -- "$@"; }
+
+# No --ref: the hunk comes from the current diff, so there is nothing to
+# merge and --3way changes nothing.
+new_repo
+lines528 > f528.txt
+git add f528.txt && git commit -q -m "f528"
+sed -i.bak 's/^line 2$/line 2 staged/' f528.txt && git add f528.txt
+sed -i.bak 's/^line 15$/line 15 unstaged/' f528.txt
+INDEX528="$(index528 f528.txt)"
+"$GIT_HUNK" restore --3way "$(first_sha --file f528.txt)" > /dev/null 2>&1 \
+    || fail "test 528: restore --3way without --ref failed"
+[[ "$(bytes_of f528.txt)" == "$(blob_bytes :f528.txt)" ]] \
+    || fail "test 528: restore --3way should bring f528.txt back to the index"
+[[ "$(index528 f528.txt)" == "$INDEX528" ]] || fail "test 528: restore --3way without --ref changed the index"
+
+new_repo
+lines528 > gone528.txt
+git add gone528.txt && git commit -q -m "gone528"
+rm gone528.txt
+INDEX528="$(index528 gone528.txt)"
+"$GIT_HUNK" restore --3way "$(first_sha --file gone528.txt):3" > /dev/null 2>&1 \
+    || fail "test 528: partial restore --3way of a deletion failed"
+[[ "$(bytes_of gone528.txt)" == "$(want_bytes 'line 3\n')" ]] \
+    || fail "test 528: partial restore of a deletion should bring back line 3 alone, got: '$(cat gone528.txt 2>&1)'"
+[[ "$(index528 gone528.txt)" == "$INDEX528" ]] || fail "test 528: partial restore --3way of a deletion changed the index"
+
+# --ref, applying cleanly: the worktree changes, the index does not.
+new_repo
+lines528 > f528.txt
+git add f528.txt && git commit -q -m "f528"
+sed -i.bak 's/^line 5$/line 5 changed/' f528.txt && git commit -q -am "change 528"
+CHANGE528="$(git rev-parse HEAD)"
+SHA528="$(first_sha --ref "$CHANGE528" --file f528.txt)"
+INDEX528="$(index528 f528.txt)"
+"$GIT_HUNK" restore --ref "$CHANGE528" --3way "$SHA528" > /dev/null 2>&1 \
+    || fail "test 528: restore --ref --3way that applies cleanly failed"
+[[ "$(bytes_of f528.txt)" == "$(blob_bytes "$CHANGE528~1:f528.txt")" ]] \
+    || fail "test 528: restore --ref --3way should revert line 5 in the worktree"
+[[ "$(index528 f528.txt)" == "$INDEX528" ]] || fail "test 528: a clean restore --ref --3way staged the restore"
+
+# --ref, merging cleanly around drifted context: still worktree only.
+git reset -q --hard
+sed -i.bak 's/^line 8$/line 8 drifted/' f528.txt && git commit -q -am "drift 528"
+INDEX528="$(index528 f528.txt)"
+"$GIT_HUNK" restore --ref "$CHANGE528" --3way "$SHA528" > /dev/null 2>&1 \
+    || fail "test 528: restore --ref --3way that merges cleanly failed"
+[[ "$(sed -n 5p f528.txt)" == "line 5" && "$(sed -n 8p f528.txt)" == "line 8 drifted" ]] \
+    || fail "test 528: the merge should revert line 5 and keep line 8, got: '$(sed -n 5,8p f528.txt)'"
+[[ "$(index528 f528.txt)" == "$INDEX528" ]] || fail "test 528: a merged restore --ref --3way staged the restore"
+[[ -z "$(git ls-files -u)" ]] || fail "test 528: a clean merge left unmerged entries"
+
+# --ref, conflicting: markers in the worktree, the conflict in the index,
+# with what was staged as "ours".
+git reset -q --hard
+sed -i.bak 's/^line 5 changed$/line 5 changed again/' f528.txt && git add f528.txt
+OURS528="$(git rev-parse :f528.txt)"
+EC528=0
+"$GIT_HUNK" restore --ref "$CHANGE528" --3way "$SHA528" > /dev/null 2>&1 || EC528=$?
+[[ "$EC528" -eq 1 ]] || fail "test 528: a conflicting restore --3way should exit 1, got $EC528"
+grep -q '^<<<<<<<' f528.txt || fail "test 528: a conflicting restore --3way should leave markers in f528.txt"
+[[ "$(git ls-files -u -- f528.txt | cut -f1 | cut -d' ' -f3 | tr '\n' ' ')" == "1 2 3 " ]] \
+    || fail "test 528: the conflict should be recorded as stages 1-3, got: '$(git ls-files -s f528.txt)'"
+[[ "$(git ls-files -u -- f528.txt | awk '$3 == 2 {print $2}')" == "$OURS528" ]] \
+    || fail "test 528: stage 2 should be what was staged"
+pass "test 528: restore --3way touches the index only to record a conflict"
 
 report_results

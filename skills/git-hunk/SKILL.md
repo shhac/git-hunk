@@ -213,6 +213,7 @@ worktree, plain `git apply` fails with `patch did not apply cleanly`. Add
 ```bash
 git hunk restore --ref HEAD~10 --3way abc1234
 # either succeeds cleanly, or leaves <<<<<<< conflict markers in the worktree
+# (restore changes the index only to record such a conflict)
 ```
 
 `--3way` is supported by `add`, `reset`, `restore`, and `commit`.

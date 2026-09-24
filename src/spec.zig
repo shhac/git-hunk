@@ -728,5 +728,7 @@ pub const man_global_options = [_]ManOption{
         "(passes \\fB\\-\\-3way\\fR to \\fBgit apply\\fR).",
         "Applies to \\fBadd\\fR, \\fBreset\\fR, \\fBrestore\\fR, and \\fBcommit\\fR;",
         "useful with \\fB\\-\\-ref\\fR \\fI<past\\-commit>\\fR.",
+        "\\fBrestore\\fR changes only the worktree: the index changes only to record a conflict,",
+        "and a file that needs merging must match the index first, as with \\fBgit stash apply\\fR.",
     } },
 };
