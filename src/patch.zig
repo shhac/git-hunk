@@ -43,6 +43,20 @@ pub fn collectUniqueFilePaths(arena: Allocator, matches: []const MatchedHunk) ![
     return list.items;
 }
 
+/// The paths a diff must cover to show what became of `matches` once
+/// applied: git only detects a rename when both its paths are in scope.
+pub fn collectResultPaths(arena: Allocator, matches: []const MatchedHunk) ![]const []const u8 {
+    var list: std.ArrayList([]const u8) = .empty;
+    try list.appendSlice(arena, try collectUniqueFilePaths(arena, matches));
+    for (matches) |m| {
+        const from = m.hunk.section.renamed_from_path orelse continue;
+        for (list.items) |fp| {
+            if (std.mem.eql(u8, fp, from)) break;
+        } else try list.append(arena, from);
+    }
+    return list.items;
+}
+
 /// A 4-way split of matched hunks by `is_untracked` × `is_binary`, plus deduped
 /// path lists for the binary buckets. Every slice is arena-owned.
 pub const HunkPartition = struct {
@@ -1084,4 +1098,28 @@ test "partitionByKind allBinaryPaths combines tracked + untracked" {
     try std.testing.expectEqual(@as(usize, 1), p.untracked_binary_paths.len);
     const all_bin = try p.allBinaryPaths(arena.allocator());
     try std.testing.expectEqual(@as(usize, 2), all_bin.len);
+}
+
+test "collectResultPaths adds a rename's old path once" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const rename_section: types.FileSection = .{ .renamed_from_path = "old.txt" };
+    var first = types.testMakeHunk("new.txt", 1, 1, 1, 1);
+    first.section = &rename_section;
+    var second = types.testMakeHunk("new.txt", 9, 1, 9, 1);
+    second.section = &rename_section;
+    const other = types.testMakeHunk("other.txt", 1, 1, 1, 1);
+
+    const matched = [_]MatchedHunk{
+        .{ .hunk = &first, .line_spec = null },
+        .{ .hunk = &other, .line_spec = null },
+        .{ .hunk = &second, .line_spec = null },
+    };
+    const paths = try collectResultPaths(arena, &matched);
+    try std.testing.expectEqual(@as(usize, 3), paths.len);
+    try std.testing.expectEqualStrings("new.txt", paths[0]);
+    try std.testing.expectEqualStrings("other.txt", paths[1]);
+    try std.testing.expectEqualStrings("old.txt", paths[2]);
 }

@@ -199,7 +199,7 @@ hash on the target side:
 | `{applied}` | Hash the user asked to stage/unstage. Space-separated if multiple inputs merged. May include `:line-spec`. |
 | `+{consumed}` | Existing target-side hash absorbed into the result. Prefixed with `+`. |
 | `→` | Unicode arrow (U+2192). Always present. |
-| `{result}` | New target-side hash. Comma-separated if line-spec produced multiple outputs. `?` if no mapping found. |
+| `{result}` | New target-side hash, as `list` (or `list --staged`) then shows it. Comma-separated if line-spec produced multiple outputs, or for an unstaged rename (the new path, now untracked, and the old path's deletion). `?` if no mapping found. |
 | `{file}` | File path (two spaces after result hash). |
 
 ### Examples
@@ -239,6 +239,12 @@ Unstaging:
 ```
 unstaged 5e2b1a9 → a3f7c21  src/main.zig
 unstaged 5e2b1a9 +dddd789 → a3f7c21  src/main.zig
+```
+
+Unstaging a rename (the new path becomes untracked, the old one reads as deleted):
+
+```
+unstaged b34f350 → 7c745cd,aa914db  new-name.txt
 ```
 
 ### Color (human mode, when TTY)

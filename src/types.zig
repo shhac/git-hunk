@@ -88,6 +88,9 @@ pub const FileSection = struct {
     /// Verbatim values of the `rename from`/`rename to` lines.
     rename_from: ?[]const u8 = null,
     rename_to: ?[]const u8 = null,
+    /// The path a rename moved the file from, unquoted. The section's hunks
+    /// carry the path it moved to.
+    renamed_from_path: ?[]const u8 = null,
     /// Verbatim `index` line, kept rather than re-rendered: `git apply --3way`
     /// needs its blob ids, and they come abbreviated to varying widths.
     index_line: ?[]const u8 = null,

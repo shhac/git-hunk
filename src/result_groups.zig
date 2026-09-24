@@ -64,6 +64,16 @@ fn findCreated(arena: Allocator, old_target: []const Hunk, new_target: []const H
 /// For each created hunk, attribute contributing applied inputs (by content or
 /// new-side line overlap) and consumed hunks (by old-side line overlap). Marks
 /// `applied_used` / `consumed_used` flags as it goes.
+/// The path a result is reported under. Undoing a rename leaves the file at
+/// its old path, but the change is still the one picked under the new path.
+fn reportedPath(matched: []const MatchedHunk, path: []const u8) []const u8 {
+    for (matched) |m| {
+        const from = m.hunk.section.renamed_from_path orelse continue;
+        if (std.mem.eql(u8, from, path)) return m.hunk.file_path;
+    }
+    return path;
+}
+
 /// Find applied inputs that contributed to `created`. Match by content
 /// (line_spec=null + identical diff_lines) first, otherwise by new-side line
 /// overlap. Marks `applied_used[i]=true` for each match so a single applied
@@ -75,9 +85,10 @@ fn collectAppliedFor(
     created: *const Hunk,
 ) ![]AppliedInput {
     var app_buf: std.ArrayList(AppliedInput) = .empty;
+    const created_path = reportedPath(matched, created.file_path);
     for (matched, 0..) |m, i| {
         if (applied_used[i]) continue;
-        if (!std.mem.eql(u8, m.hunk.file_path, created.file_path)) continue;
+        if (!std.mem.eql(u8, m.hunk.file_path, created_path)) continue;
         const content_match = m.line_spec == null and
             std.mem.eql(u8, m.hunk.diff_lines, created.diff_lines);
         const line_match = !content_match and rangesOverlap(
@@ -98,14 +109,16 @@ fn collectAppliedFor(
 /// range and same file. Marks `consumed_used[i]=true` per match.
 fn collectConsumedFor(
     arena: Allocator,
+    matched: []const MatchedHunk,
     consumed: []const *const Hunk,
     consumed_used: []bool,
     created: *const Hunk,
 ) ![][]const u8 {
     var con_buf: std.ArrayList([]const u8) = .empty;
+    const created_path = reportedPath(matched, created.file_path);
     for (consumed, 0..) |con, i| {
         if (consumed_used[i]) continue;
-        if (!std.mem.eql(u8, con.file_path, created.file_path)) continue;
+        if (!std.mem.eql(u8, reportedPath(matched, con.file_path), created_path)) continue;
         if (rangesOverlap(con.old_start, con.old_count, created.old_start, created.old_count)) {
             try con_buf.append(arena, con.sha_hex[0..7]);
             consumed_used[i] = true;
@@ -125,14 +138,14 @@ fn assignAppliedAndConsumed(
     var groups: std.ArrayList(ResultGroup) = .empty;
     for (created) |c| {
         const applied = try collectAppliedFor(arena, matched, applied_used, c);
-        const con_paths = try collectConsumedFor(arena, consumed, consumed_used, c);
+        const con_paths = try collectConsumedFor(arena, matched, consumed, consumed_used, c);
         const result_sha = try arena.alloc([]const u8, 1);
         result_sha[0] = c.sha_hex[0..7];
         try groups.append(arena, .{
             .result_shas = result_sha,
             .applied = applied,
             .consumed = con_paths,
-            .file_path = c.file_path,
+            .file_path = reportedPath(matched, c.file_path),
             .is_symlink = c.section.is_symlink,
         });
     }
@@ -673,7 +686,7 @@ test "collectConsumedFor: range overlap on same file" {
     var c_hunk = types.testMakeHunk("a.txt", 5, 3, 5, 3);
 
     var consumed_used = [_]bool{false};
-    const con_paths = try collectConsumedFor(arena, &consumed, &consumed_used, &c_hunk);
+    const con_paths = try collectConsumedFor(arena, &.{}, &consumed, &consumed_used, &c_hunk);
     try std.testing.expectEqual(@as(usize, 1), con_paths.len);
     try std.testing.expectEqualStrings("deadbef", con_paths[0]);
     try std.testing.expect(consumed_used[0]);
@@ -690,7 +703,7 @@ test "collectConsumedFor: no overlap returns empty" {
     var c_hunk = types.testMakeHunk("a.txt", 100, 1, 100, 1);
 
     var consumed_used = [_]bool{false};
-    const con_paths = try collectConsumedFor(arena, &consumed, &consumed_used, &c_hunk);
+    const con_paths = try collectConsumedFor(arena, &.{}, &consumed, &consumed_used, &c_hunk);
     try std.testing.expectEqual(@as(usize, 0), con_paths.len);
 }
 
@@ -915,4 +928,39 @@ test "printResultGroupPorcelain: symlink @ suffix on file path" {
     };
     try printResultGroupPorcelain(&w, "staged", rg);
     try std.testing.expect(std.mem.endsWith(u8, w.buffered(), "\tlink@\n"));
+}
+
+fn testSha(comptime prefix: *const [7]u8) [40]u8 {
+    var h: [40]u8 = undefined;
+    @memcpy(h[0..7], prefix);
+    @memset(h[7..], '0');
+    return h;
+}
+
+test "buildResultGroups: an undone rename reports its old-path deletion and new-path file under the new path" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const rename_section: types.FileSection = .{ .renamed_from_path = "old.txt" };
+    var rename = types.testMakeHunk("new.txt", 3, 7, 3, 7);
+    rename.section = &rename_section;
+    rename.sha_hex = testSha("aaaaaaa");
+
+    var deletion = types.testMakeHunk("old.txt", 1, 12, 0, 0);
+    deletion.diff_lines = "-a";
+    deletion.sha_hex = testSha("ddddddd");
+    var untracked = types.testMakeHunk("new.txt", 0, 0, 1, 12);
+    untracked.diff_lines = "+a";
+    untracked.sha_hex = testSha("uuuuuuu");
+
+    const matched = [_]MatchedHunk{.{ .hunk = &rename, .line_spec = null }};
+    const groups = try buildResultGroups(arena, &matched, &.{}, &.{ deletion, untracked });
+
+    try std.testing.expectEqual(@as(usize, 1), groups.len);
+    try std.testing.expectEqualStrings("new.txt", groups[0].file_path);
+    try std.testing.expectEqualStrings("aaaaaaa", groups[0].applied[0].sha7);
+    try std.testing.expectEqual(@as(usize, 2), groups[0].result_shas.len);
+    try std.testing.expectEqualStrings("uuuuuuu", groups[0].result_shas[0]);
+    try std.testing.expectEqualStrings("ddddddd", groups[0].result_shas[1]);
 }

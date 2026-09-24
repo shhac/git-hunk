@@ -356,9 +356,9 @@ fn exitIfNoMatches(matched_len: usize, file_filter: []const []const u8) void {
     std.process.exit(1);
 }
 
-/// Diff `target` scoped to `file_paths` and parse into `hunks`. Untracked
-/// files never join in: they are what `add` stages from, never where a
-/// result lands. Soft-fails: any error leaves `hunks` empty.
+/// Diff `target` scoped to `file_paths` and parse into `hunks`, the way
+/// `list` would show them: unstaging a new file, or the new path of a
+/// rename, leaves it untracked. Soft-fails: any error leaves `hunks` empty.
 fn captureTargetHunks(
     arena: Allocator,
     target: DiffSource,
@@ -370,6 +370,11 @@ fn captureTargetHunks(
     const diff = git.runGitDiffFiles(arena, target, context, file_paths) catch return;
     if (diff.len > 0) {
         diff_mod.parseDiff(arena, diff, target.anchor(), hunks) catch {};
+    }
+    if (!target.includesUntracked()) return;
+    const untracked_diff = git.diffUntrackedFiles(arena, file_paths) catch return;
+    if (untracked_diff.len > 0) {
+        diff_mod.parseUntrackedDiff(arena, untracked_diff, hunks) catch {};
     }
 }
 
@@ -515,7 +520,7 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
     // can detect merges and map applied hunks to their post-apply hashes.
     // Whatever the hunks came from, add lands them in the index and reset
     // hands them back to the worktree: read each back from that side's diff.
-    const file_paths = try patch_mod.collectUniqueFilePaths(arena, matched);
+    const file_paths = try patch_mod.collectResultPaths(arena, matched);
     const target: DiffSource = switch (action) {
         .stage => .index,
         .unstage => .worktree,

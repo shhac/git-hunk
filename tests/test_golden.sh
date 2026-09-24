@@ -2,7 +2,7 @@
 source "$(dirname "$0")/harness.sh" "$1"
 
 # ============================================================================
-# Golden pins (tests 2000-2011; 2012-2014 cover what the diff-source
+# Golden pins (tests 2000-2011; 2012-2015 cover what the diff-source
 # refactor changed on purpose): byte-exact records of what git-hunk prints,
 # and of what it hands to `git apply`, for every diff source and every kind of
 # file section. They were taken from the binary as it stood before the
@@ -345,9 +345,9 @@ pass "test 2003: --ref commit, root-commit, two-dot and three-dot listings pinne
 
 # ============================================================================
 # Test 2004: result-group porcelain after add and reset -- the hash each
-# selection lands as on the other side. A rename's result is computed from a
-# diff scoped to the new path alone, so it reads as a new file (add) or goes
-# missing (reset); pinned as it stands.
+# selection lands as on the other side. Adding a rename lands as the same
+# rename; resetting one leaves the old path deleted and the new one
+# untracked, and both are its result.
 # ============================================================================
 check_result() {
     local label="$1" want="$2"
@@ -363,9 +363,9 @@ check_result "test 2004" $'staged\t810dfd6:2\ta2a38f1\tu.txt' add 810dfd6:2
 golden_repo mixed_state
 check_result "test 2004" $'unstaged\te2fe77c\tc257e99\tgone-staged.txt' reset e2fe77c
 golden_repo mixed_state
-check_result "test 2004" $'unstaged\tb34f350\t\tnew-name.txt' reset b34f350
+check_result "test 2004" $'unstaged\tb34f350\t7c745cd,aa914db\tnew-name.txt' reset b34f350
 golden_repo intent_to_add_state
-check_result "test 2004" $'staged\tb34f350\t86649b6\tnew-name.txt' add b34f350
+check_result "test 2004" $'staged\tb34f350\tb34f350\tnew-name.txt' add b34f350
 pass "test 2004: result groups of add <sha>, add <sha>:<line> and reset <sha> pinned"
 
 # ============================================================================
@@ -763,5 +763,30 @@ SHA2014="$("$GIT_HUNK" list --porcelain --oneline --file other.txt | cut -f1)"
 git diff --quiet -- other.txt || fail "test 2014: stash left other.txt changed"
 git stash list | grep -q . || fail "test 2014: stash stored nothing"
 pass "test 2014: files named HEAD and like the branch shadow no revision"
+
+# ============================================================================
+# Test 2015: a result hash is the hash `list` then shows on that side, for a
+# rename and for a new file, both ways.
+# ============================================================================
+# result_hashes <git-hunk args>: the result column of the porcelain output,
+# one hash per line.
+result_hashes() {
+    "$GIT_HUNK" "$@" --porcelain | cut -f3 | tr ',' '\n' | LC_ALL=C sort
+}
+listed_hashes() {
+    "$GIT_HUNK" list --porcelain --oneline "$@" | cut -f1 | LC_ALL=C sort
+}
+golden_repo intent_to_add_state
+GOT2015="$(result_hashes add b34f350)"
+check_text "test 2015: add of a rename" "$(listed_hashes --staged --file new-name.txt)" "$GOT2015"
+golden_repo mixed_state
+GOT2015="$(result_hashes reset b34f350)"
+check_text "test 2015: reset of a rename" "$(listed_hashes --file new-name.txt --file old-name.txt)" "$GOT2015"
+golden_repo mixed_state
+GOT2015="$(result_hashes reset af6a5e1)"
+check_text "test 2015: reset of a new file" "$(listed_hashes --file new.txt)" "$GOT2015"
+GOT2015="$(result_hashes add "$GOT2015")"
+check_text "test 2015: add of it again" "$(listed_hashes --staged --file new.txt)" "$GOT2015"
+pass "test 2015: add and reset results match what list shows next"
 
 report_results

@@ -122,6 +122,7 @@ fn newSection(
         .file_mode = state.file_mode,
         .rename_from = state.rename_from,
         .rename_to = state.rename_to,
+        .renamed_from_path = if (state.rename_from) |from| try unquotePath(arena, from) else null,
         .index_line = state.index_line,
         .minus_line = minus_line,
         .plus_line = plus_line,
@@ -534,8 +535,14 @@ fn cUnescape(arena: Allocator, input: []const u8) ![]const u8 {
 /// `rename to`, which is unambiguous where the `diff --git` line is not.
 fn sectionFilePath(arena: Allocator, diff_git_line: []const u8, state: FileHeaderState) !?[]const u8 {
     const to = state.rename_to orelse return extractPathFromDiffGitLine(arena, diff_git_line);
-    if (to.len >= 2 and to[0] == '"' and to[to.len - 1] == '"') return try cUnescape(arena, to[1 .. to.len - 1]);
-    return to;
+    return try unquotePath(arena, to);
+}
+
+/// A path as git writes it in `rename from`/`rename to`, C-quoted when it
+/// has to be.
+fn unquotePath(arena: Allocator, path: []const u8) ![]const u8 {
+    if (path.len >= 2 and path[0] == '"' and path[path.len - 1] == '"') return try cUnescape(arena, path[1 .. path.len - 1]);
+    return path;
 }
 
 /// Extract file path from a "diff --git a/PATH b/PATH" line.
@@ -1116,6 +1123,7 @@ test "parseDiff rename with content" {
     try std.testing.expectEqualStrings("new.txt", hunks.items[0].file_path);
     try std.testing.expectEqualStrings("old.txt", hunks.items[0].section.rename_from.?);
     try std.testing.expectEqualStrings("new.txt", hunks.items[0].section.rename_to.?);
+    try std.testing.expectEqualStrings("old.txt", hunks.items[0].section.renamed_from_path.?);
 }
 
 test "parseDiff c-quoted path" {
@@ -1418,6 +1426,29 @@ test "parseDiff binary rename takes the new path from rename to" {
     try parseDiff(arena.allocator(), diff, .old, &hunks);
     try std.testing.expectEqual(@as(usize, 1), hunks.items.len);
     try std.testing.expectEqualStrings("b.bin", hunks.items[0].file_path);
+}
+
+test "parseDiff unquotes the path a rename came from" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const diff =
+        \\diff --git "a/h\303\251llo.txt" b/hello.txt
+        \\similarity index 80%
+        \\rename from "h\303\251llo.txt"
+        \\rename to hello.txt
+        \\index 1234567..abcdefg 100644
+        \\--- "a/h\303\251llo.txt"
+        \\+++ b/hello.txt
+        \\@@ -1 +1 @@
+        \\-old
+        \\+new
+        \\
+    ;
+    var hunks: std.ArrayList(Hunk) = .empty;
+    try parseDiff(arena.allocator(), diff, .new, &hunks);
+    try std.testing.expectEqual(@as(usize, 1), hunks.items.len);
+    try std.testing.expectEqualStrings("h\xc3\xa9llo.txt", hunks.items[0].section.renamed_from_path.?);
+    try std.testing.expectEqualStrings("\"h\\303\\251llo.txt\"", hunks.items[0].section.rename_from.?);
 }
 
 test "collectSkippedPaths reports a pure rename under its new path" {
