@@ -681,7 +681,7 @@ git-hunk stash a3f7c21 --porcelain              # machine-readable output
 - `pop` runs `git stash pop` and prints `popped stash@{0}` to stderr. Rejects all other flags and arguments.
 - Line specs (`sha:lines`) are rejected: `error: line specs not supported for stash`.
 - `--include-untracked` conflicts with `--tracked-only` — error if both given.
-- `git apply` failures during worktree cleanup are handled gracefully (error returned, not process exit).
+- If the stashed changes cannot be taken back out of the worktree once the entry is stored, the entry stays, the worktree keeps the changes, and stash exits 1 saying so, as `git stash` stops with "Cannot remove worktree changes".
 - Exits 1 if any SHA prefix doesn't match, is ambiguous, or if there are no unstaged changes.
 
 ### Errors
@@ -697,6 +697,7 @@ git-hunk stash a3f7c21 --porcelain              # machine-readable output
 | `error: --include-untracked cannot be combined with --tracked-only` | Conflicting filter flags |
 | `no unstaged changes` | Nothing to stash |
 | `error: cannot stash while the index has unmerged paths` | A merge conflict is unresolved |
+| `error: cannot remove the stashed changes from the worktree` | The entry was stored as `stash@{0}` but the worktree still has its changes; `git stash drop` to keep working on them, or remove them from the worktree to finish the stash |
 | `error: at least one <sha> argument required` | No SHA arguments and no `--all`/`--file` flag |
 
 ---

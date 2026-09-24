@@ -371,4 +371,30 @@ grep -q "MODIFIED" binfile.bin \
     || fail "test 723: binfile.bin should be restored with MODIFIED contents after pop"
 pass "test 723: stash --all with mixed text + binary survives a pop round-trip"
 
+# ============================================================================
+# Test 724: a stash whose worktree cleanup fails says so and exits 1. The
+# entry is already stored, so the changes are in both places; that used to
+# be only a warning with exit 0.
+# ============================================================================
+SHIM_DIR724="$(mktemp -d)"
+cp "$SCRIPT_DIR/git-shim.sh" "$SHIM_DIR724/git"
+chmod +x "$SHIM_DIR724/git"
+new_repo
+sed -i.bak '3s/.*/stashed but kept 724/' alpha.txt
+SHA724="$(first_sha --file alpha.txt)"
+echo 0 > "$SHIM_DIR724/count"
+# The first `git apply` builds the stash tree; the second is the cleanup.
+EC724=0
+ERR724="$(PATH="$SHIM_DIR724:$PATH" GIT_HUNK_SHIM_FAIL=apply GIT_HUNK_SHIM_FAIL_ON=2 \
+    GIT_HUNK_SHIM_COUNT_FILE="$SHIM_DIR724/count" "$GIT_HUNK" stash "$SHA724" 2>&1)" || EC724=$?
+rm -rf "$SHIM_DIR724"
+[[ "$EC724" -eq 1 ]] || fail "test 724: stash with a failed cleanup should exit 1, got $EC724"
+echo "$ERR724" | grep -q "^error: cannot remove the stashed changes from the worktree$" \
+    || fail "test 724: should say the worktree still has the changes, got: '$ERR724'"
+echo "$ERR724" | grep -q "saved in stash@{0}" \
+    || fail "test 724: should say the entry was stored, got: '$ERR724'"
+[[ "$(git stash list | wc -l | tr -d ' ')" == "1" ]] || fail "test 724: the stash entry should be stored"
+[[ "$(sed -n 3p alpha.txt)" == "stashed but kept 724" ]] || fail "test 724: the worktree should still have the change"
+pass "test 724: a failed stash cleanup is an error that says where the changes are"
+
 report_results

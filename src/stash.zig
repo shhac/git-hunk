@@ -171,32 +171,46 @@ fn buildUntrackedCommit(
     return git.runGitCommitTree(allocator, untracked_tree, &.{head.sha}, ut_msg);
 }
 
-/// Reverse-apply tracked patches and delete untracked files from the worktree.
-/// Intentionally swallows errors to avoid aborting after a successful stash store.
+/// Take the stashed changes out of the worktree: check tracked binaries out
+/// of the index, reverse-apply the text patches, delete untracked files. The
+/// entry is already stored, so one failure does not stop the rest. Returns
+/// false if any change could not be removed.
 pub fn cleanupWorktree(
     allocator: Allocator,
-    has_tracked: bool,
-    has_untracked: bool,
+    tracked_binary_paths: []const []const u8,
     cleanup_patches: []const []const u8,
     untracked_matched: []const MatchedHunk,
-) void {
-    if (has_tracked) {
-        for (cleanup_patches) |patch| {
-            _ = git.runGitApply(allocator, patch, .{ .reverse = true, .target = .worktree }) catch {
-                std.debug.print("warning: stash created but worktree changes could not be removed\n", .{});
-                std.debug.print("hint: use 'git stash pop' to undo or manually resolve\n", .{});
-                break;
-            };
-        }
+) bool {
+    var removed_all = true;
+    if (tracked_binary_paths.len > 0) {
+        git.runGitCheckoutFilesLenient(allocator, tracked_binary_paths) catch {
+            removed_all = false;
+        };
     }
-    if (has_untracked) {
-        const io = defaultIo();
-        for (untracked_matched) |m| {
-            std.Io.Dir.cwd().deleteFile(io, m.hunk.file_path) catch {
-                std.debug.print("warning: could not delete untracked file '{s}'\n", .{m.hunk.file_path});
-            };
-        }
+    for (cleanup_patches) |patch| {
+        _ = git.runGitApply(allocator, patch, .{ .reverse = true, .target = .worktree, .explain_failure = false }) catch {
+            removed_all = false;
+            break;
+        };
     }
+    const io = defaultIo();
+    for (untracked_matched) |m| {
+        std.Io.Dir.cwd().deleteFile(io, m.hunk.file_path) catch {
+            std.debug.print("error: cannot delete '{s}'\n", .{m.hunk.file_path});
+            removed_all = false;
+        };
+    }
+    return removed_all;
+}
+
+/// The stash entry exists but the worktree still has changes it holds.
+/// `git stash` stops here too ("Cannot remove worktree changes"), leaving
+/// the entry in place.
+pub fn exitCleanupFailed() noreturn {
+    std.debug.print("error: cannot remove the stashed changes from the worktree\n", .{});
+    std.debug.print("hint: the changes are saved in stash@{{0}} and are still in the worktree\n", .{});
+    std.debug.print("hint: run 'git stash drop' to keep working on them here, or remove them from the worktree to finish the stash\n", .{});
+    std.process.exit(1);
 }
 
 /// Print per-hunk stash results and summary to stdout/stderr.

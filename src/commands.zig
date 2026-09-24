@@ -703,10 +703,6 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
     var untracked_matched: std.ArrayList(MatchedHunk) = .empty;
     try untracked_matched.appendSlice(arena, partition.untracked_text);
     try untracked_matched.appendSlice(arena, partition.untracked_binary);
-    const has_tracked = partition.tracked_text.len > 0;
-    const has_binary_tracked = partition.tracked_binary.len > 0;
-    const has_untracked = untracked_matched.items.len > 0;
-
     var head = try stash_mod.gatherHeadInfo(allocator);
     defer head.deinit(allocator);
 
@@ -719,16 +715,12 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
 
     try git.runGitStashStore(allocator, stash_msg, wip_commit);
 
-    // Cleanup: restore binary tracked files from index, reverse-apply text patches,
-    // delete untracked files.
-    if (has_binary_tracked) {
-        git.runGitCheckoutFiles(allocator, partition.tracked_binary_paths) catch {
-            std.debug.print("warning: stash created but could not restore binary files from index\n", .{});
-        };
-    }
-    stash_mod.cleanupWorktree(allocator, has_tracked, has_untracked, trees.cleanup_patches, untracked_matched.items);
+    const cleaned = stash_mod.cleanupWorktree(allocator, partition.tracked_binary_paths, trees.cleanup_patches, untracked_matched.items);
 
     try stash_mod.reportStashResults(stdout, opts, matched);
+    if (cleaned) return;
+    try stdout.flush();
+    stash_mod.exitCleanupFailed();
 }
 
 pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptions) !void {

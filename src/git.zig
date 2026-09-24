@@ -248,6 +248,9 @@ const ApplyOptions = struct {
     /// Optional child environment (e.g. GIT_INDEX_FILE pointing at a temp
     /// index). Null inherits the parent environment.
     env_map: ?*const EnvMap = null,
+    /// Follow git's own complaint with ours. Off for a caller whose failure
+    /// means something other than a stale or drifted hunk, which says so itself.
+    explain_failure: bool = true,
 };
 
 const ApplyResult = enum { applied_clean, applied_with_conflicts };
@@ -314,6 +317,7 @@ pub fn runGitApply(allocator: Allocator, patch: []const u8, opts: ApplyOptions) 
     }
     if (result.exit_code != 0) {
         if (result.stderr.len > 0) std.debug.print("{s}", .{result.stderr});
+        if (!opts.explain_failure) return error.PatchFailed;
         const try_3way: []const u8 = if (opts.three_way) "" else " (try --3way)";
         if (opts.ref) |r| {
             const target: []const u8 = switch (opts.target) {
@@ -388,6 +392,15 @@ pub fn runGitResetFilesLenient(allocator: Allocator, file_paths: []const []const
     const argv = try pathspecArgv(allocator, &.{ "git", "reset", "-q", "HEAD" }, file_paths);
     defer allocator.free(argv);
     const out = try runGitCaptureErr(allocator, argv, .{}, error.ResetFailed, .{ .trim = false });
+    allocator.free(out);
+}
+
+/// Check files out of the index, returning an error on git failure instead
+/// of exiting, for a caller that must go on to report what is left.
+pub fn runGitCheckoutFilesLenient(allocator: Allocator, file_paths: []const []const u8) !void {
+    const argv = try pathspecArgv(allocator, &.{ "git", "checkout" }, file_paths);
+    defer allocator.free(argv);
+    const out = try runGitCaptureErr(allocator, argv, .{}, error.CheckoutFailed, .{ .echo_stderr = true, .trim = false });
     allocator.free(out);
 }
 
