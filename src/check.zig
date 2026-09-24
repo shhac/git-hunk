@@ -98,7 +98,7 @@ pub fn renderCheckPorcelain(stdout: *std.Io.Writer, summary: CheckSummary) !void
     }
     for (summary.unexpected) |h| {
         try stdout.print("unexpected\t{s}\t", .{h.sha_hex[0..7]});
-        try format.writeFilePath(stdout, h.*);
+        try format.writeFilePath(stdout, h.file_path, h.section.is_symlink);
         try stdout.writeByte('\n');
     }
 }
@@ -116,7 +116,7 @@ pub fn renderCheckHuman(stdout: *std.Io.Writer, summary: CheckSummary, use_color
     }
     for (summary.unexpected) |h| {
         try stdout.print("unexpected {s}{s}{s}  ", .{ sha.on, h.sha_hex[0..7], sha.off });
-        try format.writeFilePath(stdout, h.*);
+        try format.writeFilePath(stdout, h.file_path, h.section.is_symlink);
         try stdout.writeByte('\n');
     }
 

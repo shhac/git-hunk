@@ -3,6 +3,7 @@ const types = @import("types.zig");
 
 const Allocator = std.mem.Allocator;
 const Hunk = types.Hunk;
+const FileSection = types.FileSection;
 const BodyLine = types.BodyLine;
 const DiffMode = types.DiffMode;
 
@@ -103,100 +104,38 @@ fn parseExtendedHeaders(cursor: *DiffCursor) FileHeaderState {
     return state;
 }
 
-/// Append a `new file mode <m>\n` or `deleted file mode <m>\n` line to `ph` if
-/// the file is new or deleted. No-op for an in-place modification.
-fn appendModeLine(arena: Allocator, ph: *std.ArrayList(u8), state: FileHeaderState) !void {
-    if (state.is_new_file) {
-        try ph.appendSlice(arena, "new file mode ");
-    } else if (state.is_deleted_file) {
-        try ph.appendSlice(arena, "deleted file mode ");
-    } else return;
-    try ph.appendSlice(arena, state.file_mode);
-    try ph.append(arena, '\n');
-}
-
-/// Append the `index <oldsha>..<newsha> [mode]` line if it was captured. Required
-/// for `git apply --3way` to find the original blob.
-fn appendIndexLine(arena: Allocator, ph: *std.ArrayList(u8), state: FileHeaderState) !void {
-    if (state.index_line) |line| {
-        try ph.appendSlice(arena, line);
-        try ph.append(arena, '\n');
-    }
-}
-
-/// Build a patch header for the standard case (---/+++ lines present plus the
-/// usual diff_git_line and rename/mode metadata when applicable). Always emits
-/// the `diff --git` header and (when present) the `index` line so reconstructed
-/// patches retain blob ids for `git apply --3way`.
-fn buildPatchHeader(
+/// The shared record of one file section. Allocated on its own so hunks can
+/// point at it while the hunk list grows.
+fn newSection(
     arena: Allocator,
-    diff_git_line: []const u8,
-    minus_line: []const u8,
-    plus_line: []const u8,
-    state: FileHeaderState,
-) ![]const u8 {
-    var ph: std.ArrayList(u8) = .empty;
-    try ph.appendSlice(arena, diff_git_line);
-    try ph.append(arena, '\n');
-    try appendModeLine(arena, &ph, state);
-    if (state.rename_from) |from| {
-        try ph.appendSlice(arena, "rename from ");
-        try ph.appendSlice(arena, from);
-        try ph.append(arena, '\n');
-    }
-    if (state.rename_to) |to| {
-        try ph.appendSlice(arena, "rename to ");
-        try ph.appendSlice(arena, to);
-        try ph.append(arena, '\n');
-    }
-    try appendIndexLine(arena, &ph, state);
-    try ph.appendSlice(arena, minus_line);
-    try ph.append(arena, '\n');
-    try ph.appendSlice(arena, plus_line);
-    try ph.append(arena, '\n');
-    return ph.items;
-}
-
-/// Build the patch header for a binary file (no ---/+++ lines).
-fn buildBinaryPatchHeader(arena: Allocator, diff_git_line: []const u8, state: FileHeaderState) ![]const u8 {
-    var ph: std.ArrayList(u8) = .empty;
-    try ph.appendSlice(arena, diff_git_line);
-    try ph.append(arena, '\n');
-    try appendModeLine(arena, &ph, state);
-    try appendIndexLine(arena, &ph, state);
-    return ph.items;
-}
-
-/// Build the patch header for an empty new/deleted file with no ---/+++ lines
-/// in the input (synthesized).
-fn buildEmptyFilePatchHeader(arena: Allocator, diff_git_line: []const u8, file_path: []const u8, state: FileHeaderState) ![]const u8 {
-    var ph: std.ArrayList(u8) = .empty;
-    try ph.appendSlice(arena, diff_git_line);
-    try ph.append(arena, '\n');
-    try appendModeLine(arena, &ph, state);
-    try appendIndexLine(arena, &ph, state);
-    if (state.is_deleted_file) {
-        try ph.appendSlice(arena, "--- a/");
-        try ph.appendSlice(arena, file_path);
-        try ph.appendSlice(arena, "\n+++ /dev/null\n");
-    } else {
-        try ph.appendSlice(arena, "--- /dev/null\n+++ b/");
-        try ph.appendSlice(arena, file_path);
-        try ph.append(arena, '\n');
-    }
-    return ph.items;
+    header: FileHeader,
+    minus_line: ?[]const u8,
+    plus_line: ?[]const u8,
+    is_untracked: bool,
+) !*FileSection {
+    const state = header.state;
+    const section = try arena.create(FileSection);
+    section.* = .{
+        .diff_git_line = header.diff_git_line,
+        .is_new_file = state.is_new_file,
+        .is_deleted_file = state.is_deleted_file,
+        .file_mode = state.file_mode,
+        .rename_from = state.rename_from,
+        .rename_to = state.rename_to,
+        .index_line = state.index_line,
+        .minus_line = minus_line,
+        .plus_line = plus_line,
+        .is_binary = state.is_binary,
+        .is_symlink = state.is_symlink,
+        .is_untracked = is_untracked,
+    };
+    return section;
 }
 
 /// Build a synthetic whole-file hunk (no line-level content) for the binary,
 /// empty-file, or empty-after-headers cases. `sha_payload` is hashed alongside
 /// the file path / line 0 to disambiguate between cases.
-fn synthesizeWholeFileHunk(
-    file_path: []const u8,
-    patch_header: []const u8,
-    state: FileHeaderState,
-    is_binary: bool,
-    sha_payload: []const u8,
-) Hunk {
+fn synthesizeWholeFileHunk(file_path: []const u8, section: *const FileSection, sha_payload: []const u8) Hunk {
     return .{
         .file_path = file_path,
         .old_start = 0,
@@ -207,12 +146,7 @@ fn synthesizeWholeFileHunk(
         .raw_lines = "",
         .diff_lines = "",
         .sha_hex = computeHunkSha(file_path, 0, sha_payload),
-        .is_new_file = state.is_new_file,
-        .is_deleted_file = state.is_deleted_file,
-        .is_untracked = false,
-        .is_symlink = state.is_symlink,
-        .is_binary = is_binary,
-        .patch_header = patch_header,
+        .section = section,
     };
 }
 
@@ -327,9 +261,19 @@ pub fn collectSkippedPaths(
 }
 
 pub fn parseDiff(arena: Allocator, diff: []const u8, mode: DiffMode, hunks: *std.ArrayList(Hunk)) !void {
+    try parseSections(arena, diff, mode, false, hunks);
+}
+
+/// Parse `git diff --no-index` output for untracked files, marking every
+/// section untracked.
+pub fn parseUntrackedDiff(arena: Allocator, diff: []const u8, hunks: *std.ArrayList(Hunk)) !void {
+    try parseSections(arena, diff, .unstaged, true, hunks);
+}
+
+fn parseSections(arena: Allocator, diff: []const u8, mode: DiffMode, is_untracked: bool, hunks: *std.ArrayList(Hunk)) !void {
     var cursor = DiffCursor.init(diff);
     while (nextFileHeader(&cursor)) |header| {
-        try parseFileSection(arena, &cursor, diff, header, mode, hunks);
+        try parseFileSection(arena, &cursor, diff, header, mode, is_untracked, hunks);
     }
 }
 
@@ -361,17 +305,17 @@ fn parseFileSection(
     diff: []const u8,
     header: FileHeader,
     mode: DiffMode,
+    is_untracked: bool,
     hunks: *std.ArrayList(Hunk),
 ) !void {
-    const diff_git_line = header.diff_git_line;
     const state = header.state;
     if (state.is_submodule) return;
     const is_whole_file = state.is_new_file or state.is_deleted_file;
 
     if (state.is_binary) {
-        const file_path = (try sectionFilePath(arena, diff_git_line, state)) orelse return;
-        const ph = try buildBinaryPatchHeader(arena, diff_git_line, state);
-        try hunks.append(arena, synthesizeWholeFileHunk(file_path, ph, state, true, "binary"));
+        const file_path = (try sectionFilePath(arena, header.diff_git_line, state)) orelse return;
+        const section = try newSection(arena, header, null, null, is_untracked);
+        try hunks.append(arena, synthesizeWholeFileHunk(file_path, section, "binary"));
         return;
     }
 
@@ -379,9 +323,9 @@ fn parseFileSection(
     if (!std.mem.startsWith(u8, minus_line, "--- ")) {
         // An empty new/deleted file has no ---/+++ at all.
         if (!is_whole_file) return;
-        const file_path = (try sectionFilePath(arena, diff_git_line, state)) orelse return;
-        const ph = try buildEmptyFilePatchHeader(arena, diff_git_line, file_path, state);
-        try hunks.append(arena, synthesizeWholeFileHunk(file_path, ph, state, false, ""));
+        const file_path = (try sectionFilePath(arena, header.diff_git_line, state)) orelse return;
+        const section = try newSection(arena, header, null, null, is_untracked);
+        try hunks.append(arena, synthesizeWholeFileHunk(file_path, section, ""));
         return;
     }
     cursor.advance();
@@ -394,12 +338,12 @@ fn parseFileSection(
     else
         (try extractDiffPath(arena, plus_line, .new)) orelse return;
 
-    const patch_header = try buildPatchHeader(arena, diff_git_line, minus_line, plus_line, state);
+    const section = try newSection(arena, header, minus_line, plus_line, is_untracked);
 
     // Some Linux git versions give an empty new/deleted file ---/+++ but no @@.
     const at_follows = if (cursor.peek()) |line| std.mem.startsWith(u8, line, "@@ ") else false;
     if (!at_follows and is_whole_file) {
-        try hunks.append(arena, synthesizeWholeFileHunk(file_path, patch_header, state, false, ""));
+        try hunks.append(arena, synthesizeWholeFileHunk(file_path, section, ""));
         return;
     }
 
@@ -418,12 +362,7 @@ fn parseFileSection(
             .raw_lines = body.raw_lines,
             .diff_lines = body.diff_lines,
             .sha_hex = computeHunkSha(file_path, hunk_header.stable_line(mode), body.diff_lines),
-            .is_new_file = state.is_new_file,
-            .is_deleted_file = state.is_deleted_file,
-            .is_untracked = false,
-            .is_symlink = state.is_symlink,
-            .is_binary = false,
-            .patch_header = patch_header,
+            .section = section,
         });
     }
 }
@@ -730,12 +669,11 @@ test "parseDiff multi-hunk single file" {
     try std.testing.expectEqual(@as(u32, 4), hunks.items[1].new_count);
     try std.testing.expectEqualStrings("line 16", hunks.items[1].context);
 
-    // Reconstructed patch_header preserves the `index <oldsha>..<newsha>` line —
-    // required for `git apply --3way` to find the original blob.
-    try std.testing.expect(std.mem.indexOf(u8, hunks.items[0].patch_header, "index abc1234..def5678 100644") != null);
-    try std.testing.expect(std.mem.indexOf(u8, hunks.items[1].patch_header, "index abc1234..def5678 100644") != null);
-    // diff --git header is also preserved (always emitted, not just for new/deleted/rename).
-    try std.testing.expect(std.mem.indexOf(u8, hunks.items[0].patch_header, "diff --git a/hello.txt b/hello.txt") != null);
+    // Both hunks share one section, which keeps the `index <oldsha>..<newsha>`
+    // line verbatim — required for `git apply --3way` to find the original blob.
+    try std.testing.expect(hunks.items[0].section == hunks.items[1].section);
+    try std.testing.expectEqualStrings("index abc1234..def5678 100644", hunks.items[0].section.index_line.?);
+    try std.testing.expectEqualStrings("diff --git a/hello.txt b/hello.txt", hunks.items[0].section.diff_git_line);
 }
 
 test "parseDiff multi-file" {
@@ -798,7 +736,7 @@ test "parseDiff new file" {
 
     try std.testing.expectEqual(@as(usize, 1), hunks.items.len);
     try std.testing.expectEqualStrings("new.txt", hunks.items[0].file_path);
-    try std.testing.expect(hunks.items[0].is_new_file);
+    try std.testing.expect(hunks.items[0].section.is_new_file);
 }
 
 test "parseU32 basic" {
@@ -934,8 +872,8 @@ test "parseDiff deleted file" {
 
     try std.testing.expectEqual(@as(usize, 1), hunks.items.len);
     try std.testing.expectEqualStrings("old.txt", hunks.items[0].file_path);
-    try std.testing.expect(hunks.items[0].is_deleted_file);
-    try std.testing.expect(std.mem.indexOf(u8, hunks.items[0].patch_header, "deleted file mode") != null);
+    try std.testing.expect(hunks.items[0].section.is_deleted_file);
+    try std.testing.expectEqualStrings("100644", hunks.items[0].section.file_mode);
 }
 
 test "parseDiff binary file produces hunk" {
@@ -956,9 +894,9 @@ test "parseDiff binary file produces hunk" {
     try parseDiff(arena, diff, .unstaged, &hunks);
     try std.testing.expectEqual(@as(usize, 1), hunks.items.len);
     try std.testing.expectEqualStrings("img.png", hunks.items[0].file_path);
-    try std.testing.expect(hunks.items[0].is_binary);
-    try std.testing.expect(!hunks.items[0].is_new_file);
-    try std.testing.expect(!hunks.items[0].is_deleted_file);
+    try std.testing.expect(hunks.items[0].section.is_binary);
+    try std.testing.expect(!hunks.items[0].section.is_new_file);
+    try std.testing.expect(!hunks.items[0].section.is_deleted_file);
     try std.testing.expectEqualStrings("", hunks.items[0].raw_lines);
     try std.testing.expectEqualStrings("", hunks.items[0].diff_lines);
     // Hash is deterministic: SHA1("img.png" || \0 || "0" || \0 || "binary")
@@ -985,8 +923,8 @@ test "parseDiff new binary file" {
     try parseDiff(arena, diff, .unstaged, &hunks);
     try std.testing.expectEqual(@as(usize, 1), hunks.items.len);
     try std.testing.expectEqualStrings("data.db", hunks.items[0].file_path);
-    try std.testing.expect(hunks.items[0].is_binary);
-    try std.testing.expect(hunks.items[0].is_new_file);
+    try std.testing.expect(hunks.items[0].section.is_binary);
+    try std.testing.expect(hunks.items[0].section.is_new_file);
 }
 
 test "parseDiff deleted binary file" {
@@ -1008,8 +946,8 @@ test "parseDiff deleted binary file" {
     try parseDiff(arena, diff, .unstaged, &hunks);
     try std.testing.expectEqual(@as(usize, 1), hunks.items.len);
     try std.testing.expectEqualStrings("old.bin", hunks.items[0].file_path);
-    try std.testing.expect(hunks.items[0].is_binary);
-    try std.testing.expect(hunks.items[0].is_deleted_file);
+    try std.testing.expect(hunks.items[0].section.is_binary);
+    try std.testing.expect(hunks.items[0].section.is_deleted_file);
 }
 
 test "parseDiff binary and text files together" {
@@ -1037,9 +975,9 @@ test "parseDiff binary and text files together" {
     try parseDiff(arena, diff, .unstaged, &hunks);
     try std.testing.expectEqual(@as(usize, 2), hunks.items.len);
     try std.testing.expectEqualStrings("img.png", hunks.items[0].file_path);
-    try std.testing.expect(hunks.items[0].is_binary);
+    try std.testing.expect(hunks.items[0].section.is_binary);
     try std.testing.expectEqualStrings("readme.txt", hunks.items[1].file_path);
-    try std.testing.expect(!hunks.items[1].is_binary);
+    try std.testing.expect(!hunks.items[1].section.is_binary);
 }
 
 test "parseDiff symlink detected via index line mode" {
@@ -1064,8 +1002,8 @@ test "parseDiff symlink detected via index line mode" {
     try parseDiff(arena, diff, .unstaged, &hunks);
     try std.testing.expectEqual(@as(usize, 1), hunks.items.len);
     try std.testing.expectEqualStrings("link.txt", hunks.items[0].file_path);
-    try std.testing.expect(hunks.items[0].is_symlink);
-    try std.testing.expect(!hunks.items[0].is_binary);
+    try std.testing.expect(hunks.items[0].section.is_symlink);
+    try std.testing.expect(!hunks.items[0].section.is_binary);
 }
 
 test "parseDiff submodule skipped" {
@@ -1143,8 +1081,8 @@ test "parseDiff rename with content" {
 
     try std.testing.expectEqual(@as(usize, 1), hunks.items.len);
     try std.testing.expectEqualStrings("new.txt", hunks.items[0].file_path);
-    try std.testing.expect(std.mem.indexOf(u8, hunks.items[0].patch_header, "rename from") != null);
-    try std.testing.expect(std.mem.indexOf(u8, hunks.items[0].patch_header, "rename to") != null);
+    try std.testing.expectEqualStrings("old.txt", hunks.items[0].section.rename_from.?);
+    try std.testing.expectEqualStrings("new.txt", hunks.items[0].section.rename_to.?);
 }
 
 test "parseDiff c-quoted path" {
@@ -1256,12 +1194,12 @@ test "parseDiff empty new file" {
 
     try std.testing.expectEqual(@as(usize, 1), hunks.items.len);
     try std.testing.expectEqualStrings("empty.txt", hunks.items[0].file_path);
-    try std.testing.expect(hunks.items[0].is_new_file);
+    try std.testing.expect(hunks.items[0].section.is_new_file);
     try std.testing.expectEqualStrings("", hunks.items[0].raw_lines);
     try std.testing.expectEqualStrings("", hunks.items[0].diff_lines);
-    try std.testing.expect(std.mem.indexOf(u8, hunks.items[0].patch_header, "new file mode 100644") != null);
-    try std.testing.expect(std.mem.indexOf(u8, hunks.items[0].patch_header, "--- /dev/null") != null);
-    try std.testing.expect(std.mem.indexOf(u8, hunks.items[0].patch_header, "+++ b/empty.txt") != null);
+    try std.testing.expectEqualStrings("100644", hunks.items[0].section.file_mode);
+    try std.testing.expect(hunks.items[0].section.minus_line == null);
+    try std.testing.expect(hunks.items[0].section.plus_line == null);
 }
 
 test "parseDiff empty deleted file" {
@@ -1283,10 +1221,9 @@ test "parseDiff empty deleted file" {
 
     try std.testing.expectEqual(@as(usize, 1), hunks.items.len);
     try std.testing.expectEqualStrings("empty.txt", hunks.items[0].file_path);
-    try std.testing.expect(hunks.items[0].is_deleted_file);
-    try std.testing.expect(std.mem.indexOf(u8, hunks.items[0].patch_header, "deleted file mode 100644") != null);
-    try std.testing.expect(std.mem.indexOf(u8, hunks.items[0].patch_header, "--- a/empty.txt") != null);
-    try std.testing.expect(std.mem.indexOf(u8, hunks.items[0].patch_header, "+++ /dev/null") != null);
+    try std.testing.expect(hunks.items[0].section.is_deleted_file);
+    try std.testing.expectEqualStrings("100644", hunks.items[0].section.file_mode);
+    try std.testing.expect(hunks.items[0].section.minus_line == null);
 }
 
 test "parseDiff empty file among non-empty files" {
@@ -1326,7 +1263,7 @@ test "parseDiff empty file among non-empty files" {
     try std.testing.expectEqual(@as(usize, 3), hunks.items.len);
     try std.testing.expectEqualStrings("a.txt", hunks.items[0].file_path);
     try std.testing.expectEqualStrings("empty.txt", hunks.items[1].file_path);
-    try std.testing.expect(hunks.items[1].is_new_file);
+    try std.testing.expect(hunks.items[1].section.is_new_file);
     try std.testing.expectEqualStrings("b.txt", hunks.items[2].file_path);
 }
 

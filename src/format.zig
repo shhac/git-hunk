@@ -10,9 +10,9 @@ const defaultIo = types.getIo;
 const getEnv = types.getEnv;
 
 /// Write the file path with a trailing '@' suffix for symlinks (like ls -F).
-pub fn writeFilePath(stdout: *std.Io.Writer, h: anytype) !void {
-    try stdout.writeAll(h.file_path);
-    if (h.is_symlink) try stdout.writeByte('@');
+pub fn writeFilePath(stdout: *std.Io.Writer, file_path: []const u8, is_symlink: bool) !void {
+    try stdout.writeAll(file_path);
+    if (is_symlink) try stdout.writeByte('@');
 }
 
 /// Returns true if colored output should be used: human mode, no --no-color flag,
@@ -88,8 +88,8 @@ pub fn printHunkHuman(stdout: *std.Io.Writer, h: Hunk, mode: DiffMode, col_width
     const sha = paint(use_color, COLOR_YELLOW);
     try stdout.print("{s}{s}{s}  ", .{ sha.on, short_sha, sha.off });
 
-    try writeFilePath(stdout, h);
-    const path_len = h.file_path.len + @as(usize, if (h.is_symlink) 1 else 0);
+    try writeFilePath(stdout, h.file_path, h.section.is_symlink);
+    const path_len = h.file_path.len + @as(usize, if (h.section.is_symlink) 1 else 0);
     try stdout.splatByteAll(' ', col_width + 2 -| path_len);
 
     try stdout.print("{s:<8}  ", .{range});
@@ -111,7 +111,7 @@ pub fn printHunkPorcelain(stdout: *std.Io.Writer, h: Hunk, mode: DiffMode) !void
     const end_line = stableEndLine(h, mode);
 
     try stdout.print("{s}\t", .{short_sha});
-    try writeFilePath(stdout, h);
+    try writeFilePath(stdout, h.file_path, h.section.is_symlink);
     try stdout.print("\t{d}\t{d}\t{s}\n", .{
         start_line,
         end_line,
@@ -131,7 +131,7 @@ fn printRawLines(stdout: *std.Io.Writer, raw_lines: []const u8, indent: []const 
 }
 
 pub fn printDiffHuman(stdout: *std.Io.Writer, h: Hunk, use_color: bool) !void {
-    if (h.is_binary) {
+    if (h.section.is_binary) {
         try stdout.writeAll("    Binary file changed\n\n");
         return;
     }
@@ -209,7 +209,7 @@ fn printNumberedBodyLine(stdout: *std.Io.Writer, line: types.BodyLine, number: u
 }
 
 pub fn printDiffPorcelain(stdout: *std.Io.Writer, h: Hunk) !void {
-    if (h.is_binary) {
+    if (h.section.is_binary) {
         try stdout.writeAll("Binary file changed\n\n");
         return;
     }
@@ -285,14 +285,14 @@ pub fn printMatchedHunkLine(stdout: *std.Io.Writer, verb: []const u8, porcelain_
             try stdout.print("{s} {s}", .{ verb, sha.on });
             try writeShaSpec(stdout, m.hunk.sha_hex[0..7], m.line_spec);
             try stdout.print("{s}  ", .{sha.off});
-            try writeFilePath(stdout, m.hunk);
+            try writeFilePath(stdout, m.hunk.file_path, m.hunk.section.is_symlink);
             try stdout.writeByte('\n');
         },
         .porcelain => {
             try stdout.print("{s}\t", .{porcelain_verb});
             try writeShaSpec(stdout, m.hunk.sha_hex[0..7], m.line_spec);
             try stdout.writeByte('\t');
-            try writeFilePath(stdout, m.hunk);
+            try writeFilePath(stdout, m.hunk.file_path, m.hunk.section.is_symlink);
             try stdout.writeByte('\n');
         },
     }
@@ -313,11 +313,12 @@ fn stableEndLine(h: Hunk, mode: DiffMode) u32 {
 }
 
 fn hunkSummaryWithFallback(buf: []u8, h: Hunk) []const u8 {
-    if (h.is_binary and h.is_new_file) return "new binary file";
-    if (h.is_binary and h.is_deleted_file) return "binary deleted";
-    if (h.is_binary) return "binary";
-    if (h.is_new_file) return "new file";
-    if (h.is_deleted_file) return "deleted";
+    const section = h.section;
+    if (section.is_binary and section.is_new_file) return "new binary file";
+    if (section.is_binary and section.is_deleted_file) return "binary deleted";
+    if (section.is_binary) return "binary";
+    if (section.is_new_file) return "new file";
+    if (section.is_deleted_file) return "deleted";
     // Prefer first changed line — answers "what changed?" for quick scanning
     const changed = firstChangedLine(buf, h.diff_lines);
     if (changed.len > 0) return changed;
@@ -346,7 +347,7 @@ fn firstChangedLine(buf: []u8, diff_lines: []const u8) []const u8 {
 }
 
 fn formatLineRange(buf: []u8, h: Hunk, mode: DiffMode) []const u8 {
-    if (h.is_binary) return "(binary)";
+    if (h.section.is_binary) return "(binary)";
     const start = stableStartLine(h, mode);
     const end = stableEndLine(h, mode);
     if (start == 0 and end == 0) return "empty";
@@ -412,7 +413,8 @@ test "printDiffHuman binary file emits placeholder" {
     var buf: [256]u8 = undefined;
     var w = std.Io.Writer.fixed(&buf);
     var h = testMakeHunk("img.png", 1, 1, 1, 1);
-    h.is_binary = true;
+    const section: types.FileSection = .{ .is_binary = true };
+    h.section = &section;
     try printDiffHuman(&w, h, false);
     try std.testing.expectEqualStrings("    Binary file changed\n\n", w.buffered());
 }
@@ -472,7 +474,8 @@ test "printMatchedHunkLine adds @ suffix for symlinks" {
     var h = testMakeHunk("link", 1, 1, 1, 1);
     @memcpy(h.sha_hex[0..7], "abcdef0");
     @memset(h.sha_hex[7..], '0');
-    h.is_symlink = true;
+    const section: types.FileSection = .{ .is_symlink = true };
+    h.section = &section;
     const m = MatchedHunk{ .hunk = &h, .line_spec = null };
     try printMatchedHunkLine(&w, "staged", "staged", m, false, .human);
     try std.testing.expect(std.mem.endsWith(u8, w.buffered(), "link@\n"));
@@ -661,14 +664,16 @@ test "hunkSummaryWithFallback falls back to context" {
 test "hunkSummaryWithFallback new file" {
     var buf: [64]u8 = undefined;
     var h = testMakeHunk("f.txt", 1, 1, 1, 1);
-    h.is_new_file = true;
+    const section: types.FileSection = .{ .is_new_file = true };
+    h.section = &section;
     try std.testing.expectEqualStrings("new file", hunkSummaryWithFallback(&buf, h));
 }
 
 test "hunkSummaryWithFallback deleted" {
     var buf: [64]u8 = undefined;
     var h = testMakeHunk("f.txt", 1, 1, 1, 1);
-    h.is_deleted_file = true;
+    const section: types.FileSection = .{ .is_deleted_file = true };
+    h.section = &section;
     try std.testing.expectEqualStrings("deleted", hunkSummaryWithFallback(&buf, h));
 }
 

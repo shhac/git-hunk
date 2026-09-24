@@ -64,17 +64,40 @@ pub const Hunk = struct {
     diff_lines: []const u8,
     /// SHA1 hex digest (full 40 chars). Display truncates to 7.
     sha_hex: [40]u8,
-    is_new_file: bool,
-    is_deleted_file: bool,
-    is_untracked: bool,
-    is_symlink: bool,
-    is_binary: bool,
-    /// Patch header for applying: ---/+++ lines (and diff --git + mode for new/deleted).
-    patch_header: []const u8,
+    /// The file section this hunk was parsed from, shared with its siblings.
+    section: *const FileSection,
 
     pub fn bodyLines(self: *const Hunk) BodyLineIterator {
         return .init(self.raw_lines);
     }
+};
+
+/// What a diff says about one file as a whole, shared by every hunk parsed
+/// from its section. Patch headers are rendered from it when a patch is built,
+/// so they can describe the patch actually applied rather than the diff read.
+pub const FileSection = struct {
+    /// Verbatim `diff --git` line.
+    diff_git_line: []const u8 = "diff --git a/f b/f",
+    /// The old side is absent: the section creates the file.
+    is_new_file: bool = false,
+    /// The new side is absent: the section deletes the file.
+    is_deleted_file: bool = false,
+    /// Mode from the `new file mode`/`deleted file mode` line.
+    file_mode: []const u8 = "100644",
+    /// Verbatim values of the `rename from`/`rename to` lines.
+    rename_from: ?[]const u8 = null,
+    rename_to: ?[]const u8 = null,
+    /// Verbatim `index` line, kept rather than re-rendered: `git apply --3way`
+    /// needs its blob ids, and they come abbreviated to varying widths.
+    index_line: ?[]const u8 = null,
+    /// Verbatim `---`/`+++` lines; null where git printed none (a binary or
+    /// empty file).
+    minus_line: ?[]const u8 = null,
+    plus_line: ?[]const u8 = null,
+    is_binary: bool = false,
+    is_symlink: bool = false,
+    /// From `git diff --no-index` against an untracked file.
+    is_untracked: bool = false,
 };
 
 /// One line of a hunk body, numbered the way line specs address it.
@@ -311,14 +334,11 @@ pub fn testMakeHunk(file_path: []const u8, old_start: u32, old_count: u32, new_s
         .raw_lines = "",
         .diff_lines = "+line",
         .sha_hex = [_]u8{0} ** 40,
-        .is_new_file = false,
-        .is_deleted_file = false,
-        .is_untracked = false,
-        .is_symlink = false,
-        .is_binary = false,
-        .patch_header = "",
+        .section = &test_section,
     };
 }
+
+const test_section: FileSection = .{};
 
 // ============================================================================
 // Tests

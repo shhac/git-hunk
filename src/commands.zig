@@ -48,7 +48,8 @@ const Loaded = struct {
 
 /// Diff and parse the hunks a command works on: tracked changes for `mode`
 /// and `common.ref`, plus untracked files (unstaged mode only), each narrowed
-/// by `common.diff_filter`. Hunks from untracked files have `is_untracked = true`.
+/// by `common.diff_filter`. Hunks from untracked files have sections marked
+/// `is_untracked`.
 fn loadHunks(arena: Allocator, mode: DiffMode, common: types.Common) !Loaded {
     var hunks: std.ArrayList(Hunk) = .empty;
 
@@ -66,11 +67,7 @@ fn loadHunks(arena: Allocator, mode: DiffMode, common: types.Common) !Loaded {
     if (mode == .unstaged and common.ref == null and common.diff_filter != .tracked_only) {
         const untracked_diff = try git.diffUntrackedFiles(arena, common.file_filter.items);
         if (untracked_diff.len > 0) {
-            const before_count = hunks.items.len;
-            try diff_mod.parseDiff(arena, untracked_diff, .unstaged, &hunks);
-            for (hunks.items[before_count..]) |*h| {
-                h.is_untracked = true;
-            }
+            try diff_mod.parseUntrackedDiff(arena, untracked_diff, &hunks);
         }
     }
 
@@ -119,7 +116,7 @@ pub fn cmdList(allocator: Allocator, stdout: *std.Io.Writer, opts: ListOptions) 
     if (opts.common.output == .human) {
         for (hunks) |h| {
             if (!types.matchesFileFilter(h.file_path, opts.common.file_filter.items)) continue;
-            max_path_len = @max(max_path_len, h.file_path.len + @as(usize, if (h.is_symlink) 1 else 0));
+            max_path_len = @max(max_path_len, h.file_path.len + @as(usize, if (h.section.is_symlink) 1 else 0));
         }
     }
     const col_width = format.listColumnWidth(max_path_len, term_width);
@@ -228,7 +225,7 @@ fn resolveMatchedHunks(
     for (sha_args) |sha_arg| {
         const hunk = patch_mod.findHunkByShaPrefix(hunks, sha_arg.prefix, file_filter) catch |err|
             exitUnresolvedPrefix(err, hunks, sha_arg.prefix, file_filter);
-        if (hunk.is_binary and sha_arg.line_spec != null) {
+        if (hunk.section.is_binary and sha_arg.line_spec != null) {
             std.debug.print("error: line selection not supported for binary file '{s}'\n", .{hunk.file_path});
             std.process.exit(1);
         }
@@ -582,7 +579,7 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
 /// permanently, so that takes --force.
 fn rejectUntrackedWithoutForce(matched: []const MatchedHunk) void {
     for (matched) |m| {
-        if (!m.hunk.is_untracked) continue;
+        if (!m.hunk.section.is_untracked) continue;
         std.debug.print("error: {s} ({s}) is an untracked file -- use --force to delete\n", .{ m.hunk.sha_hex[0..7], m.hunk.file_path });
         std.process.exit(1);
     }
@@ -644,8 +641,10 @@ pub fn cmdDiff(allocator: Allocator, stdout: *std.Io.Writer, opts: DiffOptions) 
         for (matched) |m| {
             switch (opts.common.output) {
                 .human => {
-                    try stdout.writeAll(m.hunk.patch_header);
-                    if (m.hunk.is_binary) {
+                    // The header as the diff has it: the body below is
+                    // unfiltered too, with any selection only marked.
+                    try stdout.writeAll(try patch_mod.renderSectionHeader(arena, m.hunk.section, m.hunk.file_path));
+                    if (m.hunk.section.is_binary) {
                         try stdout.writeAll("Binary file changed\n\n");
                     } else if (m.hunk.raw_lines.len == 0) {
                         if (m.line_spec != null) {

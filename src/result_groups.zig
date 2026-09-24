@@ -133,7 +133,7 @@ fn assignAppliedAndConsumed(
             .applied = applied,
             .consumed = con_paths,
             .file_path = c.file_path,
-            .is_symlink = c.is_symlink,
+            .is_symlink = c.section.is_symlink,
         });
     }
     return groups.items;
@@ -155,7 +155,7 @@ fn appendOrphanedApplied(
             .applied = app,
             .consumed = &.{},
             .file_path = m.hunk.file_path,
-            .is_symlink = m.hunk.is_symlink,
+            .is_symlink = m.hunk.section.is_symlink,
         });
     }
 }
@@ -266,7 +266,7 @@ pub fn printResultGroupHuman(stdout: *std.Io.Writer, verb: []const u8, rg: Resul
 
     // File path (two spaces before file)
     try stdout.writeAll("  ");
-    try format.writeFilePath(stdout, rg);
+    try format.writeFilePath(stdout, rg.file_path, rg.is_symlink);
     try stdout.writeByte('\n');
 }
 
@@ -291,7 +291,7 @@ pub fn printResultGroupPorcelain(stdout: *std.Io.Writer, verb: []const u8, rg: R
 
     // file
     try stdout.writeByte('\t');
-    try format.writeFilePath(stdout, rg);
+    try format.writeFilePath(stdout, rg.file_path, rg.is_symlink);
 
     // consumed: comma-separated (optional field, only if non-empty)
     if (rg.consumed.len > 0) {

@@ -3,6 +3,7 @@ const types = @import("types.zig");
 
 const Allocator = std.mem.Allocator;
 const Hunk = types.Hunk;
+const FileSection = types.FileSection;
 const MatchedHunk = types.MatchedHunk;
 const LineSpec = types.LineSpec;
 const LineRange = types.LineRange;
@@ -26,7 +27,8 @@ fn matchedHunkPatchOrder(_: void, a: MatchedHunk, b: MatchedHunk) bool {
     const path_order = std.mem.order(u8, a.hunk.file_path, b.hunk.file_path);
     if (path_order != .eq) return path_order == .lt;
     // Typechange: deleted file before new file (delete must apply first)
-    if (a.hunk.is_deleted_file != b.hunk.is_deleted_file) return a.hunk.is_deleted_file;
+    const a_deletes = a.hunk.section.is_deleted_file;
+    if (a_deletes != b.hunk.section.is_deleted_file) return a_deletes;
     return a.hunk.old_start < b.hunk.old_start;
 }
 
@@ -85,10 +87,11 @@ pub fn partitionByKind(arena: Allocator, matches: []const MatchedHunk) !HunkPart
     var untracked_text: std.ArrayList(MatchedHunk) = .empty;
     var untracked_binary: std.ArrayList(MatchedHunk) = .empty;
     for (matches) |m| {
-        const list = if (m.hunk.is_untracked)
-            (if (m.hunk.is_binary) &untracked_binary else &untracked_text)
+        const section = m.hunk.section;
+        const list = if (section.is_untracked)
+            (if (section.is_binary) &untracked_binary else &untracked_text)
         else
-            (if (m.hunk.is_binary) &tracked_binary else &tracked_text);
+            (if (section.is_binary) &tracked_binary else &tracked_text);
         try list.append(arena, m);
     }
 
@@ -127,25 +130,22 @@ fn buildCombinedPatches(arena: Allocator, matches: []const MatchedHunk, directio
     var patches: std.ArrayList([]const u8) = .empty;
     var patch: std.ArrayList(u8) = .empty;
 
-    // Track file paths in the current patch to detect typechange conflicts
-    // (same file appearing twice with different patch_header).
+    // Paths already in the current patch. A second section for one of them is
+    // the other half of a typechange, which git cannot apply in the same patch.
     var seen: std.StringArrayHashMapUnmanaged(void) = .empty;
 
-    var last_header: []const u8 = "";
+    var last_section: ?*const FileSection = null;
     for (matches) |m| {
-        // If this file already has a header in the current patch, start a new patch
-        if (seen.contains(m.hunk.file_path) and !std.mem.eql(u8, m.hunk.patch_header, last_header)) {
-            if (patch.items.len > 0) {
-                try patches.append(arena, patch.items);
-                patch = .empty;
-                seen.clearRetainingCapacity();
-                last_header = "";
-            }
+        const section = m.hunk.section;
+        if (section != last_section and seen.contains(m.hunk.file_path) and patch.items.len > 0) {
+            try patches.append(arena, patch.items);
+            patch = .empty;
+            seen.clearRetainingCapacity();
         }
 
-        if (!std.mem.eql(u8, m.hunk.patch_header, last_header)) {
-            try patch.appendSlice(arena, m.hunk.patch_header);
-            last_header = m.hunk.patch_header;
+        if (section != last_section) {
+            try appendSectionHeader(arena, &patch, section, m.hunk.file_path);
+            last_section = section;
         }
         try seen.put(arena, m.hunk.file_path, {});
 
@@ -166,6 +166,44 @@ fn buildCombinedPatches(arena: Allocator, matches: []const MatchedHunk, directio
     }
 
     return patches.items;
+}
+
+/// The header of a file section as `diff` shows it and `git apply` reads it.
+pub fn renderSectionHeader(arena: Allocator, section: *const FileSection, file_path: []const u8) ![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    try appendSectionHeader(arena, &out, section, file_path);
+    return out.items;
+}
+
+fn appendSectionHeader(arena: Allocator, out: *std.ArrayList(u8), section: *const FileSection, file_path: []const u8) !void {
+    try appendLine(arena, out, section.diff_git_line);
+    if (section.is_new_file) {
+        try out.print(arena, "new file mode {s}\n", .{section.file_mode});
+    } else if (section.is_deleted_file) {
+        try out.print(arena, "deleted file mode {s}\n", .{section.file_mode});
+    }
+    if (!section.is_binary) {
+        if (section.rename_from) |from| try out.print(arena, "rename from {s}\n", .{from});
+        if (section.rename_to) |to| try out.print(arena, "rename to {s}\n", .{to});
+    }
+    if (section.index_line) |line| try appendLine(arena, out, line);
+    if (section.is_binary) return;
+
+    const minus_line = section.minus_line orelse {
+        if (section.is_deleted_file) {
+            try out.print(arena, "--- a/{s}\n+++ /dev/null\n", .{file_path});
+        } else {
+            try out.print(arena, "--- /dev/null\n+++ b/{s}\n", .{file_path});
+        }
+        return;
+    };
+    try appendLine(arena, out, minus_line);
+    try appendLine(arena, out, section.plus_line.?);
+}
+
+fn appendLine(arena: Allocator, out: *std.ArrayList(u8), line: []const u8) !void {
+    try out.appendSlice(arena, line);
+    try out.append(arena, '\n');
 }
 
 /// What becomes of one body line when a line spec filters its hunk.
@@ -476,20 +514,38 @@ test "lineFate keeps selected lines and mirrors deselected ones by direction" {
     try std.testing.expectEqual(LineFate.keep, lineFate(.context, false, .reverse));
 }
 
+const typechange_delete: FileSection = .{
+    .diff_git_line = "diff --git a/b.txt b/b.txt",
+    .is_deleted_file = true,
+    .minus_line = "--- a/b.txt",
+    .plus_line = "+++ /dev/null",
+};
+const typechange_create: FileSection = .{
+    .diff_git_line = "diff --git a/b.txt b/b.txt",
+    .is_new_file = true,
+    .file_mode = "120000",
+    .is_symlink = true,
+    .minus_line = "--- /dev/null",
+    .plus_line = "+++ b/b.txt",
+};
+
+fn testModifiedSection(comptime path: []const u8) FileSection {
+    return .{
+        .diff_git_line = "diff --git a/" ++ path ++ " b/" ++ path,
+        .minus_line = "--- a/" ++ path,
+        .plus_line = "+++ b/" ++ path,
+    };
+}
+
 test "buildCombinedPatches typechange splits into two patches" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    const del_header = "diff --git a/b.txt b/b.txt\ndeleted file mode 100644\n--- a/b.txt\n+++ /dev/null\n";
-    const new_header = "diff --git a/b.txt b/b.txt\nnew file mode 120000\n--- /dev/null\n+++ b/b.txt\n";
     var h1 = testMakeHunk("b.txt", 1, 1, 0, 0);
-    h1.patch_header = del_header;
+    h1.section = &typechange_delete;
     h1.raw_lines = "@@ -1 +0,0 @@\n-world\n";
-    h1.is_deleted_file = true;
     var h2 = testMakeHunk("b.txt", 0, 0, 1, 1);
-    h2.patch_header = new_header;
+    h2.section = &typechange_create;
     h2.raw_lines = "@@ -0,0 +1 @@\n+a.txt\n";
-    h2.is_new_file = true;
-    h2.is_symlink = true;
     // Sorted: deleted before new (matching matchedHunkPatchOrder)
     const matches = [_]MatchedHunk{
         .{ .hunk = &h1, .line_spec = null },
@@ -497,20 +553,26 @@ test "buildCombinedPatches typechange splits into two patches" {
     };
     const patches = try buildCombinedPatches(arena.allocator(), &matches, .forward);
     try std.testing.expectEqual(@as(usize, 2), patches.len);
-    // First patch: deletion
-    try std.testing.expect(std.mem.startsWith(u8, patches[0], "diff --git a/b.txt b/b.txt\ndeleted file mode"));
-    // Second patch: creation
-    try std.testing.expect(std.mem.startsWith(u8, patches[1], "diff --git a/b.txt b/b.txt\nnew file mode 120000"));
+    try std.testing.expectEqualStrings(
+        "diff --git a/b.txt b/b.txt\ndeleted file mode 100644\n--- a/b.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-world\n",
+        patches[0],
+    );
+    try std.testing.expectEqualStrings(
+        "diff --git a/b.txt b/b.txt\nnew file mode 120000\n--- /dev/null\n+++ b/b.txt\n@@ -0,0 +1 @@\n+a.txt\n",
+        patches[1],
+    );
 }
 
 test "buildCombinedPatches normal case returns single patch" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
+    const a_section = testModifiedSection("a.txt");
+    const b_section = testModifiedSection("b.txt");
     var h1 = testMakeHunk("a.txt", 1, 1, 1, 1);
-    h1.patch_header = "--- a/a.txt\n+++ b/a.txt\n";
+    h1.section = &a_section;
     h1.raw_lines = "@@ -1 +1 @@\n-a\n+A\n";
     var h2 = testMakeHunk("b.txt", 1, 1, 1, 1);
-    h2.patch_header = "--- a/b.txt\n+++ b/b.txt\n";
+    h2.section = &b_section;
     h2.raw_lines = "@@ -1 +1 @@\n-b\n+B\n";
     const matches = [_]MatchedHunk{
         .{ .hunk = &h1, .line_spec = null },
@@ -520,23 +582,43 @@ test "buildCombinedPatches normal case returns single patch" {
     try std.testing.expectEqual(@as(usize, 1), patches.len);
 }
 
+test "buildCombinedPatches writes one header for hunks of one section" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const section = testModifiedSection("a.txt");
+    var h1 = testMakeHunk("a.txt", 1, 1, 1, 1);
+    h1.section = &section;
+    h1.raw_lines = "@@ -1 +1 @@\n-a\n+A\n";
+    var h2 = testMakeHunk("a.txt", 9, 1, 9, 1);
+    h2.section = &section;
+    h2.raw_lines = "@@ -9 +9 @@\n-i\n+I\n";
+    const matches = [_]MatchedHunk{
+        .{ .hunk = &h1, .line_spec = null },
+        .{ .hunk = &h2, .line_spec = null },
+    };
+    const patches = try buildCombinedPatches(arena.allocator(), &matches, .forward);
+    try std.testing.expectEqual(@as(usize, 1), patches.len);
+    try std.testing.expectEqualStrings(
+        "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-a\n+A\n@@ -9 +9 @@\n-i\n+I\n",
+        patches[0],
+    );
+}
+
 test "buildCombinedPatches typechange with other files" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     // a.txt: normal change
+    const a_section = testModifiedSection("a.txt");
     var h_a = testMakeHunk("a.txt", 1, 1, 1, 1);
-    h_a.patch_header = "--- a/a.txt\n+++ b/a.txt\n";
+    h_a.section = &a_section;
     h_a.raw_lines = "@@ -1 +1 @@\n-a\n+A\n";
     // b.txt: typechange (delete + create)
     var h_del = testMakeHunk("b.txt", 1, 1, 0, 0);
-    h_del.patch_header = "diff --git a/b.txt b/b.txt\ndeleted file mode 100644\n--- a/b.txt\n+++ /dev/null\n";
+    h_del.section = &typechange_delete;
     h_del.raw_lines = "@@ -1 +0,0 @@\n-world\n";
-    h_del.is_deleted_file = true;
     var h_new = testMakeHunk("b.txt", 0, 0, 1, 1);
-    h_new.patch_header = "diff --git a/b.txt b/b.txt\nnew file mode 120000\n--- /dev/null\n+++ b/b.txt\n";
+    h_new.section = &typechange_create;
     h_new.raw_lines = "@@ -0,0 +1 @@\n+a.txt\n";
-    h_new.is_new_file = true;
-    h_new.is_symlink = true;
     // Order: a.txt, b.txt(del), b.txt(new) — matching sort order
     const matches = [_]MatchedHunk{
         .{ .hunk = &h_a, .line_spec = null },
@@ -556,13 +638,11 @@ test "sortAndBuildPatches reverse undoes a typechange's creation first" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     var h_del = testMakeHunk("b.txt", 1, 1, 0, 0);
-    h_del.patch_header = "diff --git a/b.txt b/b.txt\ndeleted file mode 100644\n--- a/b.txt\n+++ /dev/null\n";
+    h_del.section = &typechange_delete;
     h_del.raw_lines = "@@ -1 +0,0 @@\n-world\n";
-    h_del.is_deleted_file = true;
     var h_new = testMakeHunk("b.txt", 0, 0, 1, 1);
-    h_new.patch_header = "diff --git a/b.txt b/b.txt\nnew file mode 120000\n--- /dev/null\n+++ b/b.txt\n";
+    h_new.section = &typechange_create;
     h_new.raw_lines = "@@ -0,0 +1 @@\n+a.txt\n";
-    h_new.is_new_file = true;
     // Arrival order is irrelevant: the builder sorts before building.
     var forward_in = [_]MatchedHunk{
         .{ .hunk = &h_new, .line_spec = null },
@@ -583,15 +663,67 @@ test "sortAndBuildPatches reverse undoes a typechange's creation first" {
 
 test "matchedHunkPatchOrder typechange sorts deleted before new" {
     var h_del = testMakeHunk("b.txt", 1, 1, 0, 0);
-    h_del.is_deleted_file = true;
+    h_del.section = &typechange_delete;
     var h_new = testMakeHunk("b.txt", 0, 0, 1, 1);
-    h_new.is_new_file = true;
+    h_new.section = &typechange_create;
     const m_del = MatchedHunk{ .hunk = &h_del, .line_spec = null };
     const m_new = MatchedHunk{ .hunk = &h_new, .line_spec = null };
     // Deleted should sort before new for same file
     try std.testing.expect(matchedHunkPatchOrder({}, m_del, m_new));
     try std.testing.expect(!matchedHunkPatchOrder({}, m_new, m_del));
 }
+
+test "renderSectionHeader reproduces each kind of section" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const Row = struct { section: FileSection, want: []const u8 };
+    const rows = [_]Row{
+        .{
+            .section = .{
+                .diff_git_line = "diff --git a/old.txt b/new.txt",
+                .rename_from = "old.txt",
+                .rename_to = "new.txt",
+                .index_line = "index 1234567..89abcde 100644",
+                .minus_line = "--- a/old.txt",
+                .plus_line = "+++ b/new.txt",
+            },
+            .want = "diff --git a/old.txt b/new.txt\nrename from old.txt\nrename to new.txt\n" ++
+                "index 1234567..89abcde 100644\n--- a/old.txt\n+++ b/new.txt\n",
+        },
+        .{
+            .section = .{
+                .diff_git_line = "diff --git a/img.png b/img.png",
+                .is_new_file = true,
+                .index_line = "index 0000000..89abcde",
+                .is_binary = true,
+            },
+            .want = "diff --git a/img.png b/img.png\nnew file mode 100644\nindex 0000000..89abcde\n",
+        },
+        .{
+            .section = .{
+                .diff_git_line = "diff --git a/f.txt b/f.txt",
+                .is_new_file = true,
+                .index_line = "index 0000000..e69de29",
+            },
+            .want = "diff --git a/f.txt b/f.txt\nnew file mode 100644\nindex 0000000..e69de29\n--- /dev/null\n+++ b/f.txt\n",
+        },
+        .{
+            .section = .{
+                .diff_git_line = "diff --git a/f.txt b/f.txt",
+                .is_deleted_file = true,
+                .index_line = "index e69de29..0000000",
+            },
+            .want = "diff --git a/f.txt b/f.txt\ndeleted file mode 100644\nindex e69de29..0000000\n--- a/f.txt\n+++ /dev/null\n",
+        },
+    };
+    for (rows) |row| {
+        try std.testing.expectEqualStrings(row.want, try renderSectionHeader(arena.allocator(), &row.section, "f.txt"));
+    }
+}
+
+const binary_section: FileSection = .{ .is_binary = true };
+const untracked_text_section: FileSection = .{ .is_untracked = true };
+const untracked_binary_section: FileSection = .{ .is_binary = true, .is_untracked = true };
 
 test "partitionByKind empty input" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -610,12 +742,11 @@ test "partitionByKind sorts into 4 buckets" {
     defer arena.deinit();
     var ht = testMakeHunk("a.txt", 1, 1, 1, 1);
     var hb = testMakeHunk("b.png", 1, 1, 1, 1);
-    hb.is_binary = true;
+    hb.section = &binary_section;
     var hut = testMakeHunk("u.txt", 1, 1, 1, 1);
-    hut.is_untracked = true;
+    hut.section = &untracked_text_section;
     var hub = testMakeHunk("u.png", 1, 1, 1, 1);
-    hub.is_binary = true;
-    hub.is_untracked = true;
+    hub.section = &untracked_binary_section;
     const matches = [_]MatchedHunk{
         .{ .hunk = &ht, .line_spec = null },
         .{ .hunk = &hb, .line_spec = null },
@@ -637,9 +768,9 @@ test "partitionByKind dedups paths with multiple hunks per file" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     var h1 = testMakeHunk("img.png", 1, 1, 1, 1);
-    h1.is_binary = true;
+    h1.section = &binary_section;
     var h2 = testMakeHunk("img.png", 5, 1, 5, 1);
-    h2.is_binary = true;
+    h2.section = &binary_section;
     const matches = [_]MatchedHunk{
         .{ .hunk = &h1, .line_spec = null },
         .{ .hunk = &h2, .line_spec = null },
@@ -656,10 +787,9 @@ test "partitionByKind allBinaryPaths combines tracked + untracked" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     var ht = testMakeHunk("a.png", 1, 1, 1, 1);
-    ht.is_binary = true;
+    ht.section = &binary_section;
     var hu = testMakeHunk("b.png", 1, 1, 1, 1);
-    hu.is_binary = true;
-    hu.is_untracked = true;
+    hu.section = &untracked_binary_section;
     const matches = [_]MatchedHunk{
         .{ .hunk = &ht, .line_spec = null },
         .{ .hunk = &hu, .line_spec = null },
