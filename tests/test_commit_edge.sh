@@ -371,7 +371,10 @@ pass "test 1109: injected resync failure keeps commit, warns, exit 0"
 # Test 1110: hard crash (kill -9) mid-`git commit` leaves the user's index
 # untouched -- no backup, no partial commit, no recovery needed on rerun.
 # (The pre-temp-index design left the index reset to HEAD with staged work
-# recoverable only from .git/index.hunk-backup.)
+# recoverable only from .git/index.hunk-backup.) The documented worst case is
+# one orphaned temp index; TMPDIR points at a directory of the test's own so
+# that is asserted exactly and cleaned up, not left in the caller's TMPDIR.
+# Test 1904 covers the clean path removing its temp index.
 # ============================================================================
 new_repo
 printf 'crash staged\n' > beta.txt
@@ -382,6 +385,7 @@ SHA1110="$(first_sha --oneline --file alpha.txt)"
 COMMITS1110="$(git rev-list --count HEAD)"
 
 KILLSHIM="$(mktemp -d)"
+TMP1110="$(mktemp -d)"
 REALGIT="$GIT_BIN"
 cat > "$KILLSHIM/git" << KILLEOF
 #!/bin/sh
@@ -391,7 +395,7 @@ KILLEOF
 chmod +x "$KILLSHIM/git"
 
 EC1110=0
-PATH="$KILLSHIM:$PATH" "$GIT_HUNK" commit "$SHA1110" -m "crash" >/dev/null 2>&1 || EC1110=$?
+TMPDIR="$TMP1110" PATH="$KILLSHIM:$PATH" "$GIT_HUNK" commit "$SHA1110" -m "crash" >/dev/null 2>&1 || EC1110=$?
 [[ "$EC1110" -ne 0 ]] \
     || fail "test 1110: expected nonzero exit after kill -9"
 [[ "$(git diff --cached)" == "$STAGED1110" ]] \
@@ -400,14 +404,20 @@ PATH="$KILLSHIM:$PATH" "$GIT_HUNK" commit "$SHA1110" -m "crash" >/dev/null 2>&1 
     || fail "test 1110: crash left an index backup behind"
 [[ "$(git rev-list --count HEAD)" -eq "$COMMITS1110" ]] \
     || fail "test 1110: crash produced a commit"
-# Rerun must succeed with no stale-backup recovery warning.
-ERR1110="$("$GIT_HUNK" commit "$SHA1110" -m "after crash" 2>&1 >/dev/null)" \
+LEFT1110="$(ls -A "$TMP1110")"
+[[ "$LEFT1110" == git-hunk-commit-idx.* && "$(echo "$LEFT1110" | wc -l)" -eq 1 ]] \
+    || fail "test 1110: crash should orphan exactly one temp index, got: '$LEFT1110'"
+# Rerun must succeed with no stale-backup recovery warning, and the orphan
+# must not get in its way: each run names its temp index afresh.
+ERR1110="$(TMPDIR="$TMP1110" "$GIT_HUNK" commit "$SHA1110" -m "after crash" 2>&1 >/dev/null)" \
     || fail "test 1110: rerun after crash failed"
+[[ "$(ls -A "$TMP1110")" == "$LEFT1110" ]] \
+    || fail "test 1110: rerun left its own temp index behind: '$(ls -A "$TMP1110")'"
 echo "$ERR1110" | grep -q "stale index backup" \
     && fail "test 1110: rerun printed a recovery warning"
 [[ "$(git rev-list --count HEAD)" -eq "$((COMMITS1110 + 1))" ]] \
     || fail "test 1110: rerun did not commit"
-rm -rf "$KILLSHIM"
+rm -rf "$KILLSHIM" "$TMP1110"
 pass "test 1110: kill -9 mid-commit leaves index untouched, rerun clean"
 
 # ============================================================================
