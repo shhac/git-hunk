@@ -150,6 +150,16 @@ fn synthesizeWholeFileHunk(file_path: []const u8, section: *const FileSection, s
     };
 }
 
+/// A binary change has no lines to hash, so its blob ids stand in for them:
+/// without them every change to one binary path would share a hash, and a
+/// hash taken before the file changed again would still match.
+fn binaryShaPayload(arena: Allocator, index_line: ?[]const u8) ![]const u8 {
+    const line = index_line orelse return "binary";
+    const ids = line["index ".len..];
+    const end = std.mem.indexOfScalar(u8, ids, ' ') orelse ids.len;
+    return std.mem.concat(arena, u8, &.{ "binary ", ids[0..end] });
+}
+
 const HunkBody = struct {
     diff_lines: []const u8,
     raw_lines: []const u8,
@@ -326,7 +336,7 @@ fn parseFileSection(
     if (state.is_binary) {
         const file_path = (try sectionFilePath(arena, header.diff_git_line, state)) orelse return null;
         const section = try newSection(arena, header, null, null, is_untracked);
-        try hunks.append(arena, synthesizeWholeFileHunk(file_path, section, "binary"));
+        try hunks.append(arena, synthesizeWholeFileHunk(file_path, section, try binaryShaPayload(arena, state.index_line)));
         return section;
     }
 
@@ -911,9 +921,19 @@ test "parseDiff binary file produces hunk" {
     try std.testing.expect(!hunks.items[0].section.is_deleted_file);
     try std.testing.expectEqualStrings("", hunks.items[0].raw_lines);
     try std.testing.expectEqualStrings("", hunks.items[0].diff_lines);
-    // Hash is deterministic: SHA1("img.png" || \0 || "0" || \0 || "binary")
-    const expected_sha = computeHunkSha("img.png", 0, "binary");
+    // The blob ids stand in for the lines a text hunk would hash.
+    const expected_sha = computeHunkSha("img.png", 0, "binary 1234567..abcdefg");
     try std.testing.expectEqualStrings(&expected_sha, &hunks.items[0].sha_hex);
+}
+
+test "parseDiff hashes two changes to one binary path differently" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var hunks: std.ArrayList(Hunk) = .empty;
+    try parseDiff(arena.allocator(), "diff --git a/b b/b\nindex 1111111..2222222 100644\nBinary files a/b and b/b differ\n", .unstaged, &hunks);
+    try parseDiff(arena.allocator(), "diff --git a/b b/b\nindex 1111111..3333333 100644\nBinary files a/b and b/b differ\n", .unstaged, &hunks);
+    try std.testing.expectEqual(@as(usize, 2), hunks.items.len);
+    try std.testing.expect(!std.mem.eql(u8, &hunks.items[0].sha_hex, &hunks.items[1].sha_hex));
 }
 
 test "parseDiff new binary file" {

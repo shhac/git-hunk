@@ -190,7 +190,7 @@ fn appendSectionPatch(arena: Allocator, patch: *std.ArrayList(u8), run: []const 
         .old = !section.is_new_file or old_lines > 0,
         .new = !section.is_deleted_file or new_lines > 0,
     };
-    try appendSectionHeader(arena, patch, section, run[0].hunk.file_path, sides);
+    try appendSectionHeader(arena, patch, section, sides);
     try patch.appendSlice(arena, body.items);
 }
 
@@ -202,16 +202,16 @@ fn sourceSides(section: *const FileSection) Sides {
 }
 
 /// The header of a file section as `diff` shows it, before any filtering.
-pub fn renderSectionHeader(arena: Allocator, section: *const FileSection, file_path: []const u8) ![]const u8 {
+pub fn renderSectionHeader(arena: Allocator, section: *const FileSection) ![]const u8 {
     var out: std.ArrayList(u8) = .empty;
-    try appendSectionHeader(arena, &out, section, file_path, sourceSides(section));
+    try appendSectionHeader(arena, &out, section, sourceSides(section));
     return out.items;
 }
 
 /// `diff --git`, rename and index lines are kept verbatim whatever the
 /// sides: filtering never changes the side `git apply` matches, so the index
 /// line's preimage id stays true, and `--3way` needs it.
-fn appendSectionHeader(arena: Allocator, out: *std.ArrayList(u8), section: *const FileSection, file_path: []const u8, sides: Sides) !void {
+fn appendSectionHeader(arena: Allocator, out: *std.ArrayList(u8), section: *const FileSection, sides: Sides) !void {
     try appendLine(arena, out, section.diff_git_line);
     if (!sides.old) {
         try out.print(arena, "new file mode {s}\n", .{section.file_mode});
@@ -225,14 +225,8 @@ fn appendSectionHeader(arena: Allocator, out: *std.ArrayList(u8), section: *cons
     if (section.index_line) |line| try appendLine(arena, out, line);
     if (section.is_binary) return;
 
-    const minus_line = section.minus_line orelse {
-        if (section.is_deleted_file) {
-            try out.print(arena, "--- a/{s}\n+++ /dev/null\n", .{file_path});
-        } else {
-            try out.print(arena, "--- /dev/null\n+++ b/{s}\n", .{file_path});
-        }
-        return;
-    };
+    // An empty file's section has no ---/+++ lines, and git applies it as is.
+    const minus_line = section.minus_line orelse return;
     const plus_line = section.plus_line.?;
     const source = sourceSides(section);
     try appendLine(arena, out, if (sides.old and !source.old) try otherSideLine(arena, plus_line) else minus_line);
@@ -791,7 +785,7 @@ test "renderSectionHeader reproduces each kind of section" {
                 .is_new_file = true,
                 .index_line = "index 0000000..e69de29",
             },
-            .want = "diff --git a/f.txt b/f.txt\nnew file mode 100644\nindex 0000000..e69de29\n--- /dev/null\n+++ b/f.txt\n",
+            .want = "diff --git a/f.txt b/f.txt\nnew file mode 100644\nindex 0000000..e69de29\n",
         },
         .{
             .section = .{
@@ -799,11 +793,11 @@ test "renderSectionHeader reproduces each kind of section" {
                 .is_deleted_file = true,
                 .index_line = "index e69de29..0000000",
             },
-            .want = "diff --git a/f.txt b/f.txt\ndeleted file mode 100644\nindex e69de29..0000000\n--- a/f.txt\n+++ /dev/null\n",
+            .want = "diff --git a/f.txt b/f.txt\ndeleted file mode 100644\nindex e69de29..0000000\n",
         },
     };
     for (rows) |row| {
-        try std.testing.expectEqualStrings(row.want, try renderSectionHeader(arena.allocator(), &row.section, "f.txt"));
+        try std.testing.expectEqualStrings(row.want, try renderSectionHeader(arena.allocator(), &row.section));
     }
 }
 
@@ -970,7 +964,7 @@ test "line specs on whole-file hunks render the header of the patch applied" {
     for (rows) |row| {
         const got = try row.case.render(arena.allocator(), row.ranges, row.direction);
         const want = row.want orelse try std.mem.concat(arena.allocator(), u8, &.{
-            try renderSectionHeader(arena.allocator(), &row.case.section, "n.txt"),
+            try renderSectionHeader(arena.allocator(), &row.case.section),
             row.case.raw_lines,
         });
         try std.testing.expectEqualStrings(want, got);

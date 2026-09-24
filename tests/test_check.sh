@@ -165,4 +165,26 @@ if "$GIT_HUNK" check --file alpha.txt --file gamma.txt "$SHA311_B" 2>/dev/null; 
 fi
 pass "test 311: check --file a --file c excludes b SHAs"
 
+# ============================================================================
+# Test 312: a binary hash goes stale when the file changes again
+# ============================================================================
+new_repo
+printf 'bin\000ary v1\n' > image.bin
+git add image.bin && git commit -q -m "add binary"
+printf 'bin\000ary v2\n' > image.bin
+OLD312="$(first_sha --oneline --file image.bin)"
+[[ -n "$OLD312" ]] || fail "test 312: no binary hunk listed"
+"$GIT_HUNK" add "$OLD312" > /dev/null || fail "test 312: add of the binary hunk failed"
+printf 'bin\000ary v3\n' > image.bin
+NEW312="$(first_sha --oneline --file image.bin)"
+[[ -n "$NEW312" && "$NEW312" != "$OLD312" ]] \
+    || fail "test 312: the new change to image.bin kept hash '$OLD312'"
+"$GIT_HUNK" check "$OLD312" > /dev/null 2>&1 && fail "test 312: check passed a stale binary hash"
+ERR312="$("$GIT_HUNK" add "$OLD312" 2>&1 > /dev/null)" && fail "test 312: add accepted a stale binary hash"
+[[ "$ERR312" == "error: no hunk matching '$OLD312'" ]] \
+    || fail "test 312: add of a stale binary hash said '$ERR312'"
+[[ "$(blob_bytes :image.bin)" == "$(want_bytes 'bin\000ary v2\n')" ]] \
+    || fail "test 312: the stale add changed the index"
+pass "test 312: a binary hash goes stale when the file changes again"
+
 report_results

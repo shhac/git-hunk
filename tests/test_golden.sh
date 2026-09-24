@@ -13,7 +13,8 @@ source "$(dirname "$0")/harness.sh" "$1"
 # the git3-defaults hostile profile), so expected patches name them with
 # tokens resolved against the repo (see golden_expand). Hunk hashes are
 # git-hunk's own SHA-1 over path and content, the same under either format,
-# and are written out literally.
+# and are written out literally -- except a binary file's, whose content is
+# its blob ids, so it is a token too.
 #
 # Listings are sorted before comparing: the pager hostile profile sets
 # diff.orderFile, which reorders files in git's output without changing a hash.
@@ -144,17 +145,26 @@ accent_path() {
     fi
 }
 
+# git-hunk's hash of a binary change to <path> between blobs <old> and <new>:
+# SHA-1 over the path, line 0 and the blob ids of the section's index line.
+binary_hash() {
+    printf '%s\0%s\0binary %s..%s' "$1" 0 "$2" "$3" \
+        | if command -v sha1sum > /dev/null; then sha1sum; else shasum -a 1; fi | cut -c1-7
+}
+
 # stdin -> stdout, replacing object-format dependent tokens with this repo's
 # values. Resolve before the command under test changes the index.
 #   {head:P}   blob id of P at HEAD         {file:P}  blob id of worktree file P
 #   {str:S}    blob id of the bytes S       {zero}    the all-zero object id
 #   {file7:P} {str7:S} {zero7}              the same, abbreviated to 7
 #   {acc:a} {acc:b}                         the non-ASCII path, see accent_path
+#   {bin:P}      hash of P's binary change, index to worktree
+#   {binroot:P}  hash of P's binary creation in the root commit R
 golden_expand() {
     local text tok kind arg val
     text="$(cat; printf .)"
     text="${text%.}"
-    local re='\{(head|file7|file|str7|str|zero7|zero|acc):?([^}]*)\}'
+    local re='\{(head|file7|file|str7|str|zero7|zero|acc|binroot|bin):?([^}]*)\}'
     while [[ "$text" =~ $re ]]; do
         tok="${BASH_REMATCH[0]}"
         kind="${BASH_REMATCH[1]}"
@@ -168,6 +178,8 @@ golden_expand() {
             zero) val="$(git rev-parse HEAD | tr '0-9a-f' '0')" ;;
             zero7) val="0000000" ;;
             acc) val="$(accent_path "$arg")" ;;
+            bin) val="$(binary_hash "$arg" "$(git rev-parse ":$arg")" "$(git hash-object -- "$arg")")" ;;
+            binroot) val="$(binary_hash "$arg" "$(git rev-parse HEAD | tr '0-9a-f' '0')" "$(git rev-parse "R:$arg")")" ;;
         esac
         text="${text//"$tok"/"$val"}"
     done
@@ -189,12 +201,12 @@ check_text() {
 }
 
 # `list --porcelain --oneline <args>` against the expected lines on stdin,
-# both sorted (see the header).
+# expanded by golden_expand, both sorted (see the header).
 check_list() {
     local label="$1"
     shift
     local want got
-    want="$(LC_ALL=C sort)"
+    want="$(golden_expand | LC_ALL=C sort)"
     got="$("$GIT_HUNK" list --porcelain --oneline "$@" | LC_ALL=C sort)"
     check_text "$label: list $*" "$want" "$got"
 }
@@ -212,7 +224,7 @@ check_list "test 2000" <<'EOF'
 2b987ac	gone-wt.txt	0	0	deleted
 3477055	u-link@	1	1	new file
 5f6b3e9	tc.txt@	1	1	new file
-7f80a1f	bin.dat	0	0	binary
+{bin:bin.dat}	bin.dat	0	0	binary
 810dfd6	u.txt	1	2	new file
 b8f50d4	tc.txt	0	0	deleted
 d98411e	héllo.txt	1	6	accent line 04 of the golden fixture
@@ -223,7 +235,7 @@ check_list "test 2000" --tracked-only <<'EOF'
 293154f	link@	1	1	target-a
 2b987ac	gone-wt.txt	0	0	deleted
 5f6b3e9	tc.txt@	1	1	new file
-7f80a1f	bin.dat	0	0	binary
+{bin:bin.dat}	bin.dat	0	0	binary
 b8f50d4	tc.txt	0	0	deleted
 d98411e	héllo.txt	1	6	accent line 04 of the golden fixture
 f7c1445	mod.txt	22	28	mod line 25 of the golden fixture
@@ -247,7 +259,7 @@ check_list "test 2001" -U0 <<'EOF'
 46f63a7	héllo.txt	4	4	accent line 04 of the golden fixture
 5ab9db8	mod.txt	25	25	mod line 25 of the golden fixture
 5f6b3e9	tc.txt@	1	1	new file
-7f80a1f	bin.dat	0	0	binary
+{bin:bin.dat}	bin.dat	0	0	binary
 810dfd6	u.txt	1	2	new file
 b8f50d4	tc.txt	0	0	deleted
 e53d435	mod.txt	5	5	mod line 05 of the golden fixture
@@ -258,7 +270,7 @@ check_list "test 2001" -U10 <<'EOF'
 2b987ac	gone-wt.txt	0	0	deleted
 3477055	u-link@	1	1	new file
 5f6b3e9	tc.txt@	1	1	new file
-7f80a1f	bin.dat	0	0	binary
+{bin:bin.dat}	bin.dat	0	0	binary
 810dfd6	u.txt	1	2	new file
 b8f50d4	tc.txt	0	0	deleted
 d98411e	héllo.txt	1	6	accent line 04 of the golden fixture
@@ -304,7 +316,7 @@ check_list "test 2003" --ref R <<'EOF'
 22d7e6a	link@	1	1	new file
 386b1d0	gone-staged.txt	1	6	new file
 7e3bc63	gone-wt.txt	1	6	new file
-7f80a1f	bin.dat	0	0	new binary file
+{binroot:bin.dat}	bin.dat	0	0	new binary file
 b55199d	target-b	1	1	new file
 c242648	target-a	1	1	new file
 cb0fb8f	other.txt	1	6	new file
@@ -466,8 +478,6 @@ EOT
 diff --git a/u-empty.txt b/u-empty.txt
 new file mode 100644
 index {zero7}..{file7:u-empty.txt}
---- /dev/null
-+++ b/u-empty.txt
 EOT
         ;;
         untracked-symlink) cat <<'EOT'
@@ -512,8 +522,6 @@ EOT
 diff --git a/empty.txt b/empty.txt
 new file mode 100644
 index {zero}..{file:empty.txt}
---- /dev/null
-+++ b/empty.txt
 EOT
         ;;
         rename) cat <<'EOT'
@@ -576,7 +584,7 @@ check_applied "test 2005" typechange-delete typechange-create -- add b8f50d4 5f6
 check_applied "test 2005" untracked -- add 810dfd6
 check_applied "test 2005" untracked-empty -- add 0e58f0b
 check_applied "test 2005" untracked-symlink -- add 3477055
-check_applied "test 2005" -- add 7f80a1f
+check_applied "test 2005" -- add "$(printf '{bin:bin.dat}' | golden_expand)"
 pass "test 2005: unfiltered add patches pinned for every unstaged kind"
 
 # ============================================================================
@@ -618,7 +626,7 @@ check_diff "test 2008" accent d98411e
 check_diff "test 2008" symlink 293154f
 check_diff "test 2008" typechange-delete b8f50d4
 check_diff "test 2008" typechange-create 5f6b3e9
-check_diff "test 2008" binary 7f80a1f
+check_diff "test 2008" binary "$(printf '{bin:bin.dat}' | golden_expand)"
 check_diff "test 2008" untracked 810dfd6
 check_diff "test 2008" untracked-empty 0e58f0b
 check_diff "test 2008" untracked-symlink 3477055

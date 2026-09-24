@@ -660,7 +660,7 @@ pub fn cmdDiff(allocator: Allocator, stdout: *std.Io.Writer, opts: DiffOptions) 
                 .human => {
                     // The header as the diff has it: the body below is
                     // unfiltered too, with any selection only marked.
-                    try stdout.writeAll(try patch_mod.renderSectionHeader(arena, m.hunk.section, m.hunk.file_path));
+                    try stdout.writeAll(try patch_mod.renderSectionHeader(arena, m.hunk.section));
                     if (m.hunk.section.is_binary) {
                         try stdout.writeAll("Binary file changed\n\n");
                     } else if (m.hunk.raw_lines.len == 0) {

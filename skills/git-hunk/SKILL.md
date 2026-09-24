@@ -110,7 +110,8 @@ Hashes are deterministic: staging or unstaging other hunks does **not** change t
 remaining hashes. List once, then stage multiple hunks together in one command.
 
 The hash is computed from: file path, stable line number (worktree side for unstaged,
-HEAD side for staged), and diff content (`+`/`-` lines only). Staged and unstaged
+HEAD side for staged), and diff content (`+`/`-` lines only; a binary file's blob
+ids). Staged and unstaged
 hashes for the same hunk differ -- use `add`'s `->` output to track the mapping.
 
 ## Line specs (`sha:3-5,8`)

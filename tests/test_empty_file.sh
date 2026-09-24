@@ -56,10 +56,9 @@ SHA803="$("$GIT_HUNK" list --porcelain --oneline | grep empty.txt | cut -f1)"
 DIFF803="$("$GIT_HUNK" diff "$SHA803")"
 echo "$DIFF803" | grep -q 'new file mode' \
     || fail "test 803: expected 'new file mode' in diff output"
-echo "$DIFF803" | grep -q '\-\-\- /dev/null' \
-    || fail "test 803: expected '--- /dev/null' in diff output"
-echo "$DIFF803" | grep -q '+++ b/empty.txt' \
-    || fail "test 803: expected '+++ b/empty.txt' in diff output"
+# git writes no ---/+++ lines for an empty file, and neither does git-hunk.
+echo "$DIFF803" | grep -qE '^(---|\+\+\+) ' \
+    && fail "test 803: unexpected ---/+++ lines in diff output: '$DIFF803'"
 pass "test 803: diff displays patch header for empty file"
 
 # ============================================================================

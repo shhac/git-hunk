@@ -407,7 +407,11 @@ SHA1(file_path + '\0' + stable_line + '\0' + diff_lines)
 - `stable_line` -- the line number from the side that doesn't shift during
   staging. For unstaged hunks this is the new (worktree) side; for staged hunks
   this is the old (HEAD) side.
-- `diff_lines` -- only the `+` and `-` lines (context lines excluded)
+- `diff_lines` -- only the `+` and `-` lines (context lines excluded). A binary
+  file has no lines, so its hash uses `0` for the line and `binary <old>..<new>`,
+  the blob ids of its `index` line, for the content: a binary hash goes stale
+  when the file changes again, and differs between SHA-1 and SHA-256
+  repositories.
 
 Because the hash uses the stable line number and the actual diff content, it
 remains constant as other hunks in the same file are staged or unstaged. This

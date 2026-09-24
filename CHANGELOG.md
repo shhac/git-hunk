@@ -7,6 +7,9 @@
 
 - A line spec on an empty file (`add <empty>:1`) silently applied the whole file. It is now rejected, as are line specs on a symlink (its one line is its whole target) and on either half of a typechange: `error: line selection not supported for empty file|symlink|typechange '<path>'`, matching the existing message for binary files.
 
+- Every change to a binary path had the same hash (`bin.dat` hashed alike as a worktree edit and as a new file under `--ref`), so a hash listed before the file changed again still matched it and `check` could not notice. A binary hash now includes the blob ids from its `index` line. Binary hashes change with this release, and differ between SHA-1 and SHA-256 repositories.
+- An empty new or deleted file's patch carried `--- /dev/null` / `+++ b/<path>` lines git never writes for one, with the path unquoted even where git would quote it. The header is now git's own: `diff` shows it that way, and `git apply` takes it as is.
+
 ### Changed
 - `restore` of an untracked file without `--force` now says `restoring it cannot be undone; use --force` instead of `use --force to delete`: restoring part of an untracked file removes only those lines.
 - File sections are parsed into data that hunks share, and patch headers are rendered when the patch is built instead of when the diff is read. A filtered hunk's `@@` line is written the way git writes it (a count of 1 is left out, and a side that becomes empty is numbered by the line before it).
