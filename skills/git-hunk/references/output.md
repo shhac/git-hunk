@@ -418,6 +418,11 @@ error: sha prefix too short (minimum 4 chars): 'ab'
 error: patch did not apply cleanly -- re-run 'list' and try again
 no unstaged changes
 no staged changes
+no changes in 'HEAD~1'
+no staged changes relative to 'main'
+error: bad revision 'nope'
+error: changes from 'HEAD~1' do not apply cleanly to the index (try --3way)
+error: --staged compares the index with one commit; 'main..HEAD' is a range
 error: at least one <sha> argument required
 error: unknown command 'badcmd'
 ```

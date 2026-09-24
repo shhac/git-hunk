@@ -92,8 +92,9 @@ pub const CommandSpec = struct {
 
 const ref_desc_base: []const []const u8 = &.{
     "Compare against a git ref instead of the default.",
-    "Single ref (e.g. HEAD~1, abc123) is shorthand for `<ref>^..<ref>`,",
-    "i.e. that commit's diff. Use a range (e.g. main..HEAD) to diff between two refs.",
+    "A single commit (e.g. HEAD~1, abc123) means that commit's changes against",
+    "its first parent (the empty tree for a root commit).",
+    "Use a range (e.g. main..HEAD) to diff between two refs.",
 };
 // Only commands that accept --staged may claim to combine with it.
 const ref_desc_with_staged: []const []const u8 = ref_desc_base ++
@@ -699,7 +700,7 @@ pub const man_global_options = [_]ManOption{
         "Show summary counts and hints. Also names changed paths that produced no hunk \\(em",
         "a submodule pointer bump, a mode change, or a rename with no content change \\(em",
         "so a tree git considers dirty is never reported here as having nothing to stage.",
-        "These paths have no hash; stage them with \\fBgit add \\fI<path>\\fR.",
+        "These paths have no hash; unstaged ones are staged with \\fBgit add \\fI<path>\\fR.",
     } },
     .{ .header = ".BR \\-q \", \" \\-\\-quiet", .lines = &.{
         "Suppress all output (exit code only).",
@@ -715,8 +716,8 @@ pub const man_global_options = [_]ManOption{
     } },
     .{ .header = ".BI \\-\\-ref \" refspec\"", .lines = &.{
         "Compare against a git ref instead of the default.",
-        "A single ref (e.g. \\fBHEAD~1\\fR, \\fBabc123\\fR) is shorthand for",
-        "\\fI<ref>\\fB^..\\fI<ref>\\fR, i.e. that commit's diff.",
+        "A single commit (e.g. \\fBHEAD~1\\fR, \\fBabc123\\fR) means that commit's changes",
+        "against its first parent (the empty tree for a root commit).",
         "Use a range (e.g. \\fBmain..HEAD\\fR) to diff between two refs.",
         "With \\fBlist\\fR, \\fBdiff\\fR, \\fBcount\\fR, or \\fBcheck\\fR, combines with \\fB\\-\\-staged\\fR for ref vs index comparison.",
         "With \\fBadd\\fR, \\fBreset\\fR, \\fBrestore\\fR, or \\fBcommit\\fR, this enables",

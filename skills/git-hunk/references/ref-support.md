@@ -9,16 +9,21 @@ Available on all commands except `stash` (v0.9.0+).
 --ref <refspec>
 ```
 
-`<refspec>` is either a single ref or a two-dot range:
+`<refspec>` is either a single commit or a range:
 
 | Form | Meaning | Equivalent git diff |
 |------|---------|-------------------|
-| `--ref X` | Diff ref X vs worktree | `git diff X` |
-| `--ref X --staged` | Diff ref X vs index | `git diff --cached X` |
-| `--ref X..Y` | Diff between two refs | `git diff X Y` |
-| `--ref X..Y --staged` | **Rejected** (nonsensical) | n/a |
+| `--ref X` | That commit's changes, against its first parent (the empty tree for a root commit) | `git diff X^ X` |
+| `--ref X --staged` | The index against commit X | `git diff --cached X` |
+| `--ref X..Y` | Between two commits | `git diff X..Y` |
+| `--ref X...Y` | Y's changes since it forked from X | `git diff X...Y` |
+| `--ref X..Y --staged` | **Rejected**: `--staged compares the index with one commit; 'X..Y' is a range` | n/a |
 
-`X` can be any valid git ref: `HEAD`, `HEAD~3`, `main`, a commit SHA, a tag, etc.
+`X` can be any valid git revision: `HEAD`, `HEAD~3`, `main`, a commit SHA, a tag,
+etc. Either side of a range may be empty, meaning `HEAD`. A revision git cannot
+resolve is refused before anything runs, naming it as typed:
+`error: bad revision 'nope'`. A file named like a revision (`main`, `HEAD`) never
+shadows it.
 
 ## Supported commands
 
@@ -26,22 +31,23 @@ Available on all commands except `stash` (v0.9.0+).
 |---------|-----------|-------------|-------|
 | `list` | yes | yes | |
 | `diff` | yes | yes | |
-| `add` | yes | yes | Applies patch to index; may conflict if worktree diverges from diff endpoint |
-| `reset` | yes | yes | Same conflict caveat as `add` |
-| `restore` | yes | yes | Same conflict caveat as `add` |
 | `count` | yes | yes | |
 | `check` | yes | yes | |
+| `add` | yes | yes | Applies the ref's hunk to the index |
+| `reset` | yes | yes | Takes the ref's hunk back out of the index |
+| `restore` | yes | yes | Reverts the ref's hunk in the worktree |
+| `commit` | yes | yes | Commits the ref's hunk on top of HEAD |
 | `stash` | **no** | **no** | `--ref` is rejected with an error |
 
 ## Examples
 
-### Browse changes relative to a branch
+### Browse a commit's changes
 
 ```bash
-git hunk list --ref main                     # all hunks between main and worktree
-git hunk list --ref main --oneline           # compact view
-git hunk diff --ref main a3f7c21             # inspect one hunk
-git hunk count --ref main                    # how many hunks vs main
+git hunk list --ref HEAD                     # hunks the last commit introduced
+git hunk list --ref HEAD~1 --oneline         # the commit before it, compact
+git hunk diff --ref HEAD a3f7c21             # inspect one hunk
+git hunk count --ref HEAD                    # how many hunks it has
 ```
 
 ### Inspect a commit range
@@ -52,17 +58,18 @@ git hunk list --ref main..HEAD --oneline     # hunks on current branch vs main
 git hunk diff --ref main..HEAD a3f7c21       # inspect a specific hunk in range
 ```
 
-### Stage hunks from a ref diff
+### Apply hunks from a ref diff
 
 ```bash
-git hunk list --ref main                     # find hunks vs main
-git hunk add --ref main a3f7c21              # stage one hunk from that diff
+git hunk list --ref abc1234                  # find hunks in that commit
+git hunk add --ref abc1234 a3f7c21           # stage one of them (cherry-pick a hunk)
+git hunk restore --ref abc1234 a3f7c21       # revert one of them in the worktree
 ```
 
-**Caveat:** `add`, `reset`, and `restore` apply patches to the worktree or index.
-When using `--ref`, the patch is derived from the ref diff, not the default
-worktree/index diff. If the apply target has diverged from a diff endpoint, the
-patch may not apply cleanly -- you'll get a `patch did not apply cleanly` error.
+**Caveat:** `add`, `reset`, `restore` and `commit` apply the ref's patch to the
+index or worktree. If that target has diverged from the commit, the patch may
+not apply cleanly:
+`error: changes from 'abc1234' do not apply cleanly to the index (try --3way)`.
 
 ### Ref vs index (staged)
 
@@ -70,6 +77,10 @@ patch may not apply cleanly -- you'll get a `patch did not apply cleanly` error.
 git hunk list --ref HEAD --staged            # diff HEAD vs index
 git hunk list --ref main --staged            # diff main vs index
 ```
+
+With nothing to show, commands that act on hunks name the source:
+`no changes in 'abc1234'`, `no staged changes relative to 'main'`; `list`
+prints nothing and `count` prints `0`, as on a clean tree.
 
 ### Invalid combinations
 

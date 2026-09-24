@@ -99,7 +99,7 @@ git-hunk list [--staged] [--file <path>] [--porcelain] [--oneline] [--unified <n
 | `--staged` | Show staged hunks (HEAD vs index) instead of unstaged (index vs worktree) |
 | `--file <path>` | Only show hunks for the given file path, resolved relative to the current directory. May be repeated to match any of several files. |
 | `--files-from <path>` | Read file paths from `<path>`, one per line; `-` reads stdin. Composes with repeated `--file` (the lists are merged). NUL-separated input is auto-detected, so `git ls-files -z \| git hunk add --files-from -` is safe for paths containing newlines. |
-| `--ref <refspec>` | Source the diff from a git ref. **Single ref** (e.g. `HEAD~1`, `abc1234`) is shorthand for `<ref>^..<ref>` — that commit's diff (`git show` semantics). **Range** (e.g. `main..HEAD`) is the literal diff between two refs. Initial commits (no parent) diff against the empty tree. Combines with `--staged` for ref vs index comparison. |
+| `--ref <refspec>` | Source the diff from a git ref. **Single commit** (e.g. `HEAD~1`, `abc1234`) means that commit's changes against its first parent. **Range** (e.g. `main..HEAD`) is the diff between two commits, as `git diff` reads it. An unresolvable ref fails with `error: bad revision '<ref>'`. A root commit diffs against the empty tree. Combines with `--staged` for ref vs index comparison. |
 | `--porcelain` | Tab-separated machine-readable output. See [output format](output.md). |
 | `--oneline` | Compact one-line-per-hunk output without inline diff content. |
 | `--unified <n>` / `-U<n>` / `--unified=<n>` | Number of context lines to use in diffs (default: git's `diff.context` or 3). Lower values produce more granular hunks. |
@@ -155,7 +155,7 @@ git-hunk diff <sha[:lines]>... [--staged] [-n] [--file <path>] [--porcelain] [--
 | `--number` / `-n` | Number each hunk body line, so the numbers a `:lines` spec expects can be read off rather than counted by hand. Numbering counts **every** body line, context lines included — line 1 of a hunk is often a context line, not the first change. Passing a `:lines` spec turns the same gutter on automatically and marks selected lines with `>`. Human output only; ignored under `--porcelain`. |
 | `--file <path>` | Restrict hash matching to hunks in this file. May be repeated to match any of several files. |
 | `--files-from <path>` | Read file paths from `<path>`, one per line; `-` reads stdin. Composes with repeated `--file` (the lists are merged). NUL-separated input is auto-detected, so `git ls-files -z \| git hunk add --files-from -` is safe for paths containing newlines. |
-| `--ref <refspec>` | Source the diff from a git ref. **Single ref** (e.g. `HEAD~1`, `abc1234`) is shorthand for `<ref>^..<ref>` — that commit's diff (`git show` semantics). **Range** (e.g. `main..HEAD`) is the literal diff between two refs. Initial commits (no parent) diff against the empty tree. Combines with `--staged` for ref vs index comparison. |
+| `--ref <refspec>` | Source the diff from a git ref. **Single commit** (e.g. `HEAD~1`, `abc1234`) means that commit's changes against its first parent. **Range** (e.g. `main..HEAD`) is the diff between two commits, as `git diff` reads it. An unresolvable ref fails with `error: bad revision '<ref>'`. A root commit diffs against the empty tree. Combines with `--staged` for ref vs index comparison. |
 | `--porcelain` | Machine-readable output: metadata header line + raw diff lines + blank separator. |
 | `--tracked-only` | Only show hunks from tracked files. |
 | `--untracked-only` | Only show hunks from untracked files. |
@@ -197,6 +197,8 @@ Same error types as `add`:
 | `error: no hunk matching '<sha>'` | No hunk matches the prefix (with optional file filter) |
 | `error: ambiguous prefix '<sha>' -- matches multiple hunks` | Multiple hunks match the prefix |
 | `no unstaged changes` / `no staged changes` | Nothing to diff |
+| `no changes in '<ref>'` / `no staged changes relative to '<ref>'` | Nothing to diff under `--ref` |
+| `error: bad revision '<ref>'` | `--ref` names something git cannot resolve |
 | `error: at least one <sha> argument required` | No SHA arguments provided |
 
 ---
@@ -222,7 +224,7 @@ git-hunk add [<sha[:lines]>...] [--file <path>] [--all] [--porcelain] [--unified
 | `--file <path>` | Restrict hash matching to hunks in this file — **scoping, not addition**: a SHA living in an unlisted file will not resolve. To stage whole files *and* specific hunks, use two commands (hashes stay stable in between). When used without SHAs, stages all hunks in the file. May be repeated to match any of several files. |
 | `--files-from <path>` | Read file paths from `<path>`, one per line; `-` reads stdin. Composes with repeated `--file` (the lists are merged). NUL-separated input is auto-detected, so `git ls-files -z \| git hunk add --files-from -` is safe for paths containing newlines. |
 | `--all` | Stage all unstaged hunks. No SHA arguments required. |
-| `--ref <refspec>` | Source the diff from a git ref. **Single ref** (e.g. `HEAD~1`, `abc1234`) is shorthand for `<ref>^..<ref>` — that commit's diff (`git show` semantics). **Range** (e.g. `main..HEAD`) is the literal diff between two refs. Enables cherry-picking or reverting individual hunks from past commits (pair with `--3way` when context has drifted). |
+| `--ref <refspec>` | Source the diff from a git ref. **Single commit** (e.g. `HEAD~1`, `abc1234`) means that commit's changes against its first parent. **Range** (e.g. `main..HEAD`) is the diff between two commits, as `git diff` reads it. An unresolvable ref fails with `error: bad revision '<ref>'`. Enables cherry-picking or reverting individual hunks from past commits (pair with `--3way` when context has drifted). |
 | `--3way` | When applying a patch fails because surrounding context has drifted, fall back to a 3-way merge instead of erroring. May leave unmerged index entries on conflict. Useful with `--ref <past-commit>`. |
 | `--dry-run` | Report what would be staged and exit, touching neither the index nor the worktree. Reports the input hunks (`would stage <sha>[:lines]  <file>`), not post-apply result hashes — a result hash only exists once the patch has been applied. `git apply --check` rejects `--3way`, so a stage that would only succeed via 3-way is reported as a failure. |
 | `--porcelain` | Tab-separated machine-readable output. See [output format](output.md#porcelain-format-1). |
@@ -270,7 +272,10 @@ git-hunk add a3f7c21 --no-color                  # disable color output
 | `error: no hunk matching '<sha>'` | No hunk matches the prefix (with optional file filter) |
 | `error: ambiguous prefix '<sha>' -- matches multiple hunks` | Multiple hunks match the prefix |
 | `error: patch did not apply cleanly` | Index changed since hunks were listed |
+| `error: changes from '<ref>' do not apply cleanly to the index (try --3way)` | The `--ref` hunk's context no longer matches the index |
 | `no unstaged changes` | Nothing to stage |
+| `no changes in '<ref>'` | `--ref` names an empty commit or range |
+| `error: bad revision '<ref>'` | `--ref` names something git cannot resolve |
 | `error: at least one <sha> argument required` | No SHA arguments and no `--all`/`--file` flag |
 
 ---
@@ -299,7 +304,7 @@ git-hunk commit [<sha[:lines]>...] -m <message> [--file <path>] [--all] [--amend
 | `--all` | Commit all unstaged hunks. No SHA arguments required. |
 | `--file <path>` | Restrict hash matching to hunks in this file — **scoping, not addition**: a SHA living in an unlisted file will not resolve. To commit whole files *and* specific hunks, use two commands (hashes stay stable in between). When used without SHAs, commits all hunks in the file. May be repeated to match any of several files. |
 | `--files-from <path>` | Read file paths from `<path>`, one per line; `-` reads stdin. Composes with repeated `--file` (the lists are merged). NUL-separated input is auto-detected, so `git ls-files -z \| git hunk add --files-from -` is safe for paths containing newlines. |
-| `--ref <refspec>` | Source the diff from a git ref. **Single ref** (e.g. `HEAD~1`, `abc1234`) is shorthand for `<ref>^..<ref>` — that commit's diff (`git show` semantics). **Range** (e.g. `main..HEAD`) is the literal diff between two refs. Initial commits (no parent) diff against the empty tree. |
+| `--ref <refspec>` | Source the diff from a git ref. **Single commit** (e.g. `HEAD~1`, `abc1234`) means that commit's changes against its first parent. **Range** (e.g. `main..HEAD`) is the diff between two commits, as `git diff` reads it. An unresolvable ref fails with `error: bad revision '<ref>'`. A root commit diffs against the empty tree. |
 | `--3way` | When applying a patch fails because surrounding context has drifted, fall back to a 3-way merge instead of erroring. Either succeeds cleanly or leaves `<<<<<<<` conflict markers. Useful with `--ref <past-commit>`. |
 | `--tracked-only` | Only include hunks from tracked files. |
 | `--untracked-only` | Only include hunks from untracked files. |
@@ -369,7 +374,7 @@ git-hunk reset [<sha[:lines]>...] [--file <path>] [--all] [--porcelain] [--unifi
 | `--file <path>` | Restrict hash matching to hunks in this file — **scoping, not addition**: a SHA living in an unlisted file will not resolve. To unstage whole files *and* specific hunks, use two commands (hashes stay stable in between). When used without SHAs, unstages all hunks in the file. May be repeated to match any of several files. |
 | `--files-from <path>` | Read file paths from `<path>`, one per line; `-` reads stdin. Composes with repeated `--file` (the lists are merged). NUL-separated input is auto-detected, so `git ls-files -z \| git hunk add --files-from -` is safe for paths containing newlines. |
 | `--all` | Unstage all staged hunks. No SHA arguments required. |
-| `--ref <refspec>` | Source the diff from a git ref. **Single ref** (e.g. `HEAD~1`, `abc1234`) is shorthand for `<ref>^..<ref>` — that commit's diff (`git show` semantics). **Range** (e.g. `main..HEAD`) is the literal diff between two refs. Enables cherry-picking or reverting individual hunks from past commits (pair with `--3way` when context has drifted). |
+| `--ref <refspec>` | Source the diff from a git ref. **Single commit** (e.g. `HEAD~1`, `abc1234`) means that commit's changes against its first parent. **Range** (e.g. `main..HEAD`) is the diff between two commits, as `git diff` reads it. An unresolvable ref fails with `error: bad revision '<ref>'`. Enables cherry-picking or reverting individual hunks from past commits (pair with `--3way` when context has drifted). |
 | `--3way` | When applying a patch fails because surrounding context has drifted, fall back to a 3-way merge instead of erroring. May leave unmerged index entries on conflict. Useful with `--ref <past-commit>`. |
 | `--dry-run` | Report what would be unstaged and exit, touching neither the index nor the worktree. Output mirrors `add --dry-run` with the `would unstage` verb. |
 | `--porcelain` | Tab-separated machine-readable output. See [output format](output.md#porcelain-format-1). |
@@ -404,7 +409,7 @@ git-hunk reset a3f7c21 --no-color               # disable color output
 
 ### Errors
 
-Same error types as `add`, with `no staged changes` instead of `no unstaged changes`.
+Same error types as `add`, with `no staged changes` instead of `no unstaged changes` (under `--ref`, `no changes in '<ref>'` as for `add`).
 
 ---
 
@@ -429,7 +434,7 @@ git-hunk restore [<sha[:lines]>...] [--file <path>] [--all] [--dry-run] [--porce
 | `--file <path>` | Restrict hash matching to hunks in this file — **scoping, not addition**: a SHA living in an unlisted file will not resolve. To restore whole files *and* specific hunks, use two commands (hashes stay stable in between). When used without SHAs, restores all hunks in the file. May be repeated to match any of several files. |
 | `--files-from <path>` | Read file paths from `<path>`, one per line; `-` reads stdin. Composes with repeated `--file` (the lists are merged). NUL-separated input is auto-detected, so `git ls-files -z \| git hunk add --files-from -` is safe for paths containing newlines. |
 | `--all` | Restore all unstaged hunks. No SHA arguments required. |
-| `--ref <refspec>` | Source the diff from a git ref. **Single ref** (e.g. `HEAD~1`, `abc1234`) is shorthand for `<ref>^..<ref>` — that commit's diff (`git show` semantics). **Range** (e.g. `main..HEAD`) is the literal diff between two refs. Enables cherry-picking or reverting individual hunks from past commits (pair with `--3way` when context has drifted). |
+| `--ref <refspec>` | Source the diff from a git ref. **Single commit** (e.g. `HEAD~1`, `abc1234`) means that commit's changes against its first parent. **Range** (e.g. `main..HEAD`) is the diff between two commits, as `git diff` reads it. An unresolvable ref fails with `error: bad revision '<ref>'`. Enables cherry-picking or reverting individual hunks from past commits (pair with `--3way` when context has drifted). |
 | `--3way` | When applying a patch fails because surrounding context has drifted, fall back to a 3-way merge instead of erroring. Either succeeds cleanly or leaves `<<<<<<<` conflict markers in the worktree. Useful for undoing hunks from history with `--ref`. |
 | `--dry-run` | Preview what would be restored without modifying the worktree. Uses `git apply --check`. |
 | `--force` | Required to restore untracked files, which git has no copy of (a whole one is deleted). |
@@ -484,7 +489,9 @@ git-hunk restore a3f7c21 --no-color                  # disable color output
 | `error: ambiguous prefix '<sha>' -- matches multiple hunks` | Multiple hunks match the prefix |
 | `error: <sha> (<file>) is an untracked file -- restoring it cannot be undone; use --force` | Untracked file matched without `--force` (bypassed by `--dry-run`) |
 | `error: patch did not apply cleanly` | Worktree changed since hunks were listed |
+| `error: changes from '<ref>' do not apply cleanly to the worktree (try --3way)` | The `--ref` hunk's context no longer matches the worktree |
 | `no unstaged changes` | Nothing to restore |
+| `no changes in '<ref>'` | `--ref` names an empty commit or range |
 | `error: at least one <sha> argument required` | No SHA arguments and no `--all`/`--file` flag |
 
 ---
@@ -504,7 +511,7 @@ git-hunk count [--staged] [--file <path>] [--unified <n>]
 | `--staged` | Count staged hunks (HEAD vs index) instead of unstaged (index vs worktree) |
 | `--file <path>` | Only count hunks for the given file path. May be repeated to match any of several files. |
 | `--files-from <path>` | Read file paths from `<path>`, one per line; `-` reads stdin. Composes with repeated `--file` (the lists are merged). NUL-separated input is auto-detected, so `git ls-files -z \| git hunk add --files-from -` is safe for paths containing newlines. |
-| `--ref <refspec>` | Source the diff from a git ref. **Single ref** (e.g. `HEAD~1`, `abc1234`) is shorthand for `<ref>^..<ref>` — that commit's diff (`git show` semantics). **Range** (e.g. `main..HEAD`) is the literal diff between two refs. Initial commits (no parent) diff against the empty tree. Combines with `--staged` for ref vs index comparison. |
+| `--ref <refspec>` | Source the diff from a git ref. **Single commit** (e.g. `HEAD~1`, `abc1234`) means that commit's changes against its first parent. **Range** (e.g. `main..HEAD`) is the diff between two commits, as `git diff` reads it. An unresolvable ref fails with `error: bad revision '<ref>'`. A root commit diffs against the empty tree. Combines with `--staged` for ref vs index comparison. |
 | `--tracked-only` | Only count hunks from tracked files. |
 | `--untracked-only` | Only count hunks from untracked files. |
 | `--unified <n>` / `-U<n>` / `--unified=<n>` | Number of context lines (default: git's `diff.context` or 3). Affects hunk splitting and therefore count. |
@@ -557,7 +564,7 @@ git-hunk check [--staged] [--exclusive] [--allow-empty] [--file <path>] [--porce
 | `--staged` | Check against staged hunks (HEAD vs index) instead of unstaged (index vs worktree) |
 | `--exclusive` | Assert the provided hashes are the ONLY hunks (scoped by `--file` if given) |
 | `--allow-empty` | Allow zero SHA arguments (useful with `--exclusive` to assert no hunks exist) |
-| `--ref <refspec>` | Source the diff from a git ref. **Single ref** (e.g. `HEAD~1`, `abc1234`) is shorthand for `<ref>^..<ref>` — that commit's diff (`git show` semantics). **Range** (e.g. `main..HEAD`) is the literal diff between two refs. Initial commits (no parent) diff against the empty tree. Combines with `--staged` for ref vs index comparison. |
+| `--ref <refspec>` | Source the diff from a git ref. **Single commit** (e.g. `HEAD~1`, `abc1234`) means that commit's changes against its first parent. **Range** (e.g. `main..HEAD`) is the diff between two commits, as `git diff` reads it. An unresolvable ref fails with `error: bad revision '<ref>'`. A root commit diffs against the empty tree. Combines with `--staged` for ref vs index comparison. |
 | `--file <path>` | Scope all lookups to hunks in this file. May be repeated to match any of several files. |
 | `--files-from <path>` | Read file paths from `<path>`, one per line; `-` reads stdin. Composes with repeated `--file` (the lists are merged). NUL-separated input is auto-detected, so `git ls-files -z \| git hunk add --files-from -` is safe for paths containing newlines. |
 | `--porcelain` | Machine-parseable tab-separated output (reports all entries) |

@@ -5,22 +5,24 @@ across your commit history. This document walks through the workflows.
 
 ## The shorthand: `--ref <commit>`
 
-Every `git-hunk` command accepts `--ref <refspec>`. A single ref (no `..`) is
-shorthand for `<ref>^..<ref>` — i.e. the diff that commit introduced. This
-matches `git show <ref>` semantics:
+Every `git-hunk` command except `stash` accepts `--ref <refspec>`. A single
+commit (no `..`) means the changes that commit introduced, against its first
+parent (for a merge, that is what the merge brought in from the side branch):
 
 ```bash
-git hunk list --ref HEAD~1            # hunks from the most recent commit
+git hunk list --ref HEAD              # hunks from the most recent commit
+git hunk list --ref HEAD~1            # hunks from the commit before it
 git hunk list --ref abc1234           # hunks from a specific commit
-git hunk list --ref main              # hunks from the tip of main
 ```
 
-To compare a ref **against the worktree** (the previous behaviour for single
-refs), write the range form explicitly:
+A range is the diff between two commits, as `git diff` reads it:
 
 ```bash
 git hunk list --ref main..HEAD        # everything you've added on top of main
 ```
+
+A revision git cannot resolve is refused before anything runs, naming what you
+typed: `error: bad revision 'nope'`.
 
 **Initial commits** (no parent) work too — `git-hunk` detects the missing
 parent and diffs against git's empty tree, so the initial commit's full
@@ -85,8 +87,7 @@ If you reach far enough back that the lines around the hunk have changed,
 plain `git apply` fails:
 
 ```
-error: patch did not apply cleanly — the diff from 'HEAD~10' may conflict
-       with the current state (try --3way)
+error: changes from 'HEAD~10' do not apply cleanly to the worktree (try --3way)
 ```
 
 Add `--3way`:

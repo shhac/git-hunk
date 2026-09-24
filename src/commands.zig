@@ -76,19 +76,20 @@ fn loadHunks(arena: Allocator, common: types.Common) !Loaded {
 /// Print a note naming changed paths that produced no hunk, so a tree git
 /// considers dirty is never reported as having nothing to stage. Verbose only:
 /// these paths have no hash, so there is nothing an ordinary listing could say
-/// about them, and `git add <path>` is the answer for all of them.
-fn reportSkippedPaths(arena: Allocator, tracked_diff: []const u8, hunks: []const Hunk, file_filter: []const []const u8) !void {
+/// about them. For unstaged changes `git add <path>` is the answer for all of
+/// them; elsewhere they are already staged or in history, and the note stands
+/// alone.
+fn reportSkippedPaths(arena: Allocator, tracked_diff: []const u8, hunks: []const Hunk, common: types.Common) !void {
     if (tracked_diff.len == 0) return;
 
     var skipped: std.ArrayList(diff_mod.SkippedPath) = .empty;
     try diff_mod.collectSkippedPaths(arena, tracked_diff, hunks, &skipped);
 
     for (skipped.items) |sk| {
-        if (!types.matchesFileFilter(sk.file_path, file_filter)) continue;
-        std.debug.print(
-            "note: {s}: {s} has no hunk — use 'git add {s}'\n",
-            .{ sk.file_path, sk.reason.describe(), sk.file_path },
-        );
+        if (!types.matchesFileFilter(sk.file_path, common.file_filter.items)) continue;
+        std.debug.print("note: {s}: {s} has no hunk", .{ sk.file_path, sk.reason.describe() });
+        if (common.source == .worktree) std.debug.print(" — use 'git add {s}'", .{sk.file_path});
+        std.debug.print("\n", .{});
     }
 }
 
@@ -101,7 +102,7 @@ pub fn cmdList(allocator: Allocator, stdout: *std.Io.Writer, opts: ListOptions) 
     const hunks = loaded.hunks;
 
     if (opts.common.verbosity == .verbose) {
-        try reportSkippedPaths(arena, loaded.tracked_diff, hunks, opts.common.file_filter.items);
+        try reportSkippedPaths(arena, loaded.tracked_diff, hunks, opts.common);
     }
 
     if (hunks.len == 0) return;
@@ -166,7 +167,7 @@ pub fn cmdCount(allocator: Allocator, stdout: *std.Io.Writer, opts: CountOptions
     }
 
     if (opts.common.verbosity == .verbose) {
-        try reportSkippedPaths(arena, loaded.tracked_diff, loaded.hunks, opts.common.file_filter.items);
+        try reportSkippedPaths(arena, loaded.tracked_diff, loaded.hunks, opts.common);
     }
 
     if (opts.common.verbosity != .quiet) {
@@ -330,14 +331,10 @@ fn matchAllInScope(arena: Allocator, hunks: []const Hunk, file_filter: []const [
     return matched.items;
 }
 
-/// Print "no [un]staged changes\n" and exit(1). Centralises the message so it
-/// can't drift across commands.
+/// Say the source has no changes ("no staged changes", "no changes in 'X'")
+/// and exit(1). Centralises the message so it can't drift across commands.
 fn exitNoChanges(source: DiffSource) noreturn {
-    const msg = switch (source.anchor()) {
-        .new => "no unstaged changes\n",
-        .old => "no staged changes\n",
-    };
-    std.debug.print("{s}", .{msg});
+    std.debug.print("no {f}\n", .{source.describe()});
     std.process.exit(1);
 }
 
@@ -374,16 +371,6 @@ fn captureTargetHunks(
     if (diff.len > 0) {
         diff_mod.parseDiff(arena, diff, target.anchor(), hunks) catch {};
     }
-}
-
-/// The revisions an apply failure names; null for the default diffs.
-fn refLabel(arena: Allocator, source: DiffSource) !?[]const u8 {
-    return switch (source) {
-        .worktree, .index => null,
-        .index_against, .worktree_against => |ref| ref.text,
-        .rev => |rev| try std.fmt.allocPrint(arena, "{s}..{s}", .{ rev.base.?, rev.ref.text }),
-        .range => |range| range.text,
-    };
 }
 
 /// Apply text patches forward (stage) or in reverse (unstage), then run
@@ -490,7 +477,7 @@ fn dryRunApplyHunks(
             .reverse = reverse,
             .target = .index,
             .check_only = true,
-            .ref = try refLabel(arena, opts.common.source),
+            .ref = opts.common.source.refText(),
         });
     }
 
@@ -537,7 +524,7 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
     defer old_target_hunks.deinit(arena);
     if (text_matched.len > 0) try captureTargetHunks(arena, target, opts.common.context, file_paths, &old_target_hunks);
 
-    const had_conflicts = try applyTextAndBinary(allocator, arena, action, text_matched, binary_paths, try refLabel(arena, opts.common.source), opts.common.three_way);
+    const had_conflicts = try applyTextAndBinary(allocator, arena, action, text_matched, binary_paths, opts.common.source.refText(), opts.common.three_way);
 
     var new_hunks: std.ArrayList(Hunk) = .empty;
     defer new_hunks.deinit(arena);
@@ -620,7 +607,7 @@ fn restoreWorktree(allocator: Allocator, arena: Allocator, matched: []const Matc
             .target = .worktree,
             .check_only = opts.dry_run,
             .three_way = opts.common.three_way and !opts.dry_run,
-            .ref = try refLabel(arena, opts.common.source),
+            .ref = opts.common.source.refText(),
         });
         any_conflicts = result == .applied_with_conflicts;
     }
@@ -762,7 +749,7 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
     // Dry-run: validate patches against what the commit would build on and show what would be committed.
     // Checked before the message requirement — a preview has nothing to write a message onto.
     if (opts.dry_run) {
-        checkTempIndexCommit(allocator, patches, try refLabel(arena, opts.common.source)) catch |err| switch (err) {
+        checkTempIndexCommit(allocator, patches, opts.common.source.refText()) catch |err| switch (err) {
             error.ReadTreeFailed => std.process.exit(1),
             else => return err,
         };
@@ -781,7 +768,7 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
         .message = message,
         .amend = opts.amend,
         .three_way = opts.common.three_way,
-        .ref = try refLabel(arena, opts.common.source),
+        .ref = opts.common.source.refText(),
     }) catch |err| switch (err) {
         // git's own stderr has already been shown; exit without extra noise.
         error.ReadTreeFailed, error.CommitFailed, error.AddFailed => std.process.exit(1),

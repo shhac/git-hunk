@@ -652,7 +652,7 @@ check_error() {
 # The diff-source refactor moves this validation; the order must survive it.
 # ============================================================================
 golden_repo mixed_state
-RANGE_ERR="error: --staged cannot be used with a range ref (contains '..')"
+RANGE_ERR="error: --staged compares the index with one commit; 'R..HEAD' is a range"
 check_error "test 2009" 1 "$RANGE_ERR" diff --staged --ref R..HEAD
 check_error "test 2009" 1 "$RANGE_ERR" diff --staged --ref R..HEAD 27a3329
 check_error "test 2009" 1 "$RANGE_ERR" check --staged --ref R..HEAD
@@ -665,17 +665,13 @@ check_error "test 2009" 1 "error: --3way is not supported for this subcommand (o
     stash --ref C1 --3way
 check_error "test 2009" 1 "error: unknown flag '--staged'" add --staged
 check_error "test 2009" 1 "error: --staged is not supported by commit -- use 'git commit' directly" commit --staged
-# Today's message names the expanded range against the empty tree, not the
-# ref as typed -- only the exit code is pinned.
-RC2009=0
-"$GIT_HUNK" add --ref nope 27a3329 > /dev/null 2>&1 || RC2009=$?
-[[ "$RC2009" -eq 1 ]] || fail "test 2009: add --ref nope <sha> exited $RC2009, want 1"
+check_error "test 2009" 1 "error: bad revision 'nope'" add --ref nope 27a3329
 pass "test 2009: error precedence pinned for --ref/--staged flag combinations"
 
 # ============================================================================
-# Test 2010: an empty commit as --ref. Today every command reports it as
-# "no unstaged changes" while list prints nothing and succeeds; the
-# diff-source refactor rewords these to name the commit, updating this block.
+# Test 2010: an empty commit as --ref. Commands that act on hunks say there
+# are no changes in it, naming the commit as typed; list and count report
+# an empty diff as they do on a clean tree: nothing, and 0.
 # ============================================================================
 empty_commit_state() {
     git commit -q --allow-empty -m "E: empty"
@@ -684,28 +680,68 @@ empty_commit_state() {
         -e 's/^mod line 05 .*/mod line 05 edited in worktree/' > mod.txt
 }
 golden_repo empty_commit_state
-check_error "test 2010" 1 "no unstaged changes" diff --ref E 27a3329
-check_error "test 2010" 1 "no unstaged changes" reset --ref E --all
-check_error "test 2010" 1 "no unstaged changes" restore --ref E --all
-check_error "test 2010" 1 "no unstaged changes" add --ref E --all
+check_error "test 2010" 1 "no changes in 'E'" diff --ref E 27a3329
+check_error "test 2010" 1 "no changes in 'E'" reset --ref E --all
+check_error "test 2010" 1 "no changes in 'E'" restore --ref E --all
+check_error "test 2010" 1 "no changes in 'E'" add --ref E --all
+check_error "test 2010" 1 "no changes in 'E'" commit --ref E --all -m msg
+check_error "test 2010" 1 "no changes in 'E..E'" diff --ref E..E 27a3329
 check_error "test 2010" 0 "" list --ref E
 [[ -z "$("$GIT_HUNK" list --ref E)" ]] || fail "test 2010: list --ref E printed hunks"
+check_error "test 2010" 0 "" count --ref E
+[[ "$("$GIT_HUNK" count --ref E)" == 0 ]] || fail "test 2010: count --ref E did not print 0"
 pass "test 2010: empty-commit --ref messages pinned"
 
 # ============================================================================
 # Test 2011: a --ref patch that no longer applies. C1's change is already in
-# the index, so staging it again conflicts. The message names the expanded
-# range, not the ref as typed; the diff-source refactor changes that and this
-# block with it. git apply's own lines before it are git's, not pinned.
+# the index, so staging it again conflicts. The message names the ref as
+# typed and where it failed to land. git apply's own lines before it are
+# git's, not pinned.
 # ============================================================================
 golden_repo
 RC2011=0
 ERR2011="$("$GIT_HUNK" add --ref HEAD~1 0adc154 2>&1 > /dev/null)" || RC2011=$?
 [[ "$RC2011" -eq 1 ]] || fail "test 2011: add --ref HEAD~1 <sha> exited $RC2011, want 1"
 check_text "test 2011: last stderr line of add --ref HEAD~1 <sha>" \
-    "error: patch did not apply cleanly — the diff from 'HEAD~1^..HEAD~1' may conflict with the current state (try --3way)" \
+    "error: changes from 'HEAD~1' do not apply cleanly to the index (try --3way)" \
     "$(printf '%s\n' "$ERR2011" | tail -1)"
 git diff --cached --quiet || fail "test 2011: the failed add changed the index"
-pass "test 2011: apply-conflict message under add --ref pinned"
+# Reverting C2 in a worktree that already lacks its change conflicts there.
+golden_repo
+lines other 1 6 > other.txt
+RC2011=0
+ERR2011="$("$GIT_HUNK" restore --ref C2 bd8ab1d 2>&1 > /dev/null)" || RC2011=$?
+[[ "$RC2011" -eq 1 ]] || fail "test 2011: restore --ref C2 <sha> exited $RC2011, want 1"
+check_text "test 2011: last stderr line of restore --ref C2 <sha>" \
+    "error: changes from 'C2' do not apply cleanly to the worktree (try --3way)" \
+    "$(printf '%s\n' "$ERR2011" | tail -1)"
+pass "test 2011: apply-conflict messages under add/restore --ref pinned"
+
+# ============================================================================
+# Test 2012: every revision --ref names is checked before any diff runs, and
+# a bad one is reported as typed -- a side of a range by itself.
+# ============================================================================
+golden_repo mixed_state
+check_error "test 2012" 1 "error: bad revision 'nope'" list --ref nope
+check_error "test 2012" 1 "error: bad revision 'nope'" list --staged --ref nope
+check_error "test 2012" 1 "error: bad revision 'nope'" list --ref nope..HEAD
+check_error "test 2012" 1 "error: bad revision 'nope'" list --ref R...nope
+check_error "test 2012" 1 "error: bad revision 'nope'" reset --ref nope --all
+check_error "test 2012" 1 "error: bad revision 'nope'" commit --ref nope --all -m msg
+pass "test 2012: bad revisions reported as typed"
+
+# ============================================================================
+# Test 2013: the index against a commit names the commit when it has no
+# changes, and --verbose suggests 'git add' only for unstaged changes.
+# ============================================================================
+golden_repo
+check_error "test 2013" 1 "no staged changes relative to 'HEAD'" diff --staged --ref HEAD 27a3329
+chmod +x mod.txt
+NOTE2013="$("$GIT_HUNK" list -v 2>&1 > /dev/null)"
+check_text "test 2013: list -v note" "note: mod.txt: mode change has no hunk — use 'git add mod.txt'" "$NOTE2013"
+git add mod.txt
+NOTE2013="$("$GIT_HUNK" list -v --staged 2>&1 > /dev/null)"
+check_text "test 2013: list -v --staged note" "note: mod.txt: mode change has no hunk" "$NOTE2013"
+pass "test 2013: index-against-commit and skipped-path wording pinned"
 
 report_results

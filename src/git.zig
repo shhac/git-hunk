@@ -242,9 +242,8 @@ const ApplyOptions = struct {
     /// `git apply` rejects `--3way` together with `--check`, so dry-run paths
     /// must drop this flag.
     three_way: bool = false,
-    /// The `--ref` in effect, for the failure message (so the user knows which
-    /// historical diff conflicted). A single ref arrives already expanded, so
-    /// this names the range (`X^..X`), not what was typed. Null means "current diff".
+    /// The `--ref` in effect as the user typed it, for the failure message (so
+    /// the user knows which historical diff conflicted). Null means "current diff".
     ref: ?[]const u8 = null,
     /// Optional child environment (e.g. GIT_INDEX_FILE pointing at a temp
     /// index). Null inherits the parent environment.
@@ -314,7 +313,11 @@ pub fn runGitApply(allocator: Allocator, patch: []const u8, opts: ApplyOptions) 
         if (result.stderr.len > 0) std.debug.print("{s}", .{result.stderr});
         const try_3way: []const u8 = if (opts.three_way) "" else " (try --3way)";
         if (opts.ref) |r| {
-            std.debug.print("error: patch did not apply cleanly — the diff from '{s}' may conflict with the current state{s}\n", .{ r, try_3way });
+            const target: []const u8 = switch (opts.target) {
+                .index => "the index",
+                .worktree => "the worktree",
+            };
+            std.debug.print("error: changes from '{s}' do not apply cleanly to {s}{s}\n", .{ r, target, try_3way });
         } else if (opts.check_only) {
             std.debug.print("error: patch would not apply cleanly — hashes may be stale\n", .{});
         } else {
@@ -491,6 +494,15 @@ fn diffSingleUntrackedSymlink(allocator: Allocator, file_path: []const u8) !?[]u
 /// Run `git rev-parse <ref>` and return the trimmed SHA.
 pub fn runGitRevParse(allocator: Allocator, ref: []const u8) ![]u8 {
     return runGitCapture(allocator, &.{ "git", "rev-parse", ref }, .{}, "git rev-parse", .{});
+}
+
+/// True if `rev` names something git can diff: a commit, or a tree.
+pub fn revisionExists(allocator: Allocator, rev: []const u8) bool {
+    const probe = std.fmt.allocPrint(allocator, "{s}^{{tree}}", .{rev}) catch return false;
+    defer allocator.free(probe);
+    const out = runGitCaptureErr(allocator, &.{ "git", "rev-parse", "--verify", "--quiet", probe }, .{}, error.BadRevision, .{ .trim = false }) catch return false;
+    allocator.free(out);
+    return true;
 }
 
 /// True if `<ref>^` resolves, i.e. the ref has a parent commit. Soft-fails to

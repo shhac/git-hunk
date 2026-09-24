@@ -131,19 +131,34 @@ fn exitUnknownCommand(stdout: *std.Io.Writer, name: []const u8) !noreturn {
     std.process.exit(1);
 }
 
-/// Find what a single commit is compared with: its first parent, or the
-/// empty tree for a root commit, whose changes are then its whole content.
-/// Parsing cannot, since it takes running git.
+/// Check every revision the source names, and find what a single commit is
+/// compared with: its first parent, or the empty tree for a root commit,
+/// whose changes are then its whole content. Parsing cannot, since both
+/// take running git.
 fn resolveSource(arena: std.mem.Allocator, source: *types.DiffSource) !void {
     switch (source.*) {
+        .worktree, .index => {},
+        .index_against, .worktree_against => |ref| requireRevision(arena, ref.text),
+        .range => |range| {
+            // An empty side is HEAD, which git reports itself if it is unborn.
+            if (range.from.len > 0) requireRevision(arena, range.from);
+            if (range.to.len > 0) requireRevision(arena, range.to);
+        },
         .rev => |*rev| {
+            requireRevision(arena, rev.ref.text);
             rev.base = if (git.refHasParent(arena, rev.ref.text))
                 try std.fmt.allocPrint(arena, "{s}^", .{rev.ref.text})
             else
                 try git.runGitEmptyTree(arena);
         },
-        else => {},
     }
+}
+
+/// Exit naming `rev` as typed, in git's own words, if it resolves to nothing
+/// git can diff.
+fn requireRevision(arena: std.mem.Allocator, rev: []const u8) void {
+    if (git.revisionExists(arena, rev)) return;
+    fatal("bad revision '{s}'", .{rev});
 }
 
 fn handleParseError(stdout: *std.Io.Writer, err: anyerror, cmd: help.Command) noreturn {

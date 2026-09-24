@@ -172,11 +172,11 @@ Deleted files appear automatically when a tracked file is removed.
 
 ## Working with hunks from history (`--ref` and `--3way`)
 
-Every command accepts `--ref <refspec>`. A **single ref** like `HEAD~1`, `abc1234`,
-or a branch name is shorthand for `<ref>^..<ref>` — i.e. *that commit's diff*
-(matching `git show <ref>` semantics). A **range** like `main..HEAD` keeps its
-literal "diff between two refs" meaning. To compare a ref against the worktree,
-write the range form `main..HEAD` explicitly.
+Every command except `stash` accepts `--ref <refspec>`. A **single commit** like
+`HEAD~1`, `abc1234`, or a branch name means *that commit's changes* against its
+first parent (the empty tree for a root commit). A **range** like `main..HEAD`
+is the diff between two commits, as `git diff` reads it. With `--staged`, a
+single ref compares the index with that commit instead.
 
 This unlocks two cherry-pick-by-hunk workflows:
 
@@ -238,7 +238,9 @@ All errors go to stderr. Exit 0 on success, 1 on error. Common errors:
 - `error: no hunk matching '<sha>'` -- hash not found
 - `error: ambiguous prefix '<sha>'` -- use longer prefix or `--file`
 - `error: patch did not apply cleanly` -- re-run `list` and try again
-- `no unstaged changes` / `no staged changes` -- nothing to operate on
+- `error: changes from '<ref>' do not apply cleanly to the index` (or `worktree`) -- context drifted; retry with `--3way`
+- `error: bad revision '<ref>'` -- git cannot resolve what `--ref` names
+- `no unstaged changes` / `no staged changes` / `no changes in '<ref>'` / `no staged changes relative to '<ref>'` -- nothing to operate on
 - `error: line selection not supported for <binary file|typechange|symlink|empty file> '<file>'` -- use the whole hunk
 - `error: <sha> (<file>) is an untracked file -- restoring it cannot be undone; use --force` -- restore requires `--force` for untracked files (dry-run bypasses this gate)
 

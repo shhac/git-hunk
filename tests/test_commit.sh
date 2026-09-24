@@ -357,7 +357,7 @@ SHA1019=$("$GIT_HUNK" list --ref "$HIST_C1_1019" --porcelain --oneline --file co
 [[ -n "$SHA1019" ]] || fail "test 1019: no hunk found"
 ERR1019=$("$GIT_HUNK" commit --ref "$HIST_C1_1019" --3way "$SHA1019" -m "would conflict" 2>&1 || true)
 echo "$ERR1019" | grep -q "produced conflicts" || \
-    echo "$ERR1019" | grep -q "did not apply cleanly" || \
+    echo "$ERR1019" | grep -q "do not apply cleanly" || \
     fail "test 1019: expected a conflict-mode failure message; got: '$ERR1019'"
 # The repository must not have a new commit.
 git log --oneline | grep -q "would conflict" \

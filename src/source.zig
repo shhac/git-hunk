@@ -73,6 +73,33 @@ pub const DiffSource = union(enum) {
         return self == .worktree;
     }
 
+    /// The revisions as the user typed them; null for the default diffs.
+    pub fn refText(self: DiffSource) ?[]const u8 {
+        return switch (self) {
+            .worktree, .index => null,
+            .index_against, .worktree_against => |ref| ref.text,
+            .rev => |rev| rev.ref.text,
+            .range => |range| range.text,
+        };
+    }
+
+    /// What the source's hunks are, naming any ref as typed; messages print
+    /// it after "no" when there are none.
+    pub fn describe(self: DiffSource) std.fmt.Alt(DiffSource, writeDescription) {
+        return .{ .data = self };
+    }
+
+    fn writeDescription(self: DiffSource, w: *std.Io.Writer) std.Io.Writer.Error!void {
+        switch (self) {
+            .worktree => try w.writeAll("unstaged changes"),
+            .index => try w.writeAll("staged changes"),
+            .index_against => |ref| try w.print("staged changes relative to '{s}'", .{ref.text}),
+            .worktree_against => |ref| try w.print("changes relative to '{s}'", .{ref.text}),
+            .rev => |rev| try w.print("changes in '{s}'", .{rev.ref.text}),
+            .range => |range| try w.print("changes in '{s}'", .{range.text}),
+        }
+    }
+
     /// Append the `git diff` arguments that select this source.
     pub fn appendDiffArgs(self: DiffSource, allocator: Allocator, argv: *std.ArrayList([]const u8)) !void {
         switch (self) {
@@ -154,6 +181,29 @@ test "includesUntracked: only the worktree source" {
     const want = [_]bool{ true, false, false, false, false, false };
     for (sample_sources, want) |source, includes| {
         try testing.expectEqual(includes, source.includesUntracked());
+    }
+}
+
+test "describe: names the ref as typed" {
+    const want = [_][]const u8{
+        "unstaged changes",
+        "staged changes",
+        "staged changes relative to 'X'",
+        "changes relative to 'HEAD'",
+        "changes in 'X'",
+        "changes in 'A..B'",
+    };
+    for (sample_sources, want) |source, text| {
+        const got = try std.fmt.allocPrint(testing.allocator, "{f}", .{source.describe()});
+        defer testing.allocator.free(got);
+        try testing.expectEqualStrings(text, got);
+    }
+}
+
+test "refText: the ref as typed, never the resolved base" {
+    const want = [_]?[]const u8{ null, null, "X", "HEAD", "X", "A..B" };
+    for (sample_sources, want) |source, text| {
+        if (text) |t| try testing.expectEqualStrings(t, source.refText().?) else try testing.expect(source.refText() == null);
     }
 }
 

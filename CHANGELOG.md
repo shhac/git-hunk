@@ -9,10 +9,17 @@
 
 - Every change to a binary path had the same hash (`bin.dat` hashed alike as a worktree edit and as a new file under `--ref`), so a hash listed before the file changed again still matched it and `check` could not notice. A binary hash now includes the blob ids from its `index` line. Binary hashes change with this release, and differ between SHA-1 and SHA-256 repositories.
 - An empty new or deleted file's patch carried `--- /dev/null` / `+++ b/<path>` lines git never writes for one, with the path unquoted even where git would quote it. The header is now git's own: `diff` shows it that way, and `git apply` takes it as is.
+- `--ref nope` failed with git's complaint about the empty tree it had been expanded against. Every revision `--ref` names, including each side of a range, is now checked before anything runs: `error: bad revision 'nope'`.
 
 ### Changed
 - `restore` of an untracked file without `--force` now says `restoring it cannot be undone; use --force` instead of `use --force to delete`: restoring part of an untracked file removes only those lines.
 - File sections are parsed into data that hunks share, and patch headers are rendered when the patch is built instead of when the diff is read. A filtered hunk's `@@` line is written the way git writes it (a count of 1 is left out, and a side that becomes empty is numbered by the line before it).
+- Messages name the `--ref` you typed rather than what it was expanded to or a mode it does not have:
+  - Nothing to act on: `no changes in 'X'` (or `'A..B'`) and `no staged changes relative to 'X'`, instead of `no unstaged changes`. `list` and `count` report an empty ref diff as they do a clean tree: nothing, and `0`.
+  - A `--ref` patch that does not apply: `error: changes from 'X' do not apply cleanly to the index (try --3way)` (or `to the worktree` for `restore`), instead of `patch did not apply cleanly — the diff from 'X^..X' may conflict with the current state`.
+  - A range with `--staged`: `error: --staged compares the index with one commit; 'A..B' is a range`, instead of `--staged cannot be used with a range ref (contains '..')`.
+  - `-v` suggests `git add <path>` for a path with no hunk only among unstaged changes; elsewhere the note stands alone.
+- The docs describe `--ref X` as that commit's changes against its first parent (the empty tree for a root commit) rather than as `X^..X` with `git show` semantics, which differ for a merge.
 - `--staged` and `--ref` now choose a diff source once, while parsing, instead of a staged/unstaged mode plus a ref string that `--ref X` rewrote to `X^..X`. Hashes, ranges and patches are unchanged.
 
 ## [0.19.0] - 2026-09-23

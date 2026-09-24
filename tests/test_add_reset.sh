@@ -739,7 +739,7 @@ git add confl234.txt && git commit -q -m "C2: diff content"
 SHA234=$("$GIT_HUNK" list --ref "$HIST_C1_234" --porcelain --oneline --file confl234.txt | head -1 | cut -f1)
 [[ -n "$SHA234" ]] || fail "test 235: no hunk found"
 ERR234=$("$GIT_HUNK" add --ref "$HIST_C1_234" --3way "$SHA234" 2>&1 || true)
-echo "$ERR234" | grep -qE "(unmerged index entries|did not apply cleanly)" \
+echo "$ERR234" | grep -qE "(unmerged index entries|do not apply cleanly)" \
     || fail "test 235: expected conflict-mode message; got: '$ERR234'"
 # Post-condition: if --3way landed unmerged entries, `git ls-files -u` shows them
 # (the user's resolution path). When --3way fails outright, the index is clean.

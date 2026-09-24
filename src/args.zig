@@ -156,7 +156,7 @@ const SourceFlags = struct {
     /// InvalidArgument (after printing) for a range with --staged.
     fn build(self: SourceFlags, default: DiffSource) error{InvalidArgument}!DiffSource {
         return DiffSource.fromFlags(self.ref, self.staged, default) catch {
-            std.debug.print("error: --staged cannot be used with a range ref (contains '..')\n", .{});
+            std.debug.print("error: --staged compares the index with one commit; '{s}' is a range\n", .{self.ref.?});
             return error.InvalidArgument;
         };
     }
