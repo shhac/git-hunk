@@ -158,6 +158,12 @@ Line specs work on untracked files directly — `git hunk add <sha>:2` on a
 brand-new file stages just that line. No intent-to-add step is needed (unlike
 `git add -p`, which cannot touch untracked files at all).
 
+A line spec on a new or deleted file works in every direction and leaves the
+unselected lines where they were: `reset <sha>:2` on a staged new file unstages
+that line and keeps the rest staged, `add <sha>:2` on a deleted file removes just
+that line from the index, and `restore --force <sha>:2` on an untracked file
+removes that line and keeps the file.
+
 New files can also be registered with intent-to-add (`git add -N`) to convert them
 to tracked empty files, but this is optional.
 

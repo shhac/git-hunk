@@ -57,9 +57,24 @@ reason to read the numbers off `diff -n` rather than count them by hand.
 context-vs-change distinction collapses. It also changes hunk hashes, so `list`
 and the follow-up command must pass the same `-U` value.
 
-### Untracked files
+### New, deleted and untracked files
 
 Line specs work on untracked files directly; no `git add -N` is required.
+
+A line spec on a new or deleted file works in every direction and leaves the
+unselected lines where they were, the way a hand edit would:
+
+| Command | Result |
+|---------|--------|
+| `add <new>:2` | Stages a new file holding line 2 |
+| `reset <staged-new>:2` | Line 2 leaves the index; the other lines stay staged |
+| `restore --force <untracked>:2` | Removes line 2; the file stays |
+| `add <deleted>:2` | Removes line 2 from the index; the file stays tracked |
+| `reset <staged-deleted>:2` | Puts only line 2 back in the index |
+| `restore <deleted>:2` | Brings back a file holding only line 2 |
+
+Selecting every removal of a file that shrinks leaves it tracked and empty,
+never deleted.
 
 ## git-hunk list
 

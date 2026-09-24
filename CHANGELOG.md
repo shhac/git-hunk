@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- A line spec on a new or deleted file failed in most directions. The patch header was fixed when the diff was read, so the filtered patch still claimed to create or delete the whole file while its body kept the deselected lines, and git refused it: `reset <sha>:2` on a staged new file, `restore --force <sha>:2` on an untracked file, and `add`/`commit` of part of a deletion all failed ("new file depends on old contents", "patch did not apply cleanly"). Headers are now rendered from what the line spec leaves: the deselected lines stay where they were, so a partial undo of a new file or a partial deletion is an edit to a file that still exists. The `index` line is kept, so `--3way` works on a partial selection too.
+
+### Changed
+- File sections are parsed into data that hunks share, and patch headers are rendered when the patch is built instead of when the diff is read. A filtered hunk's `@@` line is written the way git writes it (a count of 1 is left out, and a side that becomes empty is numbered by the line before it).
+
 ## [0.19.0] - 2026-09-23
 
 ### Added
