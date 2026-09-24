@@ -16,6 +16,11 @@
 #   GIT_HUNK_SHIM_COUNT_FILE file holding the running count of matching
 #                            invocations. Callers create/reset it; the shim
 #                            increments it on every match.
+#   GIT_HUNK_SHIM_TEE        directory to save each `git apply` patch into,
+#                            as apply.<N>.patch (N counts from 1 among the
+#                            files already there, so callers start from an
+#                            empty directory). The saved bytes are then fed
+#                            to the real git unchanged. Unset = no copy.
 #
 # Non-matching invocations (and matching ones other than the Nth) exec the
 # real git, resolved by stripping this shim's directory from PATH first.
@@ -44,6 +49,14 @@ if [[ -n "${GIT_HUNK_SHIM_FAIL:-}" && "${1:-}" == "$GIT_HUNK_SHIM_FAIL" ]]; then
         echo "git-shim: injected failure for 'git $1' (matching invocation $n)" >&2
         exit 1
     fi
+fi
+
+if [[ -n "${GIT_HUNK_SHIM_TEE:-}" && "${1:-}" == "apply" ]]; then
+    n=1
+    while [[ -e "$GIT_HUNK_SHIM_TEE/apply.$n.patch" ]]; do n=$((n + 1)); done
+    tee_file="$GIT_HUNK_SHIM_TEE/apply.$n.patch"
+    cat > "$tee_file"
+    exec "$REAL_GIT" "$@" < "$tee_file"
 fi
 
 exec "$REAL_GIT" "$@"
