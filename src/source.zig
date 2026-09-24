@@ -40,9 +40,6 @@ pub const DiffSource = union(enum) {
     index,
     /// A commit to the index: `git diff --cached <ref>`.
     index_against: Ref,
-    /// A commit to the worktree: `git diff <ref>`. Stash only: it builds its
-    /// stash commit on HEAD while the user picks hunks from the worktree diff.
-    worktree_against: Ref,
     /// A commit's own changes: `git diff <base> <ref>`.
     rev: Rev,
     /// `git diff A..B` or `git diff A...B`.
@@ -64,7 +61,7 @@ pub const DiffSource = union(enum) {
     pub fn anchor(self: DiffSource) Anchor {
         return switch (self) {
             .index, .index_against => .old,
-            .worktree, .worktree_against, .rev, .range => .new,
+            .worktree, .rev, .range => .new,
         };
     }
 
@@ -77,7 +74,7 @@ pub const DiffSource = union(enum) {
     pub fn refText(self: DiffSource) ?[]const u8 {
         return switch (self) {
             .worktree, .index => null,
-            .index_against, .worktree_against => |ref| ref.text,
+            .index_against => |ref| ref.text,
             .rev => |rev| rev.ref.text,
             .range => |range| range.text,
         };
@@ -94,7 +91,6 @@ pub const DiffSource = union(enum) {
             .worktree => try w.writeAll("unstaged changes"),
             .index => try w.writeAll("staged changes"),
             .index_against => |ref| try w.print("staged changes relative to '{s}'", .{ref.text}),
-            .worktree_against => |ref| try w.print("changes relative to '{s}'", .{ref.text}),
             .rev => |rev| try w.print("changes in '{s}'", .{rev.ref.text}),
             .range => |range| try w.print("changes in '{s}'", .{range.text}),
         }
@@ -106,7 +102,6 @@ pub const DiffSource = union(enum) {
             .worktree => {},
             .index => try argv.append(allocator, "--cached"),
             .index_against => |ref| try argv.appendSlice(allocator, &.{ "--cached", ref.text }),
-            .worktree_against => |ref| try argv.append(allocator, ref.text),
             .rev => |rev| try argv.appendSlice(allocator, &.{ rev.base.?, rev.ref.text }),
             .range => |range| try argv.append(allocator, range.text),
         }
@@ -165,20 +160,19 @@ const sample_sources = [_]DiffSource{
     .worktree,
     .index,
     .{ .index_against = .{ .text = "X" } },
-    .{ .worktree_against = .{ .text = "HEAD" } },
     .{ .rev = .{ .ref = .{ .text = "X" }, .base = "X^" } },
     .{ .range = .{ .text = "A..B", .from = "A", .to = "B" } },
 };
 
 test "anchor: index sources anchor on the old side, the rest on the new" {
-    const want = [_]Anchor{ .new, .old, .old, .new, .new, .new };
+    const want = [_]Anchor{ .new, .old, .old, .new, .new };
     for (sample_sources, want) |source, anchor| {
         try testing.expectEqual(anchor, source.anchor());
     }
 }
 
 test "includesUntracked: only the worktree source" {
-    const want = [_]bool{ true, false, false, false, false, false };
+    const want = [_]bool{ true, false, false, false, false };
     for (sample_sources, want) |source, includes| {
         try testing.expectEqual(includes, source.includesUntracked());
     }
@@ -189,7 +183,6 @@ test "describe: names the ref as typed" {
         "unstaged changes",
         "staged changes",
         "staged changes relative to 'X'",
-        "changes relative to 'HEAD'",
         "changes in 'X'",
         "changes in 'A..B'",
     };
@@ -201,7 +194,7 @@ test "describe: names the ref as typed" {
 }
 
 test "refText: the ref as typed, never the resolved base" {
-    const want = [_]?[]const u8{ null, null, "X", "HEAD", "X", "A..B" };
+    const want = [_]?[]const u8{ null, null, "X", "X", "A..B" };
     for (sample_sources, want) |source, text| {
         if (text) |t| try testing.expectEqualStrings(t, source.refText().?) else try testing.expect(source.refText() == null);
     }
@@ -212,7 +205,6 @@ test "appendDiffArgs: the git diff arguments for each source" {
         &.{},
         &.{"--cached"},
         &.{ "--cached", "X" },
-        &.{"HEAD"},
         &.{ "X^", "X" },
         &.{"A..B"},
     };

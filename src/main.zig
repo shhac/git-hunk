@@ -19,7 +19,6 @@ comptime {
     _ = @import("diff.zig");
     _ = @import("format.zig");
     _ = @import("git.zig");
-    _ = @import("head_match.zig");
     _ = @import("help.zig");
     _ = @import("patch.zig");
     _ = @import("path.zig");
@@ -138,7 +137,7 @@ fn exitUnknownCommand(stdout: *std.Io.Writer, name: []const u8) !noreturn {
 fn resolveSource(arena: std.mem.Allocator, source: *types.DiffSource) !void {
     switch (source.*) {
         .worktree, .index => {},
-        .index_against, .worktree_against => |ref| requireRevision(arena, ref.text),
+        .index_against => |ref| requireRevision(arena, ref.text),
         .range => |range| {
             // An empty side is HEAD, which git reports itself if it is unborn.
             if (range.from.len > 0) requireRevision(arena, range.from);
