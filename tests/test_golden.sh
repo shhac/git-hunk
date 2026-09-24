@@ -2,7 +2,8 @@
 source "$(dirname "$0")/harness.sh" "$1"
 
 # ============================================================================
-# Golden pins (tests 2000-2011): byte-exact records of what git-hunk prints,
+# Golden pins (tests 2000-2011; 2012-2014 cover what the diff-source
+# refactor changed on purpose): byte-exact records of what git-hunk prints,
 # and of what it hands to `git apply`, for every diff source and every kind of
 # file section. They were taken from the binary as it stood before the
 # file-section and diff-source refactors, which must leave hashes, ranges and
@@ -743,5 +744,24 @@ git add mod.txt
 NOTE2013="$("$GIT_HUNK" list -v --staged 2>&1 > /dev/null)"
 check_text "test 2013: list -v --staged note" "note: mod.txt: mode change has no hunk" "$NOTE2013"
 pass "test 2013: index-against-commit and skipped-path wording pinned"
+
+# ============================================================================
+# Test 2014: a file named like a revision cannot shadow it. Revisions end
+# with --, so git never has to guess whether 'main' or 'HEAD' is a path.
+# ============================================================================
+golden_repo
+BRANCH2014="$(git symbolic-ref --short HEAD)"
+printf 'shadow\n' > "$BRANCH2014"
+printf 'shadow\n' > HEAD
+git add "$BRANCH2014" HEAD
+lines other 1 6 | sed 's/^other line 05 .*/other line 05 edited/' > other.txt
+PATHS2014="$("$GIT_HUNK" list --staged --ref "$BRANCH2014" --porcelain --oneline | cut -f2 | LC_ALL=C sort | tr '\n' ' ')"
+check_text "test 2014: paths of list --staged --ref $BRANCH2014" "$(printf '%s\n' HEAD "$BRANCH2014" | LC_ALL=C sort | tr '\n' ' ')" "$PATHS2014"
+SHA2014="$("$GIT_HUNK" list --porcelain --oneline --file other.txt | cut -f1)"
+[[ -n "$SHA2014" ]] || fail "test 2014: no hunk for other.txt"
+"$GIT_HUNK" stash "$SHA2014" > /dev/null || fail "test 2014: stash with a file named HEAD failed"
+git diff --quiet -- other.txt || fail "test 2014: stash left other.txt changed"
+git stash list | grep -q . || fail "test 2014: stash stored nothing"
+pass "test 2014: files named HEAD and like the branch shadow no revision"
 
 report_results

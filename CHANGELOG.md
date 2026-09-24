@@ -9,6 +9,7 @@
 
 - Every change to a binary path had the same hash (`bin.dat` hashed alike as a worktree edit and as a new file under `--ref`), so a hash listed before the file changed again still matched it and `check` could not notice. A binary hash now includes the blob ids from its `index` line. Binary hashes change with this release, and differ between SHA-1 and SHA-256 repositories.
 - An empty new or deleted file's patch carried `--- /dev/null` / `+++ b/<path>` lines git never writes for one, with the path unquoted even where git would quote it. The header is now git's own: `diff` shows it that way, and `git apply` takes it as is.
+- A file named like a revision broke the commands that name one: with a file called `main`, `list --staged --ref main` failed with git's "ambiguous argument 'main': both revision and filename", and a file called `HEAD` made every `stash` fail the same way. Revisions now always end with `--`, so git never has to guess.
 - `--ref nope` failed with git's complaint about the empty tree it had been expanded against. Every revision `--ref` names, including each side of a range, is now checked before anything runs: `error: bad revision 'nope'`.
 
 ### Changed

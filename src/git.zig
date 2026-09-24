@@ -205,7 +205,9 @@ const diff_hygiene_flags: []const []const u8 = &.{
 const name_only_hygiene_flags: []const []const u8 = &.{ "--no-ext-diff", "--no-textconv", "--no-color", "--no-relative" };
 
 /// `git diff` for `source`, scoped to specific file paths via
-/// `-- file1 file2 ...`. Pass an empty slice for no file filter.
+/// `-- file1 file2 ...`. Pass an empty slice for no file filter. The `--` is
+/// always there: without it a file named like a revision (`main`, `HEAD`)
+/// makes git refuse the revision as ambiguous.
 pub fn runGitDiffFiles(allocator: Allocator, source: DiffSource, context: ?u32, file_paths: []const []const u8) ![]u8 {
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(allocator);
@@ -217,10 +219,8 @@ pub fn runGitDiffFiles(allocator: Allocator, source: DiffSource, context: ?u32, 
     }
     try argv.appendSlice(allocator, diff_hygiene_flags);
     try argv.append(allocator, "--full-index");
-    if (file_paths.len > 0) {
-        try argv.append(allocator, "--");
-        try argv.appendSlice(allocator, file_paths);
-    }
+    try argv.append(allocator, "--");
+    try argv.appendSlice(allocator, file_paths);
 
     return runGitCapture(allocator, argv.items, .{ .max_bytes = 10 * 1024 * 1024 }, "git diff", .{ .trim = false });
 }
@@ -365,7 +365,7 @@ pub fn runGitDiffTreeNames(allocator: Allocator) ![]u8 {
     defer argv.deinit(allocator);
     try argv.appendSlice(allocator, &.{ "git", "diff-tree", "-r", "--name-only", "-z", "--no-commit-id" });
     try argv.appendSlice(allocator, name_only_hygiene_flags);
-    try argv.appendSlice(allocator, &.{ "--root", "HEAD" });
+    try argv.appendSlice(allocator, &.{ "--root", "HEAD", "--" });
     return runGitCaptureErr(allocator, argv.items, .{}, error.DiffTreeFailed, .{ .trim = false });
 }
 
@@ -524,9 +524,9 @@ pub fn runGitSymbolicRef(allocator: Allocator) !?[]u8 {
     };
 }
 
-/// Run `git log --oneline -1 HEAD` and return the trimmed output.
+/// Run `git log --oneline -1 HEAD --` and return the trimmed output.
 pub fn runGitLogOneline(allocator: Allocator) ![]u8 {
-    return runGitCapture(allocator, &.{ "git", "log", "--oneline", "-1", "HEAD" }, .{}, "git log", .{});
+    return runGitCapture(allocator, &.{ "git", "log", "--oneline", "-1", "HEAD", "--" }, .{}, "git log", .{});
 }
 
 /// Run `git write-tree` (against `env_map`'s index when given) and return
