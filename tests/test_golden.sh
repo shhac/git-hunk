@@ -40,6 +40,10 @@ build_template() {
     cd "$1"
     git config user.email "test@git-hunk.test"
     git config user.name "git-hunk test"
+    # Auto-maintenance detaches after a commit; its lock file vanishing
+    # mid-copy made golden_repo's `cp -R` fail at random.
+    git config maintenance.auto false
+    git config gc.auto 0
     lines mod 1 30 > mod.txt
     lines gonestaged 1 6 > gone-staged.txt
     lines gonewt 1 6 > gone-wt.txt
