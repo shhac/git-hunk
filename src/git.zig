@@ -403,22 +403,21 @@ pub fn runGitAddFilesLenient(allocator: Allocator, file_paths: []const []const u
 /// Only files matching `file_filter` are included (empty slice = all untracked files).
 /// Allocates the result with `allocator`; caller must free the returned slice.
 pub fn diffUntrackedFiles(allocator: Allocator, file_filter: []const []const u8) ![]u8 {
-    // Get list of untracked file paths
-    const ls_argv: []const []const u8 = &.{ "git", "ls-files", "--others", "--exclude-standard" };
+    // NUL-separated, so a name git would C-quote arrives as the name itself.
+    // The filter is passed on as a pathspec so git lists only what can match
+    // it, rather than every untracked file in the repository.
+    const ls_argv = try pathspecArgv(allocator, &.{ "git", "ls-files", "--others", "--exclude-standard", "-z" }, file_filter);
+    defer allocator.free(ls_argv);
 
     const ls_result = try runCommand(allocator, ls_argv, .{});
     defer allocator.free(ls_result.stdout);
     defer allocator.free(ls_result.stderr);
     if (ls_result.exit_code != 0) return try allocator.alloc(u8, 0);
 
-    const ls_output = std.mem.trimEnd(u8, ls_result.stdout, "\n");
-    if (ls_output.len == 0) return try allocator.alloc(u8, 0);
-
-    // Collect diffs for each untracked file
     var result: std.ArrayList(u8) = .empty;
     errdefer result.deinit(allocator);
 
-    var iter = std.mem.splitScalar(u8, ls_output, '\n');
+    var iter = std.mem.splitScalar(u8, ls_result.stdout, 0);
     while (iter.next()) |file_path| {
         if (file_path.len == 0) continue;
 

@@ -1124,4 +1124,30 @@ SHA251="$(first_sha --ref "$COPY251" --file dst.txt)"
     || fail "test 251: add --ref should stage the copy's content"
 pass "test 251: diff.renames=copies keeps copies as copies through reset and add --ref"
 
+# ============================================================================
+# Test 252: an untracked file with a name git C-quotes is listed, added, and
+# its reset reported. Untracked names were read one per line from
+# `ls-files --others`, which quotes such a name, so it matched no file.
+# ============================================================================
+new_repo
+printf 'first\nsecond\n' > "ünï.txt"
+LIST252="$("$GIT_HUNK" list --porcelain --oneline --file "ünï.txt")"
+SHA252="$(echo "$LIST252" | cut -f1)"
+if [[ -n "$SHA252" && "$(echo "$LIST252" | cut -f2)" == "ünï.txt" ]]; then
+    "$GIT_HUNK" add "$SHA252" > /dev/null 2>&1 || fail "test 252: add of untracked ünï.txt failed"
+    [[ "$(blob_bytes :ünï.txt)" == "$(want_bytes 'first\nsecond\n')" ]] \
+        || fail "test 252: add should stage ünï.txt"
+else
+    fail "test 252: untracked ünï.txt should be listed, got: '$LIST252'"
+fi
+
+# Unstaging a new file leaves it untracked; the result is its untracked hunk.
+git reset -q
+git add "ünï.txt"
+GOT252="$("$GIT_HUNK" reset "$(first_sha --staged --file "ünï.txt")" --porcelain 2>&1 | cut -f3)"
+WANT252="$(first_sha --file "ünï.txt")"
+[[ -n "$WANT252" && "$GOT252" == "$WANT252" ]] \
+    || fail "test 252: reset result '$GOT252' should be the untracked hunk list shows, '$WANT252'"
+pass "test 252: untracked files with non-ASCII names list, add and reset"
+
 report_results
