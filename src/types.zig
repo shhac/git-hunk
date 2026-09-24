@@ -92,7 +92,7 @@ pub const FileSection = struct {
     /// carry the path it moved to.
     renamed_from_path: ?[]const u8 = null,
     /// Verbatim `index` line, kept rather than re-rendered: `git apply --3way`
-    /// needs its blob ids, and they come abbreviated to varying widths.
+    /// needs its blob ids exactly as git wrote them.
     index_line: ?[]const u8 = null,
     /// Verbatim `---`/`+++` lines; null where git printed none (a binary or
     /// empty file).

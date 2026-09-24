@@ -438,6 +438,8 @@ pub fn diffUntrackedFiles(allocator: Allocator, file_filter: []const []const u8)
 
 /// Run `git diff --no-index --src-prefix=a/ --dst-prefix=b/ --no-color -- /dev/null <file>`
 /// for a single untracked file. Exit code 1 is expected (differences found).
+/// `--full-index` as for tracked diffs: a binary's hash is taken over its
+/// blob ids, which would otherwise be abbreviated to `core.abbrev`.
 fn diffSingleUntrackedFile(allocator: Allocator, file_path: []const u8) ![]u8 {
     if (try diffSingleUntrackedSymlink(allocator, file_path)) |diff| {
         return diff;
@@ -447,7 +449,7 @@ fn diffSingleUntrackedFile(allocator: Allocator, file_path: []const u8) ![]u8 {
     defer argv.deinit(allocator);
     try argv.appendSlice(allocator, &.{ "git", "diff", "--no-index" });
     try argv.appendSlice(allocator, diff_hygiene_flags);
-    try argv.appendSlice(allocator, &.{ "--", "/dev/null", file_path });
+    try argv.appendSlice(allocator, &.{ "--full-index", "--", "/dev/null", file_path });
 
     const result = runCommand(allocator, argv.items, .{ .max_bytes = 10 * 1024 * 1024 }) catch |err| {
         if (err == error.AbnormalTermination) return try allocator.alloc(u8, 0);
@@ -475,17 +477,22 @@ fn diffSingleUntrackedSymlink(allocator: Allocator, file_path: []const u8) !?[]u
 
     const blob_sha = try runGitCapture(allocator, &.{ "git", "hash-object", "--stdin" }, .{ .stdin_data = target }, "git hash-object --stdin", .{});
     defer allocator.free(blob_sha);
+    // Full ids, as git writes them under --full-index; the zero id matches the
+    // object format's length.
+    const zero_id = try allocator.alloc(u8, blob_sha.len);
+    defer allocator.free(zero_id);
+    @memset(zero_id, '0');
     return try std.fmt.allocPrint(
         allocator,
         "diff --git a/{s} b/{s}\n" ++
             "new file mode 120000\n" ++
-            "index 0000000..{s}\n" ++
+            "index {s}..{s}\n" ++
             "--- /dev/null\n" ++
             "+++ b/{s}\n" ++
             "@@ -0,0 +1 @@\n" ++
             "+{s}\n" ++
             "\\ No newline at end of file\n",
-        .{ file_path, file_path, blob_sha[0..7], file_path, target },
+        .{ file_path, file_path, zero_id, blob_sha, file_path, target },
     );
 }
 

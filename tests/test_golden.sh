@@ -2,7 +2,7 @@
 source "$(dirname "$0")/harness.sh" "$1"
 
 # ============================================================================
-# Golden pins (tests 2000-2011; 2012-2015 cover what the diff-source
+# Golden pins (tests 2000-2011; 2012-2016 cover what the diff-source
 # refactor changed on purpose): byte-exact records of what git-hunk prints,
 # and of what it hands to `git apply`, for every diff source and every kind of
 # file section. They were taken from the binary as it stood before the
@@ -157,7 +157,6 @@ binary_hash() {
 # values. Resolve before the command under test changes the index.
 #   {head:P}   blob id of P at HEAD         {file:P}  blob id of worktree file P
 #   {str:S}    blob id of the bytes S       {zero}    the all-zero object id
-#   {file7:P} {str7:S} {zero7}              the same, abbreviated to 7
 #   {acc:a} {acc:b}                         the non-ASCII path, see accent_path
 #   {bin:P}      hash of P's binary change, index to worktree
 #   {binroot:P}  hash of P's binary creation in the root commit R
@@ -165,7 +164,7 @@ golden_expand() {
     local text tok kind arg val
     text="$(cat; printf .)"
     text="${text%.}"
-    local re='\{(head|file7|file|str7|str|zero7|zero|acc|binroot|bin):?([^}]*)\}'
+    local re='\{(head|file|str|zero|acc|binroot|bin):?([^}]*)\}'
     while [[ "$text" =~ $re ]]; do
         tok="${BASH_REMATCH[0]}"
         kind="${BASH_REMATCH[1]}"
@@ -173,11 +172,8 @@ golden_expand() {
         case "$kind" in
             head) val="$(git rev-parse "HEAD:$arg")" ;;
             file) val="$(git hash-object -- "$arg")" ;;
-            file7) val="$(git hash-object -- "$arg" | cut -c1-7)" ;;
             str) val="$(printf '%s' "$arg" | git hash-object --stdin)" ;;
-            str7) val="$(printf '%s' "$arg" | git hash-object --stdin | cut -c1-7)" ;;
             zero) val="$(git rev-parse HEAD | tr '0-9a-f' '0')" ;;
-            zero7) val="0000000" ;;
             acc) val="$(accent_path "$arg")" ;;
             bin) val="$(binary_hash "$arg" "$(git rev-parse ":$arg")" "$(git hash-object -- "$arg")")" ;;
             binroot) val="$(binary_hash "$arg" "$(git rev-parse HEAD | tr '0-9a-f' '0')" "$(git rev-parse "R:$arg")")" ;;
@@ -467,7 +463,7 @@ EOT
         untracked) cat <<'EOT'
 diff --git a/u.txt b/u.txt
 new file mode 100644
-index {zero7}..{file7:u.txt}
+index {zero}..{file:u.txt}
 --- /dev/null
 +++ b/u.txt
 @@ -0,0 +1,2 @@
@@ -478,13 +474,13 @@ EOT
         untracked-empty) cat <<'EOT'
 diff --git a/u-empty.txt b/u-empty.txt
 new file mode 100644
-index {zero7}..{file7:u-empty.txt}
+index {zero}..{file:u-empty.txt}
 EOT
         ;;
         untracked-symlink) cat <<'EOT'
 diff --git a/u-link b/u-link
 new file mode 120000
-index {zero7}..{str7:target-a}
+index {zero}..{str:target-a}
 --- /dev/null
 +++ b/u-link
 @@ -0,0 +1 @@
@@ -788,5 +784,17 @@ check_text "test 2015: reset of a new file" "$(listed_hashes --file new.txt)" "$
 GOT2015="$(result_hashes add "$GOT2015")"
 check_text "test 2015: add of it again" "$(listed_hashes --staged --file new.txt)" "$GOT2015"
 pass "test 2015: add and reset results match what list shows next"
+
+# ============================================================================
+# Test 2016: an untracked binary's hash is taken over full blob ids, so
+# core.abbrev cannot change it.
+# ============================================================================
+golden_repo
+printf 'untracked\000binary\n' > u.bin
+WANT2016="$(binary_hash u.bin "$(git rev-parse HEAD | tr '0-9a-f' '0')" "$(git hash-object -- u.bin)")"
+check_text "test 2016: untracked binary hash" "$WANT2016" "$(listed_hashes --file u.bin)"
+git config core.abbrev 12
+check_text "test 2016: untracked binary hash under core.abbrev=12" "$WANT2016" "$(listed_hashes --file u.bin)"
+pass "test 2016: untracked binary hash independent of core.abbrev"
 
 report_results

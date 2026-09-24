@@ -269,9 +269,10 @@ for FMT863 in sha1 sha256; do
     SHA863="$("$GIT_HUNK" list --porcelain --oneline 2>/dev/null | grep "link863" | cut -f1)"
     [[ -n "$SHA863" ]] || fail "test 863: no hunk for untracked symlink in a $FMT863 repo"
     INDEX863="$("$GIT_HUNK" diff "$SHA863" | grep '^index ')"
-    WANT863="$(printf 'target863' | git hash-object --stdin | cut -c1-7)"
-    [[ "$INDEX863" == "index 0000000..$WANT863" ]] \
-        || fail "test 863: expected 'index 0000000..$WANT863' in a $FMT863 repo, got '$INDEX863'"
+    WANT863="$(printf 'target863' | git hash-object --stdin)"
+    ZERO863="$(printf '%s' "$WANT863" | tr '0-9a-f' '0')"
+    [[ "$INDEX863" == "index $ZERO863..$WANT863" ]] \
+        || fail "test 863: expected 'index $ZERO863..$WANT863' in a $FMT863 repo, got '$INDEX863'"
     pass "test 863: untracked symlink diff uses the $FMT863 blob ID"
     cd /tmp && rm -rf "$REPO863"
 done
