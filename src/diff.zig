@@ -272,9 +272,20 @@ pub fn parseUntrackedDiff(arena: Allocator, diff: []const u8, hunks: *std.ArrayL
 
 fn parseSections(arena: Allocator, diff: []const u8, mode: DiffMode, is_untracked: bool, hunks: *std.ArrayList(Hunk)) !void {
     var cursor = DiffCursor.init(diff);
+    var previous: ?*FileSection = null;
     while (nextFileHeader(&cursor)) |header| {
-        try parseFileSection(arena, &cursor, diff, header, mode, is_untracked, hunks);
+        const section = try parseFileSection(arena, &cursor, diff, header, mode, is_untracked, hunks);
+        if (section != null and previous != null) linkTypechange(previous.?, section.?);
+        previous = section;
     }
+}
+
+/// git writes a typechange as two sections for one path, the deletion first.
+fn linkTypechange(deleted: *FileSection, created: *FileSection) void {
+    if (!deleted.is_deleted_file or !created.is_new_file) return;
+    if (!std.mem.eql(u8, deleted.diff_git_line, created.diff_git_line)) return;
+    deleted.is_typechange = true;
+    created.is_typechange = true;
 }
 
 /// The opening of one file's section: its `diff --git` line and the extended
@@ -298,7 +309,7 @@ fn nextFileHeader(cursor: *DiffCursor) ?FileHeader {
 /// Parse what follows one file header into `hunks`: a synthesized whole-file
 /// hunk for binaries and empty new/deleted files, else one hunk per `@@`.
 /// Sections with nothing representable (submodules, mode or rename only)
-/// add nothing.
+/// add nothing. Returns the section parsed, or null for one skipped.
 fn parseFileSection(
     arena: Allocator,
     cursor: *DiffCursor,
@@ -307,36 +318,36 @@ fn parseFileSection(
     mode: DiffMode,
     is_untracked: bool,
     hunks: *std.ArrayList(Hunk),
-) !void {
+) !?*FileSection {
     const state = header.state;
-    if (state.is_submodule) return;
+    if (state.is_submodule) return null;
     const is_whole_file = state.is_new_file or state.is_deleted_file;
 
     if (state.is_binary) {
-        const file_path = (try sectionFilePath(arena, header.diff_git_line, state)) orelse return;
+        const file_path = (try sectionFilePath(arena, header.diff_git_line, state)) orelse return null;
         const section = try newSection(arena, header, null, null, is_untracked);
         try hunks.append(arena, synthesizeWholeFileHunk(file_path, section, "binary"));
-        return;
+        return section;
     }
 
     const minus_line = cursor.peek() orelse "";
     if (!std.mem.startsWith(u8, minus_line, "--- ")) {
         // An empty new/deleted file has no ---/+++ at all.
-        if (!is_whole_file) return;
-        const file_path = (try sectionFilePath(arena, header.diff_git_line, state)) orelse return;
+        if (!is_whole_file) return null;
+        const file_path = (try sectionFilePath(arena, header.diff_git_line, state)) orelse return null;
         const section = try newSection(arena, header, null, null, is_untracked);
         try hunks.append(arena, synthesizeWholeFileHunk(file_path, section, ""));
-        return;
+        return section;
     }
     cursor.advance();
-    const plus_line = cursor.peek() orelse return;
-    if (!std.mem.startsWith(u8, plus_line, "+++ ")) return;
+    const plus_line = cursor.peek() orelse return null;
+    if (!std.mem.startsWith(u8, plus_line, "+++ ")) return null;
     cursor.advance();
 
     const file_path = if (state.is_deleted_file)
-        (try extractDiffPath(arena, minus_line, .old)) orelse return
+        (try extractDiffPath(arena, minus_line, .old)) orelse return null
     else
-        (try extractDiffPath(arena, plus_line, .new)) orelse return;
+        (try extractDiffPath(arena, plus_line, .new)) orelse return null;
 
     const section = try newSection(arena, header, minus_line, plus_line, is_untracked);
 
@@ -344,7 +355,7 @@ fn parseFileSection(
     const at_follows = if (cursor.peek()) |line| std.mem.startsWith(u8, line, "@@ ") else false;
     if (!at_follows and is_whole_file) {
         try hunks.append(arena, synthesizeWholeFileHunk(file_path, section, ""));
-        return;
+        return section;
     }
 
     while (cursor.peek()) |hdr| {
@@ -365,6 +376,7 @@ fn parseFileSection(
             .section = section,
         });
     }
+    return section;
 }
 
 /// Given a slice that points into `haystack`, return its start offset.
@@ -1331,6 +1343,42 @@ test "extractPathFromDiffGitLine quoted path ending in escaped quote" {
     defer arena.deinit();
     const result = try extractPathFromDiffGitLine(arena.allocator(), "diff --git \"a/q\\\"\" \"b/q\\\"\"");
     try std.testing.expectEqualStrings("q\"", result.?);
+}
+
+test "parseDiff links the two halves of a typechange" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const diff =
+        \\diff --git a/tc b/tc
+        \\deleted file mode 100644
+        \\index 1234567..0000000
+        \\--- a/tc
+        \\+++ /dev/null
+        \\@@ -1 +0,0 @@
+        \\-text
+        \\diff --git a/tc b/tc
+        \\new file mode 120000
+        \\index 0000000..89abcde
+        \\--- /dev/null
+        \\+++ b/tc
+        \\@@ -0,0 +1 @@
+        \\+target
+        \\\ No newline at end of file
+        \\diff --git a/u b/u
+        \\new file mode 100644
+        \\index 0000000..89abcde
+        \\--- /dev/null
+        \\+++ b/u
+        \\@@ -0,0 +1 @@
+        \\+u
+        \\
+    ;
+    var hunks: std.ArrayList(Hunk) = .empty;
+    try parseDiff(arena.allocator(), diff, .unstaged, &hunks);
+    try std.testing.expectEqual(@as(usize, 3), hunks.items.len);
+    try std.testing.expect(hunks.items[0].section.is_typechange);
+    try std.testing.expect(hunks.items[1].section.is_typechange);
+    try std.testing.expect(!hunks.items[2].section.is_typechange);
 }
 
 test "parseDiff binary rename takes the new path from rename to" {

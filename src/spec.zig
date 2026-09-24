@@ -369,7 +369,7 @@ pub const commands = [_]CommandSpec{
         .man_desc = &.{
             "Restore unstaged worktree changes by hash.",
             "Use \\fB\\-\\-all\\fR to restore all unstaged changes.",
-            "Use \\fB\\-\\-force\\fR to restore untracked files (deletes them permanently).",
+            "Use \\fB\\-\\-force\\fR to restore untracked files, which git has no copy of (a whole one is deleted).",
         },
         .usage = &.{"git-hunk restore [options] [<sha[:lines]>...]"},
         .args = &.{.{
@@ -390,7 +390,7 @@ pub const commands = [_]CommandSpec{
             f_files_from,
             .{
                 .long = "--force",
-                .help_desc = &.{"Required to restore untracked files (deletes them permanently)"},
+                .help_desc = &.{"Required to restore untracked files, which git has no copy of"},
             },
             .{
                 .long = "--dry-run",
@@ -408,7 +408,8 @@ pub const commands = [_]CommandSpec{
         .post_options = &.{.{
             .lines = &.{
                 "WARNING: This command is DESTRUCTIVE. Restored changes cannot be recovered.",
-                "Untracked files require --force to restore (they will be deleted entirely).",
+                "Untracked files require --force: restoring a whole one deletes it, and",
+                "restoring some of its lines removes just those.",
                 "Use --dry-run to preview before restoring.",
             },
         }},

@@ -2,12 +2,14 @@
 source "$(dirname "$0")/harness.sh" "$1"
 
 # ============================================================================
-# Line specs on whole-file hunks (tests 2100-2112). A line spec picks part of
+# Line specs on whole-file hunks (tests 2100-2114). A line spec picks part of
 # a new or deleted file; the patch applied must then describe what is left:
 # lines the spec leaves behind keep the file in existence, so a partial
 # creation undone or a partial deletion applied is a change to an existing
 # file, never the removal of the whole of it. Every command is checked by the
-# bytes it leaves in the index, the worktree or the commit.
+# bytes it leaves in the index, the worktree or the commit. Where no part of a
+# file makes sense on its own (a typechange, a symlink, an empty file), the
+# line spec is refused.
 # ============================================================================
 
 # A repo with d.txt (four lines) committed and n.txt (three lines) untracked.
@@ -202,5 +204,87 @@ SHA="$(sha_for d.txt)"
 [[ "$(blob_bytes :d.txt)" == "$(want_bytes 'one\nTWO\nthree\nfour\n')" ]] || fail "test 2110: the staged edit was lost"
 git cat-file -e 'stash@{0}:d.txt' 2> /dev/null && fail "test 2110: the stash still has d.txt"
 pass "test 2110: stash of a deletion over a staged edit keeps the edit staged"
+
+# check_rejected <label> <stderr> <git-hunk args>: exit 1 with exactly that
+# stderr, and nothing changed.
+check_rejected() {
+    local label="$1" want_err="$2"
+    shift 2
+    local before rc=0 err
+    before="$(repo_state)"
+    err="$("$GIT_HUNK" "$@" 2>&1 > /dev/null)" || rc=$?
+    [[ "$rc" -eq 1 ]] || fail "$label: git-hunk $* exited $rc, want 1"
+    [[ "$err" == "$want_err" ]] || fail "$label: git-hunk $* said '$err', want '$want_err'"
+    [[ "$(repo_state)" == "$before" ]] || fail "$label: git-hunk $* changed the repo"
+}
+
+# ============================================================================
+# Test 2111: a line spec on either half of a typechange is rejected by every
+# command that takes one
+# ============================================================================
+whole_file_repo
+rm d.txt
+ln -s n.txt d.txt
+TC_ERR="error: line selection not supported for typechange 'd.txt'"
+[[ "$("$GIT_HUNK" count --file d.txt)" == "2" ]] || fail "test 2111: want the typechange as two hunks"
+for SHA in $("$GIT_HUNK" list --porcelain --oneline --file d.txt | cut -f1); do
+    check_rejected "test 2111" "$TC_ERR" add "$SHA:1"
+    check_rejected "test 2111" "$TC_ERR" restore "$SHA:1"
+    check_rejected "test 2111" "$TC_ERR" commit "$SHA:1" -m "typechange"
+    check_rejected "test 2111" "$TC_ERR" diff "$SHA:1"
+done
+git add d.txt
+[[ "$("$GIT_HUNK" count --staged --file d.txt)" == "2" ]] || fail "test 2111: want the staged typechange as two hunks"
+for SHA in $("$GIT_HUNK" list --porcelain --oneline --staged --file d.txt | cut -f1); do
+    check_rejected "test 2111" "$TC_ERR" reset "$SHA:1"
+done
+pass "test 2111: line specs on a typechange are rejected by add, restore, commit, diff and reset"
+
+# ============================================================================
+# Test 2112: a line spec on a symlink is rejected: its one line is its target
+# ============================================================================
+whole_file_repo
+ln -s d.txt link
+git add link
+git commit -q -m "add link"
+rm link
+ln -s n.txt link
+SHA="$(sha_for link@)"
+LINK_ERR="error: line selection not supported for symlink 'link'"
+check_rejected "test 2112" "$LINK_ERR" add "$SHA:1"
+check_rejected "test 2112" "$LINK_ERR" add "$SHA:2"
+check_rejected "test 2112" "$LINK_ERR" restore "$SHA:1"
+check_rejected "test 2112" "$LINK_ERR" commit "$SHA:2" -m "retarget"
+check_rejected "test 2112" "$LINK_ERR" diff "$SHA:2"
+git add link
+check_rejected "test 2112" "$LINK_ERR" reset "$(sha_for link@ --staged):2"
+pass "test 2112: line specs on a symlink are rejected"
+
+# ============================================================================
+# Test 2113: a line spec on an empty file is rejected instead of applying the
+# whole file
+# ============================================================================
+whole_file_repo
+: > e.txt
+SHA="$(sha_for e.txt)"
+EMPTY_ERR="error: line selection not supported for empty file 'e.txt'"
+check_rejected "test 2113" "$EMPTY_ERR" add "$SHA:1"
+check_rejected "test 2113" "$EMPTY_ERR" restore --force "$SHA:1"
+check_rejected "test 2113" "$EMPTY_ERR" commit "$SHA:1" -m "empty"
+check_rejected "test 2113" "$EMPTY_ERR" diff "$SHA:1"
+git add e.txt
+check_rejected "test 2113" "$EMPTY_ERR" reset "$(sha_for e.txt --staged):1"
+pass "test 2113: line specs on an empty file are rejected"
+
+# ============================================================================
+# Test 2114: restore of an untracked file without --force names what it would
+# lose, whether the whole file or some of its lines
+# ============================================================================
+whole_file_repo
+SHA="$(sha_for n.txt)"
+FORCE_ERR="error: $SHA (n.txt) is an untracked file -- restoring it cannot be undone; use --force"
+check_rejected "test 2114" "$FORCE_ERR" restore "$SHA"
+check_rejected "test 2114" "$FORCE_ERR" restore "$SHA:2"
+pass "test 2114: restore of an untracked file without --force is refused"
 
 report_results

@@ -96,6 +96,9 @@ pub const FileSection = struct {
     plus_line: ?[]const u8 = null,
     is_binary: bool = false,
     is_symlink: bool = false,
+    /// One half of a typechange: git lists the path twice, deleted as one
+    /// type and created as the other.
+    is_typechange: bool = false,
     /// From `git diff --no-index` against an untracked file.
     is_untracked: bool = false,
 };

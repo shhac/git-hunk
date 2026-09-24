@@ -225,13 +225,29 @@ fn resolveMatchedHunks(
     for (sha_args) |sha_arg| {
         const hunk = patch_mod.findHunkByShaPrefix(hunks, sha_arg.prefix, file_filter) catch |err|
             exitUnresolvedPrefix(err, hunks, sha_arg.prefix, file_filter);
-        if (hunk.section.is_binary and sha_arg.line_spec != null) {
-            std.debug.print("error: line selection not supported for binary file '{s}'\n", .{hunk.file_path});
-            std.process.exit(1);
-        }
+        if (sha_arg.line_spec != null) rejectLineSelection(hunk);
         try mergeIntoMatched(arena, &matched, hunk, sha_arg.line_spec);
     }
     return matched.items;
+}
+
+/// Exit if a line spec cannot select part of `hunk`: a binary or empty file
+/// has no lines, a symlink's one line is its whole target, and the two halves
+/// of a typechange only make sense applied together.
+fn rejectLineSelection(hunk: *const Hunk) void {
+    const section = hunk.section;
+    const what: []const u8 = if (section.is_binary)
+        "binary file"
+    else if (section.is_typechange)
+        "typechange"
+    else if (section.is_symlink)
+        "symlink"
+    else if (hunk.raw_lines.len == 0)
+        "empty file"
+    else
+        return;
+    std.debug.print("error: line selection not supported for {s} '{s}'\n", .{ what, hunk.file_path });
+    std.process.exit(1);
 }
 
 fn exitUnresolvedPrefix(
@@ -575,12 +591,13 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
     format.printHunkCountSummary(opts.common, matched.len, summary_verb);
 }
 
-/// Exit if any selected hunk is an untracked file: restoring one deletes it
-/// permanently, so that takes --force.
+/// Exit if any selected hunk is an untracked file: git has no copy to bring
+/// back what restoring it removes, whether some lines or the whole file, so
+/// that takes --force.
 fn rejectUntrackedWithoutForce(matched: []const MatchedHunk) void {
     for (matched) |m| {
         if (!m.hunk.section.is_untracked) continue;
-        std.debug.print("error: {s} ({s}) is an untracked file -- use --force to delete\n", .{ m.hunk.sha_hex[0..7], m.hunk.file_path });
+        std.debug.print("error: {s} ({s}) is an untracked file -- restoring it cannot be undone; use --force\n", .{ m.hunk.sha_hex[0..7], m.hunk.file_path });
         std.process.exit(1);
     }
 }
@@ -647,9 +664,7 @@ pub fn cmdDiff(allocator: Allocator, stdout: *std.Io.Writer, opts: DiffOptions) 
                     if (m.hunk.section.is_binary) {
                         try stdout.writeAll("Binary file changed\n\n");
                     } else if (m.hunk.raw_lines.len == 0) {
-                        if (m.line_spec != null) {
-                            std.debug.print("(empty file — no lines to select)\n", .{});
-                        }
+                        // An empty file is all header.
                     } else if (m.line_spec orelse emptyLineSpecIf(opts.number)) |ls| {
                         // -n and a line spec share this renderer; an empty spec
                         // selects nothing, so -n alone numbers without markers.

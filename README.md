@@ -181,7 +181,7 @@ git hunk restore a3f7c21 --porcelain  # machine-readable output
 Reverts specific worktree changes to match the index. The destructive counterpart
 to `add`/`reset`. Staged changes are unaffected.
 
-Untracked files require `--force` to restore (they are deleted permanently):
+Untracked files require `--force` to restore, since git has no copy of them (a whole one is deleted):
 
 ```
 git hunk restore --force a3f7c21       # restore/delete an untracked file

@@ -238,7 +238,8 @@ All errors go to stderr. Exit 0 on success, 1 on error. Common errors:
 - `error: ambiguous prefix '<sha>'` -- use longer prefix or `--file`
 - `error: patch did not apply cleanly` -- re-run `list` and try again
 - `no unstaged changes` / `no staged changes` -- nothing to operate on
-- `error: <sha> (<file>) is an untracked file -- use --force to delete` -- restore requires `--force` for untracked files (dry-run bypasses this gate)
+- `error: line selection not supported for <binary file|typechange|symlink|empty file> '<file>'` -- use the whole hunk
+- `error: <sha> (<file>) is an untracked file -- restoring it cannot be undone; use --force` -- restore requires `--force` for untracked files (dry-run bypasses this gate)
 
 ## References
 

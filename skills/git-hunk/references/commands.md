@@ -47,7 +47,15 @@ A spec selecting only context lines fails loudly:
 error: no changes in selected lines of hunk a3f7c21
 ```
 
-(exit 1, nothing staged). A spec selecting the *wrong* changed lines **cannot**
+(exit 1, nothing staged). So does any spec on a hunk that has no lines to pick
+from, or none that make a file on their own — a binary file, either half of a
+typechange, a symlink, or an empty file:
+
+```
+error: line selection not supported for symlink 'link'
+```
+
+A spec selecting the *wrong* changed lines **cannot**
 be detected — changes were selected, just not the intended ones. This is the
 reason to read the numbers off `diff -n` rather than count them by hand.
 
@@ -424,7 +432,7 @@ git-hunk restore [<sha[:lines]>...] [--file <path>] [--all] [--dry-run] [--porce
 | `--ref <refspec>` | Source the diff from a git ref. **Single ref** (e.g. `HEAD~1`, `abc1234`) is shorthand for `<ref>^..<ref>` — that commit's diff (`git show` semantics). **Range** (e.g. `main..HEAD`) is the literal diff between two refs. Enables cherry-picking or reverting individual hunks from past commits (pair with `--3way` when context has drifted). |
 | `--3way` | When applying a patch fails because surrounding context has drifted, fall back to a 3-way merge instead of erroring. Either succeeds cleanly or leaves `<<<<<<<` conflict markers in the worktree. Useful for undoing hunks from history with `--ref`. |
 | `--dry-run` | Preview what would be restored without modifying the worktree. Uses `git apply --check`. |
-| `--force` | Required to restore untracked files (they are deleted permanently). |
+| `--force` | Required to restore untracked files, which git has no copy of (a whole one is deleted). |
 | `--porcelain` | Tab-separated machine-readable output. |
 | `--tracked-only` | Only include hunks from tracked files. |
 | `--untracked-only` | Only include hunks from untracked files. |
@@ -462,7 +470,7 @@ git-hunk restore a3f7c21 --no-color                  # disable color output
 - With `--dry-run`, verb is `would restore` (human) or `would-restore` (porcelain).
 - With `--verbose`, prints a count summary to stderr: `N hunk(s) restored` or `N hunk(s) would be restored`.
 - With `--porcelain`, output is tab-separated: `verb\tsha7\tfile`.
-- Untracked files require `--force` to restore. Without `--force`, any matched untracked hunk causes exit 1 with an error message. With `--force`, untracked files are deleted permanently.
+- Untracked files require `--force` to restore: git has no copy of them. Without `--force`, any matched untracked hunk causes exit 1 with an error message. With `--force`, a whole untracked file is deleted permanently, and a line selection removes just those lines.
 - Exits 1 if any SHA prefix doesn't match or is ambiguous.
 - Exits 1 if the patch doesn't apply (worktree changed since listing).
 
@@ -474,7 +482,7 @@ git-hunk restore a3f7c21 --no-color                  # disable color output
 | `error: invalid hex in sha prefix: '<sha>'` | Prefix contains non-hex characters |
 | `error: no hunk matching '<sha>'` | No hunk matches the prefix (with optional file filter) |
 | `error: ambiguous prefix '<sha>' -- matches multiple hunks` | Multiple hunks match the prefix |
-| `error: <sha> (<file>) is an untracked file -- use --force to delete` | Untracked file matched without `--force` (bypassed by `--dry-run`) |
+| `error: <sha> (<file>) is an untracked file -- restoring it cannot be undone; use --force` | Untracked file matched without `--force` (bypassed by `--dry-run`) |
 | `error: patch did not apply cleanly` | Worktree changed since hunks were listed |
 | `no unstaged changes` | Nothing to restore |
 | `error: at least one <sha> argument required` | No SHA arguments and no `--all`/`--file` flag |
