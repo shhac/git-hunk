@@ -1083,4 +1083,45 @@ for PAIR250 in "old name.txt:new name.txt" "into.txt:in to.txt" "out of.txt:outo
 done
 pass "test 250: paths with spaces list, filter and report results like any other"
 
+# ============================================================================
+# Test 251: with diff.renames=copies, a copy stays a copy. Its copy from/to
+# lines used to be dropped, so git applied the section as a rename: reset of
+# the copy's hunk took the source out of the index along with its own staged
+# change, and add --ref staged a rename.
+# ============================================================================
+new_repo
+git config diff.renames copies
+for i in $(seq 1 20); do echo "copied line $i"; done > src.txt
+git add src.txt && git commit -q -m "src 251"
+cp src.txt dst.txt
+echo "only in the copy" >> dst.txt
+sed -i.bak 's/^copied line 3$/copied line 3 changed/' src.txt
+git add src.txt dst.txt
+git diff --cached | grep -q '^copy to dst.txt$' \
+    || fail "test 251: setup should stage dst.txt as a copy, got: '$(git diff --cached --stat)'"
+git commit -q -m "copy 251"
+COPY251="$(git rev-parse HEAD)"
+git reset -q --soft HEAD~1
+
+SRC251="$(git ls-files -s src.txt)"
+SHA251="$(first_sha --staged --file dst.txt)"
+[[ -n "$SHA251" ]] || fail "test 251: no staged hunk for dst.txt"
+"$GIT_HUNK" reset "$SHA251" > /dev/null 2>&1 || fail "test 251: reset of the copy's hunk failed"
+[[ "$(git ls-files -s src.txt)" == "$SRC251" ]] \
+    || fail "test 251: reset changed src.txt's index entry: '$(git ls-files -s src.txt)', was '$SRC251'"
+[[ "$(blob_bytes :dst.txt)" == "$(blob_bytes HEAD:src.txt)" ]] \
+    || fail "test 251: dst.txt should stay staged as the copy without its hunk"
+[[ "$(tail -1 dst.txt)" == "only in the copy" ]] || fail "test 251: reset touched the worktree"
+
+git reset -q --hard
+SRC251="$(git ls-files -s src.txt)"
+SHA251="$(first_sha --ref "$COPY251" --file dst.txt)"
+[[ -n "$SHA251" ]] || fail "test 251: no hunk for dst.txt in the copy commit"
+"$GIT_HUNK" add --ref "$COPY251" "$SHA251" > /dev/null 2>&1 || fail "test 251: add --ref of the copy failed"
+[[ "$(git ls-files -s src.txt)" == "$SRC251" ]] \
+    || fail "test 251: add --ref of a copy should keep src.txt staged, got: '$(git diff --cached --name-status)'"
+[[ "$(blob_bytes :dst.txt)" == "$(blob_bytes "$COPY251:dst.txt")" ]] \
+    || fail "test 251: add --ref should stage the copy's content"
+pass "test 251: diff.renames=copies keeps copies as copies through reset and add --ref"
+
 report_results

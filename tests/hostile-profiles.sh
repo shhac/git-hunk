@@ -22,6 +22,7 @@ HOSTILE_PROFILES=(
     quotepath
     pager
     git3-defaults
+    copies
 )
 
 # `diff.external` and GIT_EXTERNAL_DIFF both hand the diff to another program
@@ -91,6 +92,15 @@ profile_algorithm() {
 	algorithm = histogram
 	indentHeuristic = false
 	suppressBlankEmpty = true
+EOF
+}
+
+# diff.renames = copies reports a new file that resembles a changed one as a
+# copy of it: `copy from`/`copy to` headers, and hunks relative to the source.
+profile_copies() {
+    cat >> "$1" <<'EOF'
+[diff]
+	renames = copies
 EOF
 }
 

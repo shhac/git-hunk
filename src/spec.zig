@@ -698,7 +698,7 @@ pub const man_global_options = [_]ManOption{
     } },
     .{ .header = ".BR \\-v \", \" \\-\\-verbose", .lines = &.{
         "Show summary counts and hints. Also names changed paths that produced no hunk \\(em",
-        "a submodule pointer bump, a mode change, or a rename with no content change \\(em",
+        "a submodule pointer bump, a mode change, or a rename or copy with no content change \\(em",
         "so a tree git considers dirty is never reported here as having nothing to stage.",
         "These paths have no hash; unstaged ones are staged with \\fBgit add \\fI<path>\\fR.",
     } },

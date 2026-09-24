@@ -91,6 +91,12 @@ pub const FileSection = struct {
     /// The path a rename moved the file from, unquoted. The section's hunks
     /// carry the path it moved to.
     renamed_from_path: ?[]const u8 = null,
+    /// Verbatim values of the `copy from`/`copy to` lines.
+    copy_from: ?[]const u8 = null,
+    copy_to: ?[]const u8 = null,
+    /// The path a copy was made from, unquoted. The section's hunks carry the
+    /// copy's own path; the file it was copied from is unchanged by them.
+    copied_from_path: ?[]const u8 = null,
     /// Verbatim `index` line, kept rather than re-rendered: `git apply --3way`
     /// needs its blob ids exactly as git wrote them.
     index_line: ?[]const u8 = null,
@@ -105,6 +111,12 @@ pub const FileSection = struct {
     is_typechange: bool = false,
     /// From `git diff --no-index` against an untracked file.
     is_untracked: bool = false,
+
+    /// The other path a rename or copy names, which git only pairs with this
+    /// one when both are in a diff's scope.
+    pub fn sourcePath(self: *const FileSection) ?[]const u8 {
+        return self.renamed_from_path orelse self.copied_from_path;
+    }
 };
 
 /// One line of a hunk body, numbered the way line specs address it.

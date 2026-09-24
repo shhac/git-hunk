@@ -127,7 +127,7 @@ git-hunk list --no-color                         # disable color output
 
 - Exits 0 with empty output if there are no hunks (or no hunks matching the filter).
 - Binary files are skipped.
-- Rename-only changes (no content diff) are skipped.
+- Rename-only and copy-only changes (no content diff) are skipped.
 - Mode-only changes are skipped.
 - Untracked files are included by default in unstaged mode. Use `--tracked-only` or `--untracked-only` to filter.
 
@@ -401,6 +401,7 @@ git-hunk reset a3f7c21 --no-color               # disable color output
 
 - Reads staged diff (`--cached`), matches SHA prefixes, applies the patch in reverse via `git apply --cached --reverse`.
 - With `--all`, unstages every staged hunk. With `--file` and no SHAs, unstages all hunks in that file.
+- A copy (under `diff.renames=copies`) is unstaged from the copy alone: it stays staged as a copy of its source without the hunk, and the source's index entry is untouched.
 - Captures target-side (unstaged) hunks before and after applying to detect merges.
 - On success, prints one line per **result hunk** to stdout: `unstaged {applied...} [+{consumed}...] → {result}  {file}`. When unstaging causes a merge with an existing unstaged hunk, the consumed hash appears with a `+` prefix.
 - With `--verbose`, prints a count summary to stderr: `N hunk(s) unstaged`. Appends `(M merged)` when target-side hunks were consumed.

@@ -55,6 +55,8 @@ const FileHeaderState = struct {
     file_mode: []const u8 = "100644",
     rename_from: ?[]const u8 = null,
     rename_to: ?[]const u8 = null,
+    copy_from: ?[]const u8 = null,
+    copy_to: ?[]const u8 = null,
     /// Verbatim "index <oldsha>..<newsha> [mode]" line, when present. Preserved
     /// so reconstructed patches retain blob ids — required for `git apply --3way`.
     index_line: ?[]const u8 = null,
@@ -80,6 +82,10 @@ fn parseExtendedHeaders(cursor: *DiffCursor) FileHeaderState {
             state.rename_from = line["rename from ".len..];
         } else if (std.mem.startsWith(u8, line, "rename to ")) {
             state.rename_to = line["rename to ".len..];
+        } else if (std.mem.startsWith(u8, line, "copy from ")) {
+            state.copy_from = line["copy from ".len..];
+        } else if (std.mem.startsWith(u8, line, "copy to ")) {
+            state.copy_to = line["copy to ".len..];
         } else if (std.mem.startsWith(u8, line, "index ")) {
             state.index_line = line;
             if (std.mem.endsWith(u8, line, " 160000")) {
@@ -91,10 +97,7 @@ fn parseExtendedHeaders(cursor: *DiffCursor) FileHeaderState {
             std.mem.startsWith(u8, line, "new mode "))
         {
             state.has_mode_change = true;
-        } else if (std.mem.startsWith(u8, line, "similarity index ") or
-            std.mem.startsWith(u8, line, "copy from ") or
-            std.mem.startsWith(u8, line, "copy to "))
-        {
+        } else if (std.mem.startsWith(u8, line, "similarity index ")) {
             // Extended header, continue.
         } else {
             break;
@@ -123,6 +126,9 @@ fn newSection(
         .rename_from = state.rename_from,
         .rename_to = state.rename_to,
         .renamed_from_path = if (state.rename_from) |from| try unquotePath(arena, from) else null,
+        .copy_from = state.copy_from,
+        .copy_to = state.copy_to,
+        .copied_from_path = if (state.copy_from) |from| try unquotePath(arena, from) else null,
         .index_line = state.index_line,
         .minus_line = minus_line,
         .plus_line = plus_line,
@@ -212,6 +218,7 @@ const SkipReason = enum {
     submodule,
     mode_only,
     rename_only,
+    copy_only,
     other,
 
     /// Subject of the note: what about this path has no hunk.
@@ -220,6 +227,7 @@ const SkipReason = enum {
             .submodule => "submodule pointer change",
             .mode_only => "mode change",
             .rename_only => "rename with no content change",
+            .copy_only => "copy with no content change",
             .other => "change",
         };
     }
@@ -265,6 +273,8 @@ pub fn collectSkippedPaths(
             .submodule
         else if (state.rename_from != null)
             .rename_only
+        else if (state.copy_from != null)
+            .copy_only
         else
             .other;
         try out.append(arena, .{ .file_path = file_path, .reason = reason });
@@ -531,15 +541,16 @@ fn cUnescape(arena: Allocator, input: []const u8) ![]const u8 {
     return result.items;
 }
 
-/// The path a file section's hunks belong to. A rename names its new path in
-/// `rename to`, which is unambiguous where the `diff --git` line is not.
+/// The path a file section's hunks belong to. A rename or copy names its new
+/// path in `rename to`/`copy to`, which is unambiguous where the `diff --git`
+/// line is not.
 fn sectionFilePath(arena: Allocator, diff_git_line: []const u8, state: FileHeaderState) !?[]const u8 {
-    const to = state.rename_to orelse return extractPathFromDiffGitLine(arena, diff_git_line);
+    const to = state.rename_to orelse state.copy_to orelse return extractPathFromDiffGitLine(arena, diff_git_line);
     return try unquotePath(arena, to);
 }
 
-/// A path as git writes it in `rename from`/`rename to`, C-quoted when it
-/// has to be.
+/// A path as git writes it in `rename from`/`rename to` and `copy from`/
+/// `copy to`, C-quoted when it has to be.
 fn unquotePath(arena: Allocator, path: []const u8) ![]const u8 {
     if (path.len >= 2 and path[0] == '"' and path[path.len - 1] == '"') return try cUnescape(arena, path[1 .. path.len - 1]);
     return path;
@@ -1114,6 +1125,46 @@ test "parseDiff no newline at end of file" {
     try parseDiff(arena, diff, .new, &hunks);
     try std.testing.expectEqual(@as(usize, 1), hunks.items.len);
     try std.testing.expect(std.mem.indexOf(u8, hunks.items[0].diff_lines, "\\ No newline") != null);
+}
+
+test "parseDiff copy keeps its copy lines and takes the copy's path" {
+    const diff =
+        \\diff --git a/src.txt b/dst.txt
+        \\similarity index 92%
+        \\copy from src.txt
+        \\copy to dst.txt
+        \\index 1234567..abcdefg 100644
+        \\--- a/src.txt
+        \\+++ b/dst.txt
+        \\@@ -1,2 +1,3 @@
+        \\ one
+        \\ two
+        \\+extra
+        \\diff --git a/src.txt b/pure.txt
+        \\similarity index 100%
+        \\copy from src.txt
+        \\copy to pure.txt
+        \\
+    ;
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var hunks: std.ArrayList(Hunk) = .empty;
+    try parseDiff(arena, diff, .new, &hunks);
+
+    try std.testing.expectEqual(@as(usize, 1), hunks.items.len);
+    const section = hunks.items[0].section;
+    try std.testing.expectEqualStrings("dst.txt", hunks.items[0].file_path);
+    try std.testing.expectEqualStrings("src.txt", section.copy_from.?);
+    try std.testing.expectEqualStrings("dst.txt", section.copy_to.?);
+    try std.testing.expectEqualStrings("src.txt", section.copied_from_path.?);
+    try std.testing.expectEqual(@as(?[]const u8, null), section.renamed_from_path);
+
+    var skipped: std.ArrayList(SkippedPath) = .empty;
+    try collectSkippedPaths(arena, diff, hunks.items, &skipped);
+    try std.testing.expectEqual(@as(usize, 1), skipped.items.len);
+    try std.testing.expectEqualStrings("pure.txt", skipped.items[0].file_path);
+    try std.testing.expectEqual(SkipReason.copy_only, skipped.items[0].reason);
 }
 
 test "parseDiff rename with content" {

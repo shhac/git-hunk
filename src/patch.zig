@@ -44,12 +44,13 @@ pub fn collectUniqueFilePaths(arena: Allocator, matches: []const MatchedHunk) ![
 }
 
 /// The paths a diff must cover to show what became of `matches` once
-/// applied: git only detects a rename when both its paths are in scope.
+/// applied: git only detects a rename or copy when both its paths are in
+/// scope.
 pub fn collectResultPaths(arena: Allocator, matches: []const MatchedHunk) ![]const []const u8 {
     var list: std.ArrayList([]const u8) = .empty;
     try list.appendSlice(arena, try collectUniqueFilePaths(arena, matches));
     for (matches) |m| {
-        const from = m.hunk.section.renamed_from_path orelse continue;
+        const from = m.hunk.section.sourcePath() orelse continue;
         for (list.items) |fp| {
             if (std.mem.eql(u8, fp, from)) break;
         } else try list.append(arena, from);
@@ -199,13 +200,42 @@ fn appendSectionPatch(arena: Allocator, patch: *std.ArrayList(u8), run: []const 
     // A side the source lacks exists afterwards only if filtering left lines
     // on it: a new file whose deselected lines stay as context on the old
     // side is a change to an existing file, not a creation.
-    const section = run[0].hunk.section;
+    const section = switch (direction) {
+        .forward => run[0].hunk.section,
+        .reverse => try copyAsEdit(arena, run[0].hunk.section),
+    };
     const sides: Sides = .{
         .old = !section.is_new_file or old_lines > 0,
         .new = !section.is_deleted_file or new_lines > 0,
     };
     try appendSectionHeader(arena, patch, section, sides);
     try patch.appendSlice(arena, body.items);
+}
+
+/// `git apply --reverse` turns a copy around into a copy from its destination
+/// over its source, overwriting a file the hunks never touched. Taking a
+/// copy's hunks back out means editing the copy alone, so a reversed copy is
+/// rendered as a change to its destination. The `index` line stays true: the
+/// copy minus its hunks is the source's preimage.
+fn copyAsEdit(arena: Allocator, section: *const FileSection) !*const FileSection {
+    const copy_to = section.copy_to orelse return section;
+    const plus_line = section.plus_line orelse return section;
+    const edit = try arena.create(FileSection);
+    edit.* = section.*;
+    edit.diff_git_line = try std.mem.concat(arena, u8, &.{
+        "diff --git ", try prefixedName(arena, "a/", copy_to), " ", try prefixedName(arena, "b/", copy_to),
+    });
+    edit.minus_line = try otherSideLine(arena, plus_line);
+    edit.copy_from = null;
+    edit.copy_to = null;
+    edit.copied_from_path = null;
+    return edit;
+}
+
+/// A name as `copy to` writes it, with git's side prefix inside any quotes.
+fn prefixedName(arena: Allocator, prefix: []const u8, name: []const u8) ![]const u8 {
+    if (std.mem.startsWith(u8, name, "\"")) return std.mem.concat(arena, u8, &.{ "\"", prefix, name[1..] });
+    return std.mem.concat(arena, u8, &.{ prefix, name });
 }
 
 /// Which sides of the file a patch has: false where it is `/dev/null`.
@@ -222,7 +252,7 @@ pub fn renderSectionHeader(arena: Allocator, section: *const FileSection) ![]con
     return out.items;
 }
 
-/// `diff --git`, rename and index lines are kept verbatim whatever the
+/// `diff --git`, rename, copy and index lines are kept verbatim whatever the
 /// sides: filtering never changes the side `git apply` matches, so the index
 /// line's preimage id stays true, and `--3way` needs it.
 fn appendSectionHeader(arena: Allocator, out: *std.ArrayList(u8), section: *const FileSection, sides: Sides) !void {
@@ -235,6 +265,8 @@ fn appendSectionHeader(arena: Allocator, out: *std.ArrayList(u8), section: *cons
     if (!section.is_binary) {
         if (section.rename_from) |from| try out.print(arena, "rename from {s}\n", .{from});
         if (section.rename_to) |to| try out.print(arena, "rename to {s}\n", .{to});
+        if (section.copy_from) |from| try out.print(arena, "copy from {s}\n", .{from});
+        if (section.copy_to) |to| try out.print(arena, "copy to {s}\n", .{to});
     }
     if (section.index_line) |line| try appendLine(arena, out, line);
     if (section.is_binary) return;
@@ -753,6 +785,38 @@ test "sortAndBuildPatches reverse undoes a typechange's creation first" {
     try std.testing.expectEqual(@as(usize, 2), reverse.len);
     try std.testing.expect(std.mem.indexOf(u8, reverse[0], "new file mode") != null);
     try std.testing.expect(std.mem.indexOf(u8, reverse[1], "deleted file mode") != null);
+}
+
+test "a copy applies forward as a copy and reverses as an edit of the copy" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const section: FileSection = .{
+        .diff_git_line = "diff --git a/src.txt \"b/d\\303\\274 st.txt\"",
+        .copy_from = "src.txt",
+        .copy_to = "\"d\\303\\274 st.txt\"",
+        .copied_from_path = "src.txt",
+        .index_line = "index 1234567..89abcde 100644",
+        .minus_line = "--- a/src.txt",
+        .plus_line = "+++ \"b/d\\303\\274 st.txt\"\t",
+    };
+    var h = testMakeHunk("d\xc3\xbc st.txt", 2, 1, 2, 2);
+    h.section = &section;
+    h.raw_lines = "@@ -2 +2,2 @@\n two\n+extra\n";
+    var forward_in = [_]MatchedHunk{.{ .hunk = &h, .line_spec = null }};
+    var reverse_in = forward_in;
+
+    const forward = try sortAndBuildPatches(arena.allocator(), &forward_in, .forward);
+    try std.testing.expectEqualStrings(
+        "diff --git a/src.txt \"b/d\\303\\274 st.txt\"\ncopy from src.txt\ncopy to \"d\\303\\274 st.txt\"\n" ++
+            "index 1234567..89abcde 100644\n--- a/src.txt\n+++ \"b/d\\303\\274 st.txt\"\t\n@@ -2 +2,2 @@\n two\n+extra\n",
+        forward[0],
+    );
+    const reverse = try sortAndBuildPatches(arena.allocator(), &reverse_in, .reverse);
+    try std.testing.expectEqualStrings(
+        "diff --git \"a/d\\303\\274 st.txt\" \"b/d\\303\\274 st.txt\"\n" ++
+            "index 1234567..89abcde 100644\n--- \"a/d\\303\\274 st.txt\"\t\n+++ \"b/d\\303\\274 st.txt\"\t\n@@ -2 +2,2 @@\n two\n+extra\n",
+        reverse[0],
+    );
 }
 
 test "matchedHunkPatchOrder typechange sorts deleted before new" {
