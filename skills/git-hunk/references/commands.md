@@ -640,7 +640,7 @@ git-hunk stash pop
 | `--files-from <path>` | Read file paths from `<path>`, one per line; `-` reads stdin. Composes with repeated `--file` (the lists are merged). NUL-separated input is auto-detected, so `git ls-files -z \| git hunk add --files-from -` is safe for paths containing newlines. |
 | `--all` | Stash all unstaged hunks. Excludes untracked files by default (like `git stash`). Use `-u`/`--include-untracked` to include them. |
 | `-u`, `--include-untracked` | Include untracked files when using `--all`. Not needed when targeting untracked hunks by explicit hash. |
-| `-m`, `--message <msg>` | Custom stash message. If omitted, auto-generates from affected file paths. |
+| `-m`, `--message <msg>` | Custom stash message, recorded as `git stash push -m` records it: `On <branch>: <msg>`. |
 | `--tracked-only` | Only include hunks from tracked files. |
 | `--untracked-only` | Only include hunks from untracked files. |
 | `--porcelain` | Tab-separated machine-readable output. |
@@ -666,11 +666,13 @@ git-hunk stash a3f7c21 --porcelain              # machine-readable output
 ### Behavior
 
 - Reads unstaged diff, matches each SHA prefix to a hunk, creates a git stash containing those hunks, then removes them from the worktree.
-- The stash is a real git stash entry visible in `git stash list`, `git stash show`, and `git stash pop`.
-- Uses a two-diff strategy to ensure correct stash content even when the index is dirty.
+- The entry has the same shape as `git stash push --keep-index [-u] -- <paths>`, restricted to the chosen hunks: HEAD as its base, the index as it stands as its index commit (`stash^2`), and the index plus the stashed hunks as its tree. The index is left as it was, as with `--keep-index`.
+- Every git stash command treats it as it would that native entry. `git stash show` compares with HEAD, so it lists staged changes as well as the stashed hunks (`git diff stash^2 stash` shows the stashed hunks alone). `git stash pop` and `git stash pop --index` both put the hunks back unstaged and keep what is staged; `--index` also re-stages whatever was staged at stash time, should it have been unstaged since.
+- Git never applies a stash onto a file with unstaged changes. After stashing some of a file's hunks and not others, every pop is refused, with nothing lost, until the file's remaining changes are staged or committed.
 - With `--all`, stashes tracked hunks only (matching `git stash` behavior). Use `-u`/`--include-untracked` to include untracked files. Explicit hash targeting always works for untracked hunks regardless of `-u`.
 - Untracked files are stored using git's native 3-parent stash format (HEAD, index, untracked tree). `git stash pop` restores them as untracked files. Executable file permissions are preserved.
-- Auto-generates a stash message from affected file paths (e.g., `git hunk stash: src/main.zig, src/args.zig`) unless `-m` is provided.
+- The message is the one `git stash push` would write: `WIP on <branch>: <sha> <subject>`, or `On <branch>: <msg>` with `-m`.
+- Refuses to stash while the index has unmerged paths, as `git stash` does.
 - On success, prints one line per stashed hunk to stdout: `stashed {sha7}  {file}`. SHA in yellow for human mode.
 - With `--verbose`, prints a count summary to stderr: `N hunk(s) stashed`.
 - With `--verbose`, prints a hint to stderr: `hint: use 'git stash list' to see stashed entries, 'git hunk stash pop' to restore`.
@@ -693,6 +695,7 @@ git-hunk stash a3f7c21 --porcelain              # machine-readable output
 | `error: pop does not accept arguments or flags` | `pop` used with other flags or arguments |
 | `error: --include-untracked cannot be combined with --tracked-only` | Conflicting filter flags |
 | `no unstaged changes` | Nothing to stash |
+| `error: cannot stash while the index has unmerged paths` | A merge conflict is unresolved |
 | `error: at least one <sha> argument required` | No SHA arguments and no `--all`/`--file` flag |
 
 ---

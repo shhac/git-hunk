@@ -314,12 +314,12 @@ SHA721="$(first_sha --oneline --file beta.txt)"
 [[ -n "$SHA721" ]] || fail "test 721: no unstaged hunk found for beta.txt"
 "$GIT_HUNK" stash "$SHA721" > /dev/null
 
-STASH_SHOW721="$(git stash show)"
-echo "$STASH_SHOW721" | grep -q "beta.txt" \
-    || fail "test 721: stash should contain beta.txt, got: '$STASH_SHOW721'"
-if echo "$STASH_SHOW721" | grep -q "alpha.txt"; then
-    fail "test 721: stash should not contain alpha.txt (it was staged)"
-fi
+# Like a `git stash push --keep-index` entry, the stash tree is the index plus
+# the stashed changes, so what the stash adds over its index commit is beta.txt
+# alone; `git stash show` (against HEAD) lists the staged alpha.txt too.
+STASHED721="$(git diff --name-only 'stash^2' stash)"
+[[ "$STASHED721" == "beta.txt" ]] \
+    || fail "test 721: stash should add only beta.txt over its index, got: '$STASHED721'"
 
 STAGED721="$(git diff --cached --name-only)"
 echo "$STAGED721" | grep -q "alpha.txt" \

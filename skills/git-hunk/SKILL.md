@@ -99,6 +99,9 @@ changes.
 | `count` | Bare integer hunk count | `--staged`, `--file` |
 | `check` | Verify hashes still valid | `--staged`, `--exclusive`, `--allow-empty`, `--file`, `--porcelain` |
 
+A `stash` entry has the same shape as `git stash push --keep-index -- <paths>`
+would give it, so `git stash pop --index` keeps what is staged staged.
+
 All commands accept `--help`, `--no-color`, `--tracked-only`, `--untracked-only`,
 `--quiet`/`-q`, `--verbose`/`-v`, and `-U<n>`/`--unified=<n>`. SHA prefixes need at least 4 hex characters. Use `--file`
 to disambiguate prefix collisions. Use `git-hunk <command> --help` for detailed

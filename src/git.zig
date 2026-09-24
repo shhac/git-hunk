@@ -522,18 +522,30 @@ pub fn refHasParent(allocator: Allocator, ref: []const u8) bool {
     return true;
 }
 
-/// Run `git symbolic-ref --short HEAD` and return the branch name,
-/// or null if HEAD is detached (non-zero exit).
-pub fn runGitSymbolicRef(allocator: Allocator) !?[]u8 {
-    return runGitCaptureErr(allocator, &.{ "git", "symbolic-ref", "--short", "HEAD" }, .{}, error.NoSymbolicRef, .{}) catch |err| switch (err) {
-        error.NoSymbolicRef => null,
-        else => err,
+/// The branch HEAD is on, as `git stash` names it: the ref with `refs/heads/`
+/// taken off, or null when HEAD is detached or points outside `refs/heads/`.
+pub fn runGitHeadBranch(allocator: Allocator) !?[]u8 {
+    const ref = runGitCaptureErr(allocator, &.{ "git", "symbolic-ref", "-q", "HEAD" }, .{}, error.NoSymbolicRef, .{}) catch |err| switch (err) {
+        error.NoSymbolicRef => return null,
+        else => return err,
     };
+    defer allocator.free(ref);
+    const prefix = "refs/heads/";
+    if (!std.mem.startsWith(u8, ref, prefix)) return null;
+    return try allocator.dupe(u8, ref[prefix.len..]);
 }
 
-/// Run `git log --oneline -1 HEAD --` and return the trimmed output.
-pub fn runGitLogOneline(allocator: Allocator) ![]u8 {
-    return runGitCapture(allocator, &.{ "git", "log", "--oneline", "-1", "HEAD", "--" }, .{}, "git log", .{});
+/// HEAD's abbreviated id and subject, the way `git stash` quotes the commit
+/// a stash is built on.
+pub fn runGitHeadSummary(allocator: Allocator) ![]u8 {
+    return runGitCapture(allocator, &.{ "git", "log", "-1", "--no-decorate", "--no-show-signature", "--no-color", "--format=%h %s", "HEAD", "--" }, .{}, "git log", .{});
+}
+
+/// True if the index holds an unresolved merge conflict.
+pub fn indexHasUnmergedPaths(allocator: Allocator) !bool {
+    const out = try runGitCapture(allocator, &.{ "git", "ls-files", "--unmerged" }, .{}, "git ls-files", .{ .trim = false });
+    defer allocator.free(out);
+    return out.len > 0;
 }
 
 /// Run `git write-tree` (against `env_map`'s index when given) and return

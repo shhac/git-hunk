@@ -6,123 +6,121 @@
 const std = @import("std");
 const types = @import("types.zig");
 const git = @import("git.zig");
-const diff_mod = @import("diff.zig");
 const patch_mod = @import("patch.zig");
 const format = @import("format.zig");
-const head_match = @import("head_match.zig");
 
 const Allocator = std.mem.Allocator;
-const Hunk = types.Hunk;
 const MatchedHunk = types.MatchedHunk;
 const Verbosity = types.Verbosity;
 const StashOptions = types.StashOptions;
 
 const defaultIo = types.getIo;
 
-/// Bundles HEAD-side metadata used by cmdStash. All slices are gpa-owned.
-const HeadInfo = struct {
-    tree: []u8,
+/// What a stash says about the commit it is built on. All slices are gpa-owned.
+pub const HeadInfo = struct {
     sha: []u8,
+    /// Null when HEAD is detached.
     branch: ?[]u8,
-    msg: []u8,
-    branch_name: []const u8,
+    /// Abbreviated id and subject, as `git stash` quotes them.
+    summary: []u8,
 
     pub fn deinit(self: *HeadInfo, allocator: Allocator) void {
-        allocator.free(self.tree);
         allocator.free(self.sha);
         if (self.branch) |b| allocator.free(b);
-        allocator.free(self.msg);
+        allocator.free(self.summary);
+    }
+
+    fn branchName(self: HeadInfo) []const u8 {
+        return self.branch orelse "(no branch)";
     }
 };
 
-/// Look up HEAD tree, HEAD sha, branch name, and HEAD commit summary in one
-/// place. Caller must call `deinit` on the returned struct.
+/// Caller must call `deinit` on the returned struct.
 pub fn gatherHeadInfo(allocator: Allocator) !HeadInfo {
-    const tree = try git.runGitRevParse(allocator, "HEAD^{tree}");
-    errdefer allocator.free(tree);
     const sha = try git.runGitRevParse(allocator, "HEAD");
     errdefer allocator.free(sha);
-    const branch = try git.runGitSymbolicRef(allocator);
+    const branch = try git.runGitHeadBranch(allocator);
     errdefer if (branch) |b| allocator.free(b);
-    const msg = try git.runGitLogOneline(allocator);
-    return .{ .tree = tree, .sha = sha, .branch = branch, .msg = msg, .branch_name = branch orelse "HEAD" };
+    const summary = try git.runGitHeadSummary(allocator);
+    return .{ .sha = sha, .branch = branch, .summary = summary };
 }
 
-/// Result of running both the tracked-text and tracked-binary tree pipelines.
-const StashTreeBuild = struct {
-    tree: []const u8,
-    /// Patches reverse-applied to worktree at cleanup. Empty if no tracked text hunks.
-    index_patches: []const []const u8,
-    /// True iff `tree` was allocated here and must be freed by the caller.
-    owns_tree: bool,
+/// The trees of a stash entry, shaped like `git stash push --keep-index`'s:
+/// the index as it stands, and the index with the stashed changes on top.
+pub const StashTrees = struct {
+    /// Allocator-owned.
+    index: []const u8,
+    /// Allocator-owned.
+    stash: []const u8,
+    /// Arena-owned patches that take the stashed text hunks back out of the
+    /// worktree, in the order they must be applied. Empty without text hunks.
+    cleanup_patches: []const []const u8,
+
+    pub fn deinit(self: StashTrees, allocator: Allocator) void {
+        allocator.free(self.index);
+        allocator.free(self.stash);
+    }
 };
 
-/// Construct the stash tree by layering tracked-binary blobs onto a tree built
-/// from tracked-text patches. Falls back to `head_tree` when there are neither.
-pub fn buildStashTree(
-    arena: Allocator,
-    allocator: Allocator,
-    partition: patch_mod.HunkPartition,
-    head_tree: []const u8,
-    context: ?u32,
-) !StashTreeBuild {
-    var tree: []const u8 = head_tree;
-    var index_patches: []const []const u8 = &.{};
-    var owns = false;
-    errdefer if (owns) allocator.free(tree);
+/// The selected hunks are index-to-worktree changes, so applying them to the
+/// index tree gives exactly the worktree state being stashed, whatever else is
+/// staged in the same files.
+pub fn buildStashTrees(arena: Allocator, allocator: Allocator, partition: patch_mod.HunkPartition) !StashTrees {
+    // An index with conflicts has no tree to record, and git stash refuses it too.
+    if (try git.indexHasUnmergedPaths(allocator)) types.fatal("cannot stash while the index has unmerged paths", .{});
 
+    const index_tree = try git.runGitWriteTree(allocator, null);
+    errdefer allocator.free(index_tree);
+
+    var tmp = try git.createTempIndex(allocator, "");
+    defer tmp.deinit();
+    try git.runGitReadTree(allocator, index_tree, &tmp.env_map);
+
+    var cleanup_patches: []const []const u8 = &.{};
     if (partition.tracked_text.len > 0) {
-        const tracked_mut = try arena.dupe(MatchedHunk, partition.tracked_text);
-        const result = try buildTrackedStashTree(arena, allocator, tracked_mut, head_tree, context);
-        index_patches = result.index_patches;
-        tree = result.stash_tree;
-        owns = true;
+        const forward = try arena.dupe(MatchedHunk, partition.tracked_text);
+        const patches = try patch_mod.sortAndBuildPatches(arena, forward, .forward);
+        _ = try git.applyPatches(allocator, patches, .{ .target = .index, .env_map = &tmp.env_map });
+        const reverse = try arena.dupe(MatchedHunk, partition.tracked_text);
+        cleanup_patches = try patch_mod.sortAndBuildPatches(arena, reverse, .reverse);
     }
     if (partition.tracked_binary_paths.len > 0) {
-        const new_tree = try addBinaryFilesToTree(allocator, tree, partition.tracked_binary_paths);
-        if (owns) allocator.free(tree);
-        tree = new_tree;
-        owns = true;
+        try git.runGitAddFilesLenient(allocator, partition.tracked_binary_paths, &tmp.env_map);
     }
-    return .{ .tree = tree, .index_patches = index_patches, .owns_tree = owns };
+
+    const stash_tree = try git.runGitWriteTree(allocator, &tmp.env_map);
+    return .{ .index = index_tree, .stash = stash_tree, .cleanup_patches = cleanup_patches };
 }
 
-/// Build the stash message: user-provided `-m <msg>` or auto-generated from
-/// the file paths involved.
-pub fn buildStashMessage(arena: Allocator, opts: StashOptions, matched: []const MatchedHunk) ![]const u8 {
-    if (opts.message) |m| return m;
-    const all_file_paths = try patch_mod.collectUniqueFilePaths(arena, matched);
-    var msg_buf: std.ArrayList(u8) = .empty;
-    try msg_buf.appendSlice(arena, "git-hunk stash: ");
-    for (all_file_paths, 0..) |fp, i| {
-        if (i > 0) try msg_buf.appendSlice(arena, ", ");
-        try msg_buf.appendSlice(arena, fp);
-    }
-    return msg_buf.items;
+/// The message `git stash push` would give the entry: `On <branch>: <msg>`
+/// with `-m`, `WIP on <branch>: <commit>` without.
+pub fn buildStashMessage(arena: Allocator, opts: StashOptions, head: HeadInfo) ![]const u8 {
+    if (opts.message) |m| return std.fmt.allocPrint(arena, "On {s}: {s}", .{ head.branchName(), m });
+    return std.fmt.allocPrint(arena, "WIP on {s}: {s}", .{ head.branchName(), head.summary });
 }
 
-/// Assemble the commit `git stash store` expects: the stashed tree on top of
-/// HEAD, with an index commit as second parent and, when untracked files were
+/// Assemble the commit `git stash store` expects: the stash tree on top of
+/// HEAD, with the index commit as second parent and, when untracked files were
 /// selected, an untracked-files commit as third. Returns the allocator-owned
 /// commit SHA.
 pub fn createStashCommit(
     arena: Allocator,
     allocator: Allocator,
     head: HeadInfo,
-    tree: []const u8,
+    trees: StashTrees,
     untracked_matched: []const MatchedHunk,
     message: []const u8,
 ) ![]const u8 {
-    const idx_msg = try std.fmt.allocPrint(arena, "index on {s}: {s}", .{ head.branch_name, head.msg });
-    const idx_commit = try git.runGitCommitTree(allocator, tree, &.{head.sha}, idx_msg);
+    const idx_msg = try std.fmt.allocPrint(arena, "index on {s}: {s}", .{ head.branchName(), head.summary });
+    const idx_commit = try git.runGitCommitTree(allocator, trees.index, &.{head.sha}, idx_msg);
     defer allocator.free(idx_commit);
 
     if (untracked_matched.len == 0) {
-        return git.runGitCommitTree(allocator, tree, &.{ head.sha, idx_commit }, message);
+        return git.runGitCommitTree(allocator, trees.stash, &.{ head.sha, idx_commit }, message);
     }
-    const untracked_commit = try buildUntrackedCommit(arena, allocator, head.sha, head.branch_name, head.msg, untracked_matched);
+    const untracked_commit = try buildUntrackedCommit(arena, allocator, head, untracked_matched);
     defer allocator.free(untracked_commit);
-    return git.runGitCommitTree(allocator, tree, &.{ head.sha, idx_commit, untracked_commit }, message);
+    return git.runGitCommitTree(allocator, trees.stash, &.{ head.sha, idx_commit, untracked_commit }, message);
 }
 
 pub fn stashPop(allocator: Allocator, verbosity: Verbosity) !void {
@@ -132,77 +130,12 @@ pub fn stashPop(allocator: Allocator, verbosity: Verbosity) !void {
     }
 }
 
-const TrackedStashResult = struct {
-    /// Arena-owned patches, in order, for reverse-apply to the worktree during
-    /// cleanup. Multiple patches when typechanges are present.
-    index_patches: []const []const u8,
-    /// Allocator-owned stash tree SHA — caller must free.
-    stash_tree: []const u8,
-};
-
-/// Build the stash tree for tracked hunks using a temporary git index.
-/// Sorts `tracked_matched` in place. Returns index_patch (arena-owned) and
-/// stash_tree (allocator-owned — caller must free).
-fn buildTrackedStashTree(
-    arena: Allocator,
-    allocator: Allocator,
-    tracked_matched: []MatchedHunk,
-    head_tree: []const u8,
-    context: ?u32,
-) !TrackedStashResult {
-    // Sort and build INDEX_PATCHES (index-relative, for worktree reverse-apply)
-    const index_patches = try patch_mod.sortAndBuildPatches(arena, tracked_matched, .reverse);
-
-    // Collect unique file paths from tracked hunks for HEAD diff
-    const tracked_file_paths = try patch_mod.collectUniqueFilePaths(arena, tracked_matched);
-
-    // Run HEAD-relative diff + parse
-    const head_source: types.DiffSource = .{ .worktree_against = .{ .text = "HEAD" } };
-    const head_diff_output = try git.runGitDiffFiles(allocator, head_source, context, tracked_file_paths);
-    defer allocator.free(head_diff_output);
-
-    var head_hunks: std.ArrayList(Hunk) = .empty;
-    if (head_diff_output.len > 0) {
-        try diff_mod.parseDiff(arena, head_diff_output, head_source.anchor(), &head_hunks);
-    }
-
-    // Build pointers to selected index hunks for the matcher
-    const selected_ptrs = try arena.alloc(*const Hunk, tracked_matched.len);
-    for (tracked_matched, 0..) |m, i| {
-        selected_ptrs[i] = m.hunk;
-    }
-
-    // Match index hunks to HEAD hunks
-    const head_matched = try head_match.matchIndexToHead(arena, selected_ptrs, head_hunks.items);
-
-    if (head_matched.len == 0) {
-        std.debug.print("error: could not match selected hunks to HEAD-relative diff\n", .{});
-        std.process.exit(1);
-    }
-
-    // Sort and build HEAD_PATCH (for temp index apply)
-    const head_matched_sorted = try arena.alloc(MatchedHunk, head_matched.len);
-    @memcpy(head_matched_sorted, head_matched);
-    const head_patches = try patch_mod.sortAndBuildPatches(arena, head_matched_sorted, .forward);
-
-    var tmp = try git.createTempIndex(allocator, "");
-    defer tmp.deinit();
-
-    try git.runGitReadTree(allocator, head_tree, &tmp.env_map);
-    _ = try git.applyPatches(allocator, head_patches, .{ .target = .index, .env_map = &tmp.env_map });
-
-    const stash_tree = try git.runGitWriteTree(allocator, &tmp.env_map);
-    return .{ .index_patches = index_patches, .stash_tree = stash_tree };
-}
-
 /// Build a git commit containing only the untracked files.
 /// Returns an allocator-owned commit SHA — caller must free.
 fn buildUntrackedCommit(
     arena: Allocator,
     allocator: Allocator,
-    head_sha: []const u8,
-    branch_name: []const u8,
-    head_msg: []const u8,
+    head: HeadInfo,
     untracked_matched: []const MatchedHunk,
 ) ![]const u8 {
     var tmp = try git.createTempIndex(allocator, "ut-");
@@ -234,21 +167,21 @@ fn buildUntrackedCommit(
     const untracked_tree = try git.runGitWriteTree(allocator, &tmp.env_map);
     defer allocator.free(untracked_tree);
 
-    const ut_msg = try std.fmt.allocPrint(arena, "untracked files on {s}: {s}", .{ branch_name, head_msg });
-    return git.runGitCommitTree(allocator, untracked_tree, &.{head_sha}, ut_msg);
+    const ut_msg = try std.fmt.allocPrint(arena, "untracked files on {s}: {s}", .{ head.branchName(), head.summary });
+    return git.runGitCommitTree(allocator, untracked_tree, &.{head.sha}, ut_msg);
 }
 
-/// Reverse-apply tracked patch and delete untracked files from the worktree.
+/// Reverse-apply tracked patches and delete untracked files from the worktree.
 /// Intentionally swallows errors to avoid aborting after a successful stash store.
 pub fn cleanupWorktree(
     allocator: Allocator,
     has_tracked: bool,
     has_untracked: bool,
-    index_patches: []const []const u8,
+    cleanup_patches: []const []const u8,
     untracked_matched: []const MatchedHunk,
 ) void {
     if (has_tracked) {
-        for (index_patches) |patch| {
+        for (cleanup_patches) |patch| {
             _ = git.runGitApply(allocator, patch, .{ .reverse = true, .target = .worktree }) catch {
                 std.debug.print("warning: stash created but worktree changes could not be removed\n", .{});
                 std.debug.print("hint: use 'git stash pop' to undo or manually resolve\n", .{});
@@ -264,22 +197,6 @@ pub fn cleanupWorktree(
             };
         }
     }
-}
-
-/// Add binary files to a stash tree via a temporary git index.
-/// Returns an allocator-owned tree SHA — caller must free.
-fn addBinaryFilesToTree(
-    allocator: Allocator,
-    current_tree: []const u8,
-    binary_paths: []const []const u8,
-) ![]const u8 {
-    var tmp = try git.createTempIndex(allocator, "bin-");
-    defer tmp.deinit();
-
-    try git.runGitReadTree(allocator, current_tree, &tmp.env_map);
-    try git.runGitAddFilesLenient(allocator, binary_paths, &tmp.env_map);
-
-    return git.runGitWriteTree(allocator, &tmp.env_map);
 }
 
 /// Print per-hunk stash results and summary to stdout/stderr.

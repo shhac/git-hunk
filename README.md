@@ -240,8 +240,10 @@ git hunk stash pop                        # restore most recent stash
 ```
 
 Saves selected hunks into a real `git stash` entry and removes them from the
-worktree. Compatible with `git stash list`, `git stash show`, and `git stash pop`.
-Auto-generates a stash message from affected file paths unless `-m` is provided.
+worktree, leaving the index alone. The entry has the same shape as
+`git stash push --keep-index -- <paths>` would give it, message included, so
+`git stash list`, `show`, `pop`, `pop --index`, `apply` and `branch` all treat
+it as a native one.
 
 Like `git stash`, `--all` excludes untracked files by default. Use `-u` /
 `--include-untracked` to include them. Explicit hash targeting always works
