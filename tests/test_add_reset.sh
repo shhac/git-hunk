@@ -1016,4 +1016,71 @@ git diff --cached --quiet \
     || fail "test 249: index should match HEAD again, got: '$(git diff --cached --stat)'"
 pass "test 249: reset --ref reverses add --ref in the index"
 
+# ============================================================================
+# Test 250: a path with a space is the path. git ends such a name on its
+# ---/+++ lines with a TAB, which used to stay on the path: --file found
+# nothing, porcelain grew a column, and results pointed at hashes list never
+# shows.
+# ============================================================================
+new_repo
+lines250() { for i in $(seq 1 12); do echo "$1 line $i"; done; }
+lines250 spaced > "a b.txt"
+lines250 renamed > "old name.txt"
+lines250 into > into.txt
+lines250 outof > "out of.txt"
+git add -A && git commit -q -m "spaced paths"
+sed -i.bak 's/^spaced line 6$/spaced line 6 changed/' "a b.txt"
+
+LIST250="$("$GIT_HUNK" list --oneline --file "a b.txt" 2>&1)" \
+    || fail "test 250: list --file 'a b.txt' failed: $LIST250"
+echo "$LIST250" | grep -q "a b.txt" \
+    || fail "test 250: list --file 'a b.txt' should show its hunk, got: '$LIST250'"
+FIELDS250="$("$GIT_HUNK" list --porcelain --oneline | awk -F'\t' '{print NF}' | sort -u)"
+[[ "$FIELDS250" == "5" ]] \
+    || fail "test 250: porcelain should have 5 columns, got: '$FIELDS250'"
+
+# result_hashes250 <git-hunk args>: the result column, one hash per line.
+result_hashes250() {
+    "$GIT_HUNK" "$@" --porcelain | cut -f3 | tr ',' '\n' | LC_ALL=C sort
+}
+listed_hashes250() {
+    "$GIT_HUNK" list --porcelain --oneline "$@" | cut -f1 | LC_ALL=C sort
+}
+SHA250="$(first_sha --file "a b.txt")"
+GOT250="$(result_hashes250 add "$SHA250")"
+[[ -n "$GOT250" && "$GOT250" == "$(listed_hashes250 --staged --file "a b.txt")" ]] \
+    || fail "test 250: add result '$GOT250' should be what list --staged shows"
+GOT250="$(result_hashes250 reset "$GOT250")"
+[[ -n "$GOT250" && "$GOT250" == "$(listed_hashes250 --file "a b.txt")" ]] \
+    || fail "test 250: reset result '$GOT250' should be what list shows"
+git checkout -q -- "a b.txt"
+
+# Renames onto, off and between spaced paths, each with a content change:
+# reset of the staged rename, and add of the same rename unstaged.
+rename250() {
+    git reset -q --hard
+    mv "$1" "$2"
+    sed -i.bak 's/line 6$/line 6 changed/' "$2"
+}
+for PAIR250 in "old name.txt:new name.txt" "into.txt:in to.txt" "out of.txt:outof.txt"; do
+    FROM250="${PAIR250%%:*}"
+    TO250="${PAIR250##*:}"
+    rename250 "$FROM250" "$TO250"
+    git add -A
+    SHA250="$(first_sha --staged --file "$TO250")"
+    GOT250="$(result_hashes250 reset "$SHA250")"
+    WANT250="$(listed_hashes250 --file "$TO250" --file "$FROM250")"
+    [[ -n "$SHA250" && -n "$GOT250" && "$GOT250" == "$WANT250" ]] \
+        || fail "test 250: reset of '$FROM250' -> '$TO250' gave '$GOT250', list shows '$WANT250'"
+
+    rename250 "$FROM250" "$TO250"
+    git add -N "$TO250"
+    SHA250="$(first_sha --file "$TO250")"
+    GOT250="$(result_hashes250 add "$SHA250")"
+    WANT250="$(listed_hashes250 --staged --file "$TO250" --file "$FROM250")"
+    [[ -n "$SHA250" && -n "$GOT250" && "$GOT250" == "$WANT250" ]] \
+        || fail "test 250: add of '$FROM250' -> '$TO250' gave '$GOT250', list --staged shows '$WANT250'"
+done
+pass "test 250: paths with spaces list, filter and report results like any other"
+
 report_results

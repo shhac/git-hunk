@@ -595,9 +595,10 @@ fn findClosingQuote(s: []const u8) ?usize {
 
 /// Extract file path from a ---/+++ diff line, handling both normal and C-quoted paths.
 /// Returns null for /dev/null lines or unrecognized formats.
-fn extractDiffPath(arena: Allocator, line: []const u8, comptime side: enum { old, new }) !?[]const u8 {
+fn extractDiffPath(arena: Allocator, raw_line: []const u8, comptime side: enum { old, new }) !?[]const u8 {
     const normal_prefix = if (side == .old) "--- a/" else "+++ b/";
     const quoted_prefix = if (side == .old) "--- \"a/" else "+++ \"b/";
+    const line = withoutNameTerminator(raw_line);
 
     if (std.mem.startsWith(u8, line, normal_prefix)) {
         return line[normal_prefix.len..];
@@ -613,6 +614,17 @@ fn extractDiffPath(arena: Allocator, line: []const u8, comptime side: enum { old
     }
 
     return null; // /dev/null or unrecognized
+}
+
+/// git ends a `---`/`+++` name that contains a space with a TAB, so the end
+/// of the name stays visible. A name that really ends in a TAB is always
+/// C-quoted, so only this terminator can be a raw trailing TAB.
+fn withoutNameTerminator(line: []const u8) []const u8 {
+    if (!std.mem.endsWith(u8, line, "\t")) return line;
+    const trimmed = line[0 .. line.len - 1];
+    if (trimmed.len <= "--- ".len) return line;
+    if (std.mem.indexOfScalar(u8, trimmed["--- ".len..], ' ') == null) return line;
+    return trimmed;
 }
 
 // ============================================================================
@@ -868,6 +880,16 @@ test "extractDiffPath quoted path" {
     defer arena.deinit();
     const result = try extractDiffPath(arena.allocator(), "+++ \"b/path with spaces.txt\"", .new);
     try std.testing.expectEqualStrings("path with spaces.txt", result.?);
+}
+
+test "extractDiffPath drops the tab git ends a spaced name with" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try std.testing.expectEqualStrings("a b.txt", (try extractDiffPath(a, "+++ b/a b.txt\t", .new)).?);
+    try std.testing.expectEqualStrings("a b.txt", (try extractDiffPath(a, "--- a/a b.txt\t", .old)).?);
+    try std.testing.expectEqualStrings("\xc3\xbc b.txt", (try extractDiffPath(a, "+++ \"b/\\303\\274 b.txt\"\t", .new)).?);
+    try std.testing.expectEqualStrings("trailing space ", (try extractDiffPath(a, "+++ b/trailing space \t", .new)).?);
 }
 
 test "extractDiffPath quoted path with escape" {
