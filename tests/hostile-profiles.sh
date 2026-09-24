@@ -23,6 +23,7 @@ HOSTILE_PROFILES=(
     pager
     git3-defaults
     copies
+    apply-whitespace
 )
 
 # `diff.external` and GIT_EXTERNAL_DIFF both hand the diff to another program
@@ -101,6 +102,18 @@ profile_copies() {
     cat >> "$1" <<'EOF'
 [diff]
 	renames = copies
+EOF
+}
+
+# apply.whitespace = error makes `git apply` reject a patch that adds a line
+# core.whitespace flags; git-hunk applies patches of content already in the
+# repository, which must move as it is.
+profile_apply_whitespace() {
+    cat >> "$1" <<'EOF'
+[apply]
+	whitespace = error
+[core]
+	whitespace = trailing-space,space-before-tab,tab-in-indent,blank-at-eof
 EOF
 }
 

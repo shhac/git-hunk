@@ -283,6 +283,9 @@ pub fn runGitApply(allocator: Allocator, patch: []const u8, opts: ApplyOptions) 
     if (opts.target == .index) try argv.append(allocator, "--cached");
     if (opts.reverse) try argv.append(allocator, "--reverse");
     try argv.append(allocator, "--unidiff-zero");
+    // The patch moves content that is already in the repository, as `git add`
+    // does, so `apply.whitespace` must neither reject it nor rewrite it.
+    try argv.append(allocator, "--whitespace=nowarn");
     if (opts.check_only) try argv.append(allocator, "--check");
     if (opts.three_way) try argv.append(allocator, "--3way");
 

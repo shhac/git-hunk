@@ -1150,4 +1150,41 @@ WANT252="$(first_sha --file "ünï.txt")"
     || fail "test 252: reset result '$GOT252' should be the untracked hunk list shows, '$WANT252'"
 pass "test 252: untracked files with non-ASCII names list, add and reset"
 
+# ============================================================================
+# Test 253: apply.whitespace neither rejects nor rewrites a hunk. Content
+# with trailing whitespace is already in the worktree; add, stash and commit
+# move it as it is, as `git add` would. `error` used to reject all three, and
+# `fix` would have stripped the whitespace on the way.
+# ============================================================================
+for MODE253 in error fix; do
+    new_repo
+    git config apply.whitespace "$MODE253"
+    git config core.whitespace trailing-space,space-before-tab
+    sed -i.bak '3s/$/   /' alpha.txt
+    sed -i.bak '3s/$/ 	/' beta.txt
+    sed -i.bak '3s/$/  /' gamma.txt
+    WANT_A253="$(bytes_of alpha.txt)"
+    WANT_B253="$(bytes_of beta.txt)"
+    WANT_G253="$(bytes_of gamma.txt)"
+
+    "$GIT_HUNK" add "$(first_sha --file alpha.txt)" > /dev/null 2>&1 \
+        || fail "test 253 ($MODE253): add of a hunk with trailing whitespace failed"
+    [[ "$(blob_bytes :alpha.txt)" == "$WANT_A253" ]] \
+        || fail "test 253 ($MODE253): add should stage alpha.txt byte for byte"
+
+    "$GIT_HUNK" stash "$(first_sha --file beta.txt)" > /dev/null 2>&1 \
+        || fail "test 253 ($MODE253): stash of a hunk with trailing whitespace failed"
+    [[ "$(blob_bytes "stash@{0}:beta.txt")" == "$WANT_B253" ]] \
+        || fail "test 253 ($MODE253): stash should store beta.txt byte for byte"
+    git diff --quiet -- beta.txt || fail "test 253 ($MODE253): stash left beta.txt changed"
+
+    "$GIT_HUNK" commit "$(first_sha --file gamma.txt)" -m "whitespace 253" > /dev/null 2>&1 \
+        || fail "test 253 ($MODE253): commit of a hunk with trailing whitespace failed"
+    [[ "$(blob_bytes HEAD:gamma.txt)" == "$WANT_G253" ]] \
+        || fail "test 253 ($MODE253): commit should record gamma.txt byte for byte"
+    [[ "$(blob_bytes :alpha.txt)" == "$WANT_A253" ]] \
+        || fail "test 253 ($MODE253): commit should keep alpha.txt staged"
+done
+pass "test 253: apply.whitespace does not stop or alter add, stash and commit"
+
 report_results
