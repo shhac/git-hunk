@@ -5,7 +5,7 @@ const Allocator = std.mem.Allocator;
 const Hunk = types.Hunk;
 const FileSection = types.FileSection;
 const BodyLine = types.BodyLine;
-const DiffMode = types.DiffMode;
+const Anchor = types.Anchor;
 
 const DiffCursor = struct {
     buf: []const u8,
@@ -270,21 +270,22 @@ pub fn collectSkippedPaths(
     }
 }
 
-pub fn parseDiff(arena: Allocator, diff: []const u8, mode: DiffMode, hunks: *std.ArrayList(Hunk)) !void {
-    try parseSections(arena, diff, mode, false, hunks);
+/// Parse `diff` into `hunks`, hashing each by its start line on the `anchor` side.
+pub fn parseDiff(arena: Allocator, diff: []const u8, anchor: Anchor, hunks: *std.ArrayList(Hunk)) !void {
+    try parseSections(arena, diff, anchor, false, hunks);
 }
 
 /// Parse `git diff --no-index` output for untracked files, marking every
 /// section untracked.
 pub fn parseUntrackedDiff(arena: Allocator, diff: []const u8, hunks: *std.ArrayList(Hunk)) !void {
-    try parseSections(arena, diff, .unstaged, true, hunks);
+    try parseSections(arena, diff, .new, true, hunks);
 }
 
-fn parseSections(arena: Allocator, diff: []const u8, mode: DiffMode, is_untracked: bool, hunks: *std.ArrayList(Hunk)) !void {
+fn parseSections(arena: Allocator, diff: []const u8, anchor: Anchor, is_untracked: bool, hunks: *std.ArrayList(Hunk)) !void {
     var cursor = DiffCursor.init(diff);
     var previous: ?*FileSection = null;
     while (nextFileHeader(&cursor)) |header| {
-        const section = try parseFileSection(arena, &cursor, diff, header, mode, is_untracked, hunks);
+        const section = try parseFileSection(arena, &cursor, diff, header, anchor, is_untracked, hunks);
         if (section != null and previous != null) linkTypechange(previous.?, section.?);
         previous = section;
     }
@@ -325,7 +326,7 @@ fn parseFileSection(
     cursor: *DiffCursor,
     diff: []const u8,
     header: FileHeader,
-    mode: DiffMode,
+    anchor: Anchor,
     is_untracked: bool,
     hunks: *std.ArrayList(Hunk),
 ) !?*FileSection {
@@ -382,7 +383,7 @@ fn parseFileSection(
             .context = hunk_header.func_context,
             .raw_lines = body.raw_lines,
             .diff_lines = body.diff_lines,
-            .sha_hex = computeHunkSha(file_path, hunk_header.stable_line(mode), body.diff_lines),
+            .sha_hex = computeHunkSha(file_path, hunk_header.anchorLine(anchor), body.diff_lines),
             .section = section,
         });
     }
@@ -411,10 +412,10 @@ const HunkHeader = struct {
     new_count: u32,
     func_context: []const u8,
 
-    fn stable_line(self: HunkHeader, mode: DiffMode) u32 {
-        return switch (mode) {
-            .unstaged => self.new_start, // + side is stable (worktree doesn't change)
-            .staged => self.old_start, // - side is stable (HEAD doesn't change)
+    fn anchorLine(self: HunkHeader, anchor: Anchor) u32 {
+        return switch (anchor) {
+            .new => self.new_start,
+            .old => self.old_start,
         };
     }
 };
@@ -637,14 +638,14 @@ test "parseHunkHeader new file" {
     try std.testing.expectEqual(@as(u32, 42), h.new_count);
 }
 
-test "stable_line unstaged uses new_start" {
+test "anchorLine new uses new_start" {
     const h = HunkHeader{ .old_start = 5, .old_count = 3, .new_start = 10, .new_count = 4, .func_context = "" };
-    try std.testing.expectEqual(@as(u32, 10), h.stable_line(.unstaged));
+    try std.testing.expectEqual(@as(u32, 10), h.anchorLine(.new));
 }
 
-test "stable_line staged uses old_start" {
+test "anchorLine old uses old_start" {
     const h = HunkHeader{ .old_start = 5, .old_count = 3, .new_start = 10, .new_count = 4, .func_context = "" };
-    try std.testing.expectEqual(@as(u32, 5), h.stable_line(.staged));
+    try std.testing.expectEqual(@as(u32, 5), h.anchorLine(.old));
 }
 
 test "parseDiff multi-hunk single file" {
@@ -676,7 +677,7 @@ test "parseDiff multi-hunk single file" {
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
-    try parseDiff(arena, diff, .unstaged, &hunks);
+    try parseDiff(arena, diff, .new, &hunks);
 
     try std.testing.expectEqual(@as(usize, 2), hunks.items.len);
 
@@ -727,7 +728,7 @@ test "parseDiff multi-file" {
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
-    try parseDiff(arena, diff, .unstaged, &hunks);
+    try parseDiff(arena, diff, .new, &hunks);
 
     try std.testing.expectEqual(@as(usize, 2), hunks.items.len);
     try std.testing.expectEqualStrings("a.txt", hunks.items[0].file_path);
@@ -754,7 +755,7 @@ test "parseDiff new file" {
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
-    try parseDiff(arena, diff, .unstaged, &hunks);
+    try parseDiff(arena, diff, .new, &hunks);
 
     try std.testing.expectEqual(@as(usize, 1), hunks.items.len);
     try std.testing.expectEqualStrings("new.txt", hunks.items[0].file_path);
@@ -890,7 +891,7 @@ test "parseDiff deleted file" {
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
-    try parseDiff(arena, diff, .unstaged, &hunks);
+    try parseDiff(arena, diff, .new, &hunks);
 
     try std.testing.expectEqual(@as(usize, 1), hunks.items.len);
     try std.testing.expectEqualStrings("old.txt", hunks.items[0].file_path);
@@ -913,7 +914,7 @@ test "parseDiff binary file produces hunk" {
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
-    try parseDiff(arena, diff, .unstaged, &hunks);
+    try parseDiff(arena, diff, .new, &hunks);
     try std.testing.expectEqual(@as(usize, 1), hunks.items.len);
     try std.testing.expectEqualStrings("img.png", hunks.items[0].file_path);
     try std.testing.expect(hunks.items[0].section.is_binary);
@@ -930,8 +931,8 @@ test "parseDiff hashes two changes to one binary path differently" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     var hunks: std.ArrayList(Hunk) = .empty;
-    try parseDiff(arena.allocator(), "diff --git a/b b/b\nindex 1111111..2222222 100644\nBinary files a/b and b/b differ\n", .unstaged, &hunks);
-    try parseDiff(arena.allocator(), "diff --git a/b b/b\nindex 1111111..3333333 100644\nBinary files a/b and b/b differ\n", .unstaged, &hunks);
+    try parseDiff(arena.allocator(), "diff --git a/b b/b\nindex 1111111..2222222 100644\nBinary files a/b and b/b differ\n", .new, &hunks);
+    try parseDiff(arena.allocator(), "diff --git a/b b/b\nindex 1111111..3333333 100644\nBinary files a/b and b/b differ\n", .new, &hunks);
     try std.testing.expectEqual(@as(usize, 2), hunks.items.len);
     try std.testing.expect(!std.mem.eql(u8, &hunks.items[0].sha_hex, &hunks.items[1].sha_hex));
 }
@@ -952,7 +953,7 @@ test "parseDiff new binary file" {
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
-    try parseDiff(arena, diff, .unstaged, &hunks);
+    try parseDiff(arena, diff, .new, &hunks);
     try std.testing.expectEqual(@as(usize, 1), hunks.items.len);
     try std.testing.expectEqualStrings("data.db", hunks.items[0].file_path);
     try std.testing.expect(hunks.items[0].section.is_binary);
@@ -975,7 +976,7 @@ test "parseDiff deleted binary file" {
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
-    try parseDiff(arena, diff, .unstaged, &hunks);
+    try parseDiff(arena, diff, .new, &hunks);
     try std.testing.expectEqual(@as(usize, 1), hunks.items.len);
     try std.testing.expectEqualStrings("old.bin", hunks.items[0].file_path);
     try std.testing.expect(hunks.items[0].section.is_binary);
@@ -1004,7 +1005,7 @@ test "parseDiff binary and text files together" {
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
-    try parseDiff(arena, diff, .unstaged, &hunks);
+    try parseDiff(arena, diff, .new, &hunks);
     try std.testing.expectEqual(@as(usize, 2), hunks.items.len);
     try std.testing.expectEqualStrings("img.png", hunks.items[0].file_path);
     try std.testing.expect(hunks.items[0].section.is_binary);
@@ -1031,7 +1032,7 @@ test "parseDiff symlink detected via index line mode" {
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
-    try parseDiff(arena, diff, .unstaged, &hunks);
+    try parseDiff(arena, diff, .new, &hunks);
     try std.testing.expectEqual(@as(usize, 1), hunks.items.len);
     try std.testing.expectEqualStrings("link.txt", hunks.items[0].file_path);
     try std.testing.expect(hunks.items[0].section.is_symlink);
@@ -1057,7 +1058,7 @@ test "parseDiff submodule skipped" {
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
-    try parseDiff(arena, diff, .unstaged, &hunks);
+    try parseDiff(arena, diff, .new, &hunks);
     try std.testing.expectEqual(@as(usize, 0), hunks.items.len);
 }
 
@@ -1081,7 +1082,7 @@ test "parseDiff no newline at end of file" {
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
-    try parseDiff(arena, diff, .unstaged, &hunks);
+    try parseDiff(arena, diff, .new, &hunks);
     try std.testing.expectEqual(@as(usize, 1), hunks.items.len);
     try std.testing.expect(std.mem.indexOf(u8, hunks.items[0].diff_lines, "\\ No newline") != null);
 }
@@ -1109,7 +1110,7 @@ test "parseDiff rename with content" {
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
-    try parseDiff(arena, diff, .unstaged, &hunks);
+    try parseDiff(arena, diff, .new, &hunks);
 
     try std.testing.expectEqual(@as(usize, 1), hunks.items.len);
     try std.testing.expectEqualStrings("new.txt", hunks.items[0].file_path);
@@ -1136,7 +1137,7 @@ test "parseDiff c-quoted path" {
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
-    try parseDiff(arena, diff, .unstaged, &hunks);
+    try parseDiff(arena, diff, .new, &hunks);
 
     try std.testing.expectEqual(@as(usize, 1), hunks.items.len);
     try std.testing.expectEqualStrings("path with spaces.txt", hunks.items[0].file_path);
@@ -1151,7 +1152,7 @@ test "parseDiff empty input" {
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
-    try parseDiff(arena, "", .unstaged, &hunks);
+    try parseDiff(arena, "", .new, &hunks);
     try std.testing.expectEqual(@as(usize, 0), hunks.items.len);
 }
 
@@ -1170,11 +1171,11 @@ test "parseDiff mode-only change" {
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
-    try parseDiff(arena, diff, .unstaged, &hunks);
+    try parseDiff(arena, diff, .new, &hunks);
     try std.testing.expectEqual(@as(usize, 0), hunks.items.len);
 }
 
-test "parseDiff staged mode produces different sha" {
+test "parseDiff old anchor produces different sha" {
     const diff =
         \\diff --git a/hello.txt b/hello.txt
         \\index abc1234..def5678 100644
@@ -1196,8 +1197,8 @@ test "parseDiff staged mode produces different sha" {
     defer hunks_unstaged.deinit(arena);
     defer hunks_staged.deinit(arena);
 
-    try parseDiff(arena, diff, .unstaged, &hunks_unstaged);
-    try parseDiff(arena, diff, .staged, &hunks_staged);
+    try parseDiff(arena, diff, .new, &hunks_unstaged);
+    try parseDiff(arena, diff, .old, &hunks_staged);
 
     // Staged uses old_start=5, unstaged uses new_start=10 → different SHAs
     try std.testing.expect(!std.mem.eql(
@@ -1222,7 +1223,7 @@ test "parseDiff empty new file" {
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
-    try parseDiff(arena, diff, .unstaged, &hunks);
+    try parseDiff(arena, diff, .new, &hunks);
 
     try std.testing.expectEqual(@as(usize, 1), hunks.items.len);
     try std.testing.expectEqualStrings("empty.txt", hunks.items[0].file_path);
@@ -1249,7 +1250,7 @@ test "parseDiff empty deleted file" {
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
-    try parseDiff(arena, diff, .staged, &hunks);
+    try parseDiff(arena, diff, .old, &hunks);
 
     try std.testing.expectEqual(@as(usize, 1), hunks.items.len);
     try std.testing.expectEqualStrings("empty.txt", hunks.items[0].file_path);
@@ -1290,7 +1291,7 @@ test "parseDiff empty file among non-empty files" {
     var hunks: std.ArrayList(Hunk) = .empty;
     defer hunks.deinit(arena);
 
-    try parseDiff(arena, diff, .unstaged, &hunks);
+    try parseDiff(arena, diff, .new, &hunks);
 
     try std.testing.expectEqual(@as(usize, 3), hunks.items.len);
     try std.testing.expectEqualStrings("a.txt", hunks.items[0].file_path);
@@ -1394,7 +1395,7 @@ test "parseDiff links the two halves of a typechange" {
         \\
     ;
     var hunks: std.ArrayList(Hunk) = .empty;
-    try parseDiff(arena.allocator(), diff, .unstaged, &hunks);
+    try parseDiff(arena.allocator(), diff, .new, &hunks);
     try std.testing.expectEqual(@as(usize, 3), hunks.items.len);
     try std.testing.expect(hunks.items[0].section.is_typechange);
     try std.testing.expect(hunks.items[1].section.is_typechange);
@@ -1414,7 +1415,7 @@ test "parseDiff binary rename takes the new path from rename to" {
         \\
     ;
     var hunks: std.ArrayList(Hunk) = .empty;
-    try parseDiff(arena.allocator(), diff, .staged, &hunks);
+    try parseDiff(arena.allocator(), diff, .old, &hunks);
     try std.testing.expectEqual(@as(usize, 1), hunks.items.len);
     try std.testing.expectEqualStrings("b.bin", hunks.items[0].file_path);
 }
@@ -1497,7 +1498,7 @@ test "collectSkippedPaths: submodule pointer bump" {
         \\
     ;
     var hunks: std.ArrayList(Hunk) = .empty;
-    try parseDiff(arena, diff, .unstaged, &hunks);
+    try parseDiff(arena, diff, .new, &hunks);
     try std.testing.expectEqual(@as(usize, 0), hunks.items.len);
 
     var skipped: std.ArrayList(SkippedPath) = .empty;
@@ -1519,7 +1520,7 @@ test "collectSkippedPaths: mode-only change" {
         \\
     ;
     var hunks: std.ArrayList(Hunk) = .empty;
-    try parseDiff(arena, diff, .unstaged, &hunks);
+    try parseDiff(arena, diff, .new, &hunks);
     try std.testing.expectEqual(@as(usize, 0), hunks.items.len);
 
     var skipped: std.ArrayList(SkippedPath) = .empty;
@@ -1549,7 +1550,7 @@ test "collectSkippedPaths: mode change alongside content still reported" {
         \\
     ;
     var hunks: std.ArrayList(Hunk) = .empty;
-    try parseDiff(arena, diff, .unstaged, &hunks);
+    try parseDiff(arena, diff, .new, &hunks);
     try std.testing.expectEqual(@as(usize, 1), hunks.items.len);
 
     var skipped: std.ArrayList(SkippedPath) = .empty;
@@ -1576,7 +1577,7 @@ test "collectSkippedPaths: an ordinary edit is not reported" {
         \\
     ;
     var hunks: std.ArrayList(Hunk) = .empty;
-    try parseDiff(arena, diff, .unstaged, &hunks);
+    try parseDiff(arena, diff, .new, &hunks);
     try std.testing.expectEqual(@as(usize, 1), hunks.items.len);
 
     var skipped: std.ArrayList(SkippedPath) = .empty;
@@ -1652,9 +1653,9 @@ fn fuzzParseDiff(_: void, smith: *std.testing.Smith) anyerror!void {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    inline for ([_]DiffMode{ .unstaged, .staged }) |mode| {
+    inline for ([_]Anchor{ .new, .old }) |anchor| {
         var hunks: std.ArrayList(Hunk) = .empty;
-        try parseDiff(arena, input, mode, &hunks);
+        try parseDiff(arena, input, anchor, &hunks);
         for (hunks.items) |h| {
             for (h.sha_hex) |c| try std.testing.expect(std.ascii.isHex(c));
         }

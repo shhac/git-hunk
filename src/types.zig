@@ -1,4 +1,5 @@
 const std = @import("std");
+const source_mod = @import("source.zig");
 
 var g_io: ?std.Io = null;
 var g_env_map: ?*const std.process.Environ.Map = null;
@@ -192,7 +193,8 @@ pub const MatchedHunk = struct {
     line_spec: ?LineSpec,
 };
 
-pub const DiffMode = enum { unstaged, staged };
+pub const DiffSource = source_mod.DiffSource;
+pub const Anchor = source_mod.Anchor;
 
 pub const DiffFilter = enum { all, tracked_only, untracked_only };
 
@@ -209,9 +211,8 @@ pub const Common = struct {
     /// `--files-from` synthesises paths from file contents, which do not
     /// outlive the read buffer.
     file_filter: std.ArrayList([]const u8) = .empty,
-    /// As typed until main expands it, before any command runs: a single ref
-    /// without --staged becomes the range `X^..X` (or `<empty-tree>..X`).
-    ref: ?[]const u8 = null,
+    /// Chosen by the parser from --staged, --ref and the command's default.
+    source: DiffSource = .worktree,
     output: OutputMode = .human,
     no_color: bool = false,
     context: ?u32 = null,
@@ -223,7 +224,6 @@ pub const Common = struct {
 
 pub const ListOptions = struct {
     common: Common = .{},
-    mode: DiffMode = .unstaged,
     oneline: bool = false,
 };
 
@@ -239,7 +239,6 @@ pub const AddResetOptions = struct {
 pub const DiffOptions = struct {
     sha_args: std.ArrayList(ShaArg),
     common: Common = .{},
-    mode: DiffMode = .unstaged,
     /// Number hunk body lines in human output. A line spec already implies the
     /// numbered gutter; this requests it without one.
     number: bool = false,
@@ -247,13 +246,11 @@ pub const DiffOptions = struct {
 
 pub const CountOptions = struct {
     common: Common = .{},
-    mode: DiffMode = .unstaged,
 };
 
 pub const CheckOptions = struct {
     sha_args: std.ArrayList(ShaArg),
     common: Common = .{},
-    mode: DiffMode = .unstaged,
     exclusive: bool = false,
     allow_empty: bool = false,
 };
@@ -285,14 +282,14 @@ pub const CommitOptions = struct {
 };
 
 /// Compute the stable SHA1 fingerprint of a hunk: SHA1(file_path || \x00 ||
-/// stable_line_decimal || \x00 || diff_lines). Returns 40-char lowercase hex.
-pub fn computeHunkSha(file_path: []const u8, stable_line: u32, diff_lines: []const u8) [40]u8 {
+/// anchor_line_decimal || \x00 || diff_lines). Returns 40-char lowercase hex.
+pub fn computeHunkSha(file_path: []const u8, anchor_line: u32, diff_lines: []const u8) [40]u8 {
     var hasher = std.crypto.hash.Sha1.init(.{});
     hasher.update(file_path);
     hasher.update(&[_]u8{0});
 
     var line_buf: [20]u8 = undefined;
-    const line_str = std.fmt.bufPrint(&line_buf, "{d}", .{stable_line}) catch "0";
+    const line_str = std.fmt.bufPrint(&line_buf, "{d}", .{anchor_line}) catch "0";
     hasher.update(line_str);
     hasher.update(&[_]u8{0});
 

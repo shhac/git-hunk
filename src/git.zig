@@ -4,7 +4,7 @@ const types = @import("types.zig");
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const EnvMap = std.process.Environ.Map;
-const DiffMode = types.DiffMode;
+const DiffSource = types.DiffSource;
 const fatal = types.fatal;
 
 const defaultIo = types.getIo;
@@ -204,20 +204,13 @@ const diff_hygiene_flags: []const []const u8 = &.{
 /// where prefixes and blob ids are not emitted at all.
 const name_only_hygiene_flags: []const []const u8 = &.{ "--no-ext-diff", "--no-textconv", "--no-color", "--no-relative" };
 
-/// `git diff`, scoped to specific file paths via `-- file1 file2 ...`.
-/// Pass an empty slice for no file filter.
-pub fn runGitDiffFiles(allocator: Allocator, mode: DiffMode, ref: ?[]const u8, context: ?u32, file_paths: []const []const u8) ![]u8 {
-    // Base args: git diff [--cached] [ref..] [-U<n>] --src-prefix=a/ --dst-prefix=b/ --no-color [-- file1 ...]
+/// `git diff` for `source`, scoped to specific file paths via
+/// `-- file1 file2 ...`. Pass an empty slice for no file filter.
+pub fn runGitDiffFiles(allocator: Allocator, source: DiffSource, context: ?u32, file_paths: []const []const u8) ![]u8 {
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(allocator);
     try argv.appendSlice(allocator, &.{ "git", "diff" });
-    if (mode == .staged) try argv.append(allocator, "--cached");
-    if (ref) |r| {
-        // Pass the ref through verbatim. Git diff understands single refs, two-dot
-        // ranges (A..B), and three-dot symmetric difference (A...B); the previous
-        // implementation hand-split on `..` and corrupted A...B and A.. forms.
-        try argv.append(allocator, r);
-    }
+    try source.appendDiffArgs(allocator, &argv);
     var context_buf: [16]u8 = undefined;
     if (context) |ctx| {
         try argv.append(allocator, std.fmt.bufPrint(&context_buf, "-U{d}", .{ctx}) catch "-U0");

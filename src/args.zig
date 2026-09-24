@@ -7,7 +7,7 @@ const Allocator = std.mem.Allocator;
 const LineRange = types.LineRange;
 const LineSpec = types.LineSpec;
 const ShaArg = types.ShaArg;
-const DiffMode = types.DiffMode;
+const DiffSource = types.DiffSource;
 const OutputMode = types.OutputMode;
 const ListOptions = types.ListOptions;
 const AddResetOptions = types.AddResetOptions;
@@ -36,7 +36,7 @@ pub fn deinitOptions(allocator: Allocator, opts: anytype) void {
 /// also increments i.* so the loop's `: (i += 1)` advances past the value).
 /// Returns false if arg is not a common flag (caller handles it).
 /// Returns error on parse failure or HelpRequested.
-fn parseCommonFlag(allocator: Allocator, arg: []const u8, i: *usize, args: []const [:0]const u8, c: *Common) !bool {
+fn parseCommonFlag(allocator: Allocator, arg: []const u8, i: *usize, args: []const [:0]const u8, c: *Common, sf: *SourceFlags) !bool {
     if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
         return error.HelpRequested;
     } else if (std.mem.eql(u8, arg, "--file")) {
@@ -46,7 +46,7 @@ fn parseCommonFlag(allocator: Allocator, arg: []const u8, i: *usize, args: []con
         try appendPathsFromFile(allocator, try takeValue(args, i), &c.file_filter);
         return true;
     } else if (std.mem.eql(u8, arg, "--ref")) {
-        c.ref = try takeValue(args, i);
+        sf.ref = try takeValue(args, i);
         return true;
     } else if (std.mem.eql(u8, arg, "--tracked-only")) {
         if (c.diff_filter == .untracked_only) return error.ConflictingFilter;
@@ -146,26 +146,32 @@ fn unknownFlag(arg: []const u8) error{UnknownFlag} {
     return error.UnknownFlag;
 }
 
-/// `--staged` is incompatible with a range ref (`A..B`). Returns InvalidArgument
-/// (after printing) when both are present.
-fn validateRefStagedCombo(ref: ?[]const u8, mode: DiffMode) error{InvalidArgument}!void {
-    if (ref) |r| {
-        if (std.mem.indexOf(u8, r, "..") != null and mode == .staged) {
+/// What --ref and --staged said. Either may come first, so the diff source
+/// is built from them once the argument loop is done.
+const SourceFlags = struct {
+    ref: ?[]const u8 = null,
+    staged: bool = false,
+
+    /// The source for a command whose own is `default`. Returns
+    /// InvalidArgument (after printing) for a range with --staged.
+    fn build(self: SourceFlags, default: DiffSource) error{InvalidArgument}!DiffSource {
+        return DiffSource.fromFlags(self.ref, self.staged, default) catch {
             std.debug.print("error: --staged cannot be used with a range ref (contains '..')\n", .{});
             return error.InvalidArgument;
-        }
+        };
     }
-}
+};
 
 pub fn parseListArgs(allocator: Allocator, args: []const [:0]const u8) !ListOptions {
     var opts: ListOptions = .{};
     errdefer deinitOptions(allocator, &opts);
+    var sf: SourceFlags = .{};
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
-        if (try parseCommonFlag(allocator, arg, &i, args, &opts.common)) continue;
+        if (try parseCommonFlag(allocator, arg, &i, args, &opts.common, &sf)) continue;
         if (std.mem.eql(u8, arg, "--staged")) {
-            opts.mode = .staged;
+            sf.staged = true;
         } else if (std.mem.eql(u8, arg, "--oneline")) {
             opts.oneline = true;
         } else {
@@ -174,20 +180,32 @@ pub fn parseListArgs(allocator: Allocator, args: []const [:0]const u8) !ListOpti
     }
     try rejectUnsupported3way("list", opts.common);
 
-    try validateRefStagedCombo(opts.common.ref, opts.mode);
+    opts.common.source = try sf.build(.worktree);
 
     return opts;
 }
 
-pub fn parseAddResetArgs(allocator: Allocator, args: []const [:0]const u8) !AddResetOptions {
+pub fn parseAddArgs(allocator: Allocator, args: []const [:0]const u8) !AddResetOptions {
+    return parseAddResetArgs(.worktree, allocator, args);
+}
+
+pub fn parseResetArgs(allocator: Allocator, args: []const [:0]const u8) !AddResetOptions {
+    return parseAddResetArgs(.index, allocator, args);
+}
+
+/// add and reset take the same flags; they differ in the diff their hashes
+/// come from without --ref: add stages from the worktree, reset unstages
+/// from the index.
+fn parseAddResetArgs(comptime default: DiffSource, allocator: Allocator, args: []const [:0]const u8) !AddResetOptions {
     var opts: AddResetOptions = .{
         .sha_args = .empty,
     };
     errdefer deinitOptions(allocator, &opts);
+    var sf: SourceFlags = .{};
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
-        if (try parseCommonFlag(allocator, arg, &i, args, &opts.common)) continue;
+        if (try parseCommonFlag(allocator, arg, &i, args, &opts.common, &sf)) continue;
         if (std.mem.eql(u8, arg, "--all")) {
             opts.select_all = true;
         } else if (std.mem.eql(u8, arg, "--dry-run")) {
@@ -200,6 +218,7 @@ pub fn parseAddResetArgs(allocator: Allocator, args: []const [:0]const u8) !AddR
     }
     try rejectUnsupported3way("add", opts.common);
     try rejectUnsupported3way("reset", opts.common);
+    opts.common.source = try sf.build(default);
 
     try requireSelection(opts);
 
@@ -211,12 +230,13 @@ pub fn parseDiffArgs(allocator: Allocator, args: []const [:0]const u8) !DiffOpti
         .sha_args = .empty,
     };
     errdefer deinitOptions(allocator, &opts);
+    var sf: SourceFlags = .{};
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
-        if (try parseCommonFlag(allocator, arg, &i, args, &opts.common)) continue;
+        if (try parseCommonFlag(allocator, arg, &i, args, &opts.common, &sf)) continue;
         if (std.mem.eql(u8, arg, "--staged")) {
-            opts.mode = .staged;
+            sf.staged = true;
         } else if (std.mem.eql(u8, arg, "--number") or std.mem.eql(u8, arg, "-n")) {
             opts.number = true;
         } else if (std.mem.startsWith(u8, arg, "-")) {
@@ -227,7 +247,7 @@ pub fn parseDiffArgs(allocator: Allocator, args: []const [:0]const u8) !DiffOpti
     }
     try rejectUnsupported3way("diff", opts.common);
 
-    try validateRefStagedCombo(opts.common.ref, opts.mode);
+    opts.common.source = try sf.build(.worktree);
 
     if (opts.sha_args.items.len == 0) {
         std.debug.print("error: at least one <sha> argument required\n", .{});
@@ -242,12 +262,13 @@ pub fn parseDiffArgs(allocator: Allocator, args: []const [:0]const u8) !DiffOpti
 pub fn parseCountArgs(allocator: Allocator, args: []const [:0]const u8) !CountOptions {
     var opts: CountOptions = .{};
     errdefer deinitOptions(allocator, &opts);
+    var sf: SourceFlags = .{};
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
-        if (try parseCommonFlag(allocator, arg, &i, args, &opts.common)) continue;
+        if (try parseCommonFlag(allocator, arg, &i, args, &opts.common, &sf)) continue;
         if (std.mem.eql(u8, arg, "--staged")) {
-            opts.mode = .staged;
+            sf.staged = true;
         } else {
             if (std.mem.startsWith(u8, arg, "-")) return unknownFlag(arg);
             std.debug.print("error: count does not accept arguments\n", .{});
@@ -256,7 +277,7 @@ pub fn parseCountArgs(allocator: Allocator, args: []const [:0]const u8) !CountOp
     }
     try rejectUnsupported3way("count", opts.common);
 
-    try validateRefStagedCombo(opts.common.ref, opts.mode);
+    opts.common.source = try sf.build(.worktree);
 
     return opts;
 }
@@ -266,12 +287,13 @@ pub fn parseCheckArgs(allocator: Allocator, args: []const [:0]const u8) !CheckOp
         .sha_args = .empty,
     };
     errdefer deinitOptions(allocator, &opts);
+    var sf: SourceFlags = .{};
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
-        if (try parseCommonFlag(allocator, arg, &i, args, &opts.common)) continue;
+        if (try parseCommonFlag(allocator, arg, &i, args, &opts.common, &sf)) continue;
         if (std.mem.eql(u8, arg, "--staged")) {
-            opts.mode = .staged;
+            sf.staged = true;
         } else if (std.mem.eql(u8, arg, "--exclusive")) {
             opts.exclusive = true;
         } else if (std.mem.eql(u8, arg, "--allow-empty")) {
@@ -284,7 +306,7 @@ pub fn parseCheckArgs(allocator: Allocator, args: []const [:0]const u8) !CheckOp
     }
     try rejectUnsupported3way("check", opts.common);
 
-    try validateRefStagedCombo(opts.common.ref, opts.mode);
+    opts.common.source = try sf.build(.worktree);
 
     if (opts.sha_args.items.len == 0 and !opts.allow_empty) {
         std.debug.print("error: at least one <sha> argument required\n", .{});
@@ -299,10 +321,11 @@ pub fn parseRestoreArgs(allocator: Allocator, args: []const [:0]const u8) !Resto
         .sha_args = .empty,
     };
     errdefer deinitOptions(allocator, &opts);
+    var sf: SourceFlags = .{};
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
-        if (try parseCommonFlag(allocator, arg, &i, args, &opts.common)) continue;
+        if (try parseCommonFlag(allocator, arg, &i, args, &opts.common, &sf)) continue;
         if (std.mem.eql(u8, arg, "--all")) {
             opts.select_all = true;
         } else if (std.mem.eql(u8, arg, "--dry-run")) {
@@ -316,6 +339,7 @@ pub fn parseRestoreArgs(allocator: Allocator, args: []const [:0]const u8) !Resto
         }
     }
     try rejectUnsupported3way("restore", opts.common);
+    opts.common.source = try sf.build(.worktree);
 
     try requireSelection(opts);
 
@@ -341,10 +365,11 @@ pub fn parseStashArgs(allocator: Allocator, args: []const [:0]const u8) !StashOp
     }
 
     // `push` is optional: without it, the first argument is already a flag or hash.
+    var sf: SourceFlags = .{};
     var i: usize = if (std.mem.eql(u8, first, "push")) 1 else 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
-        if (try parseCommonFlag(allocator, arg, &i, args, &opts.common)) continue;
+        if (try parseCommonFlag(allocator, arg, &i, args, &opts.common, &sf)) continue;
         if (std.mem.eql(u8, arg, "--all")) {
             opts.select_all = true;
         } else if (std.mem.eql(u8, arg, "--include-untracked") or std.mem.eql(u8, arg, "-u")) {
@@ -359,7 +384,7 @@ pub fn parseStashArgs(allocator: Allocator, args: []const [:0]const u8) !StashOp
     }
     try rejectUnsupported3way("stash", opts.common);
 
-    if (opts.common.ref != null) {
+    if (sf.ref != null) {
         std.debug.print("error: --ref is not supported for stash\n", .{});
         return error.InvalidArgument;
     }
@@ -380,6 +405,7 @@ pub fn parseCommitArgs(allocator: Allocator, args: []const [:0]const u8) !Commit
         .sha_args = .empty,
     };
     errdefer deinitOptions(allocator, &opts);
+    var sf: SourceFlags = .{};
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
@@ -387,7 +413,7 @@ pub fn parseCommitArgs(allocator: Allocator, args: []const [:0]const u8) !Commit
             std.debug.print("error: --staged is not supported by commit -- use 'git commit' directly\n", .{});
             return error.UnknownFlag;
         }
-        if (try parseCommonFlag(allocator, arg, &i, args, &opts.common)) continue;
+        if (try parseCommonFlag(allocator, arg, &i, args, &opts.common, &sf)) continue;
         if (std.mem.eql(u8, arg, "--all")) {
             opts.select_all = true;
         } else if (std.mem.eql(u8, arg, "--message") or std.mem.eql(u8, arg, "-m")) {
@@ -403,6 +429,7 @@ pub fn parseCommitArgs(allocator: Allocator, args: []const [:0]const u8) !Commit
         }
     }
     try rejectUnsupported3way("commit", opts.common);
+    opts.common.source = try sf.build(.worktree);
 
     try requireSelection(opts);
 
@@ -608,7 +635,7 @@ fn parseLineSpec(allocator: Allocator, spec: []const u8) !LineSpec {
 
 test "parseListArgs defaults" {
     const opts = try parseListArgs(std.testing.allocator, &.{});
-    try std.testing.expectEqual(DiffMode.unstaged, opts.mode);
+    try std.testing.expectEqual(DiffSource.worktree, opts.common.source);
     try std.testing.expectEqual(OutputMode.human, opts.common.output);
     try std.testing.expect(!opts.oneline);
     try std.testing.expectEqual(@as(usize, 0), opts.common.file_filter.items.len);
@@ -617,7 +644,7 @@ test "parseListArgs defaults" {
 test "parseListArgs staged" {
     const args_arr = [_][:0]const u8{"--staged"};
     const opts = try parseListArgs(std.testing.allocator, &args_arr);
-    try std.testing.expectEqual(DiffMode.staged, opts.mode);
+    try std.testing.expectEqual(DiffSource.index, opts.common.source);
 }
 
 test "parseListArgs oneline" {
@@ -642,61 +669,61 @@ test "parseListArgs all flags combined" {
     };
     var opts = try parseListArgs(std.testing.allocator, &args_arr);
     defer deinitFileFilter(std.testing.allocator, &opts.common.file_filter);
-    try std.testing.expectEqual(DiffMode.staged, opts.mode);
+    try std.testing.expectEqual(DiffSource.index, opts.common.source);
     try std.testing.expectEqual(OutputMode.porcelain, opts.common.output);
     try std.testing.expect(opts.oneline);
     try std.testing.expect(opts.common.no_color);
     try std.testing.expectEqualStrings("foo.txt", opts.common.file_filter.items[0]);
 }
 
-test "parseAddResetArgs valid sha" {
+test "parseAddArgs valid sha" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]const u8{"abcd1234"};
-    var opts = try parseAddResetArgs(allocator, &args_arr);
+    var opts = try parseAddArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expectEqual(@as(usize, 1), opts.sha_args.items.len);
     try std.testing.expectEqualStrings("abcd1234", opts.sha_args.items[0].prefix);
     try std.testing.expectEqual(@as(?LineSpec, null), opts.sha_args.items[0].line_spec);
 }
 
-test "parseAddResetArgs too short sha" {
+test "parseAddArgs too short sha" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]const u8{"abc"};
-    try std.testing.expectError(error.InvalidArgument, parseAddResetArgs(allocator, &args_arr));
+    try std.testing.expectError(error.InvalidArgument, parseAddArgs(allocator, &args_arr));
 }
 
-test "parseAddResetArgs non-hex sha" {
+test "parseAddArgs non-hex sha" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]const u8{"xyzw1234"};
-    try std.testing.expectError(error.InvalidArgument, parseAddResetArgs(allocator, &args_arr));
+    try std.testing.expectError(error.InvalidArgument, parseAddArgs(allocator, &args_arr));
 }
 
-test "parseAddResetArgs path-shaped argument" {
+test "parseAddArgs path-shaped argument" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]const u8{"src/main.zig"};
-    try std.testing.expectError(error.InvalidArgument, parseAddResetArgs(allocator, &args_arr));
+    try std.testing.expectError(error.InvalidArgument, parseAddArgs(allocator, &args_arr));
 }
 
-test "parseAddResetArgs missing sha" {
+test "parseAddArgs missing sha" {
     const allocator = std.testing.allocator;
-    try std.testing.expectError(error.MissingArgument, parseAddResetArgs(allocator, &.{}));
+    try std.testing.expectError(error.MissingArgument, parseAddArgs(allocator, &.{}));
 }
 
-test "parseAddResetArgs select all" {
+test "parseAddArgs select all" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]const u8{"--all"};
-    var opts = try parseAddResetArgs(allocator, &args_arr);
+    var opts = try parseAddArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expect(opts.select_all);
 }
 
-test "parseAddResetArgs multiple shas" {
+test "parseAddArgs multiple shas" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]const u8{
         "abcd1234",
         "ef567890",
     };
-    var opts = try parseAddResetArgs(allocator, &args_arr);
+    var opts = try parseAddArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expectEqual(@as(usize, 2), opts.sha_args.items.len);
 }
@@ -714,7 +741,7 @@ test "parseDiffArgs staged flag" {
     const args_arr = [_][:0]const u8{ "abcd1234", "--staged" };
     var opts = try parseDiffArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
-    try std.testing.expectEqual(DiffMode.staged, opts.mode);
+    try std.testing.expectEqual(DiffSource.index, opts.common.source);
 }
 
 test "parseDiffArgs number flag short and long" {
@@ -815,10 +842,10 @@ test "parseShaArg invalid number in line spec" {
     try std.testing.expectError(error.InvalidArgument, parseShaArg(allocator, "abcd1234:abc"));
 }
 
-test "parseAddResetArgs sha with line spec" {
+test "parseAddArgs sha with line spec" {
     const allocator = std.testing.allocator;
     const args_arr = [_][:0]const u8{"abcd1234:3-5"};
-    var opts = try parseAddResetArgs(allocator, &args_arr);
+    var opts = try parseAddArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     try std.testing.expectEqual(@as(usize, 1), opts.sha_args.items.len);
     try std.testing.expectEqualStrings("abcd1234", opts.sha_args.items[0].prefix);
@@ -839,7 +866,7 @@ test "parseDiffArgs sha with line spec" {
 
 test "parseCountArgs defaults" {
     const opts = try parseCountArgs(std.testing.allocator, &.{});
-    try std.testing.expectEqual(DiffMode.unstaged, opts.mode);
+    try std.testing.expectEqual(DiffSource.worktree, opts.common.source);
     try std.testing.expectEqual(@as(usize, 0), opts.common.file_filter.items.len);
     try std.testing.expectEqual(@as(?u32, null), opts.common.context);
 }
@@ -847,7 +874,7 @@ test "parseCountArgs defaults" {
 test "parseCountArgs staged" {
     const args_arr = [_][:0]const u8{"--staged"};
     const opts = try parseCountArgs(std.testing.allocator, &args_arr);
-    try std.testing.expectEqual(DiffMode.staged, opts.mode);
+    try std.testing.expectEqual(DiffSource.index, opts.common.source);
 }
 
 test "parseCountArgs rejects positional args" {
@@ -872,7 +899,7 @@ test "parseCountArgs all flags combined" {
     };
     var opts = try parseCountArgs(std.testing.allocator, &args_arr);
     defer deinitFileFilter(std.testing.allocator, &opts.common.file_filter);
-    try std.testing.expectEqual(DiffMode.staged, opts.mode);
+    try std.testing.expectEqual(DiffSource.index, opts.common.source);
     try std.testing.expectEqualStrings("foo.txt", opts.common.file_filter.items[0]);
     try std.testing.expectEqual(@as(?u32, 3), opts.common.context);
 }
@@ -892,7 +919,7 @@ test "parseCheckArgs staged flag" {
     const args_arr = [_][:0]const u8{ "abcd1234", "--staged" };
     var opts = try parseCheckArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
-    try std.testing.expectEqual(DiffMode.staged, opts.mode);
+    try std.testing.expectEqual(DiffSource.index, opts.common.source);
 }
 
 test "parseCheckArgs exclusive flag" {
@@ -944,7 +971,7 @@ test "parseCheckArgs all flags combined" {
     var opts = try parseCheckArgs(allocator, &args_arr);
     defer deinitShaArgs(allocator, &opts.sha_args);
     defer deinitFileFilter(allocator, &opts.common.file_filter);
-    try std.testing.expectEqual(DiffMode.staged, opts.mode);
+    try std.testing.expectEqual(DiffSource.index, opts.common.source);
     try std.testing.expect(opts.exclusive);
     try std.testing.expectEqualStrings("foo.txt", opts.common.file_filter.items[0]);
     try std.testing.expectEqual(OutputMode.porcelain, opts.common.output);
@@ -1172,8 +1199,7 @@ test "parseStashArgs old --pop flag rejected as unknown" {
 test "parseListArgs --ref with --staged allowed for single ref" {
     const args_arr = [_][:0]const u8{ "--ref", "HEAD", "--staged" };
     const opts = try parseListArgs(std.testing.allocator, &args_arr);
-    try std.testing.expectEqualStrings("HEAD", opts.common.ref.?);
-    try std.testing.expectEqual(DiffMode.staged, opts.mode);
+    try std.testing.expectEqualStrings("HEAD", opts.common.source.index_against.text);
 }
 
 test "parseListArgs --ref range with --staged rejected" {
@@ -1184,8 +1210,7 @@ test "parseListArgs --ref range with --staged rejected" {
 test "parseListArgs --ref range without --staged allowed" {
     const args_arr = [_][:0]const u8{ "--ref", "main..HEAD" };
     const opts = try parseListArgs(std.testing.allocator, &args_arr);
-    try std.testing.expectEqualStrings("main..HEAD", opts.common.ref.?);
-    try std.testing.expectEqual(DiffMode.unstaged, opts.mode);
+    try std.testing.expectEqualStrings("main..HEAD", opts.common.source.range.text);
 }
 
 test "parseStashArgs --ref rejected" {
@@ -1380,22 +1405,43 @@ test "parseCommitArgs --file without sha allowed" {
     try std.testing.expectEqual(@as(usize, 0), opts.sha_args.items.len);
 }
 
-test "validateRefStagedCombo rejects --staged with range ref" {
-    try std.testing.expectError(error.InvalidArgument, validateRefStagedCombo("main..HEAD", .staged));
+test "SourceFlags.build rejects --staged with a range ref" {
+    const sf: SourceFlags = .{ .ref = "main..HEAD", .staged = true };
+    try std.testing.expectError(error.InvalidArgument, sf.build(.worktree));
 }
 
-test "validateRefStagedCombo allows --staged with single ref" {
-    try validateRefStagedCombo("HEAD", .staged);
-    try validateRefStagedCombo("main", .staged);
+test "SourceFlags.build: --staged with a single ref compares the index with it" {
+    const sf: SourceFlags = .{ .ref = "main", .staged = true };
+    try std.testing.expectEqualStrings("main", (try sf.build(.worktree)).index_against.text);
 }
 
-test "validateRefStagedCombo allows range ref with unstaged" {
-    try validateRefStagedCombo("main..HEAD", .unstaged);
+test "SourceFlags.build: a range without --staged" {
+    const sf: SourceFlags = .{ .ref = "main..HEAD" };
+    try std.testing.expectEqualStrings("main..HEAD", (try sf.build(.worktree)).range.text);
 }
 
-test "validateRefStagedCombo allows null ref" {
-    try validateRefStagedCombo(null, .staged);
-    try validateRefStagedCombo(null, .unstaged);
+test "SourceFlags.build: no ref" {
+    try std.testing.expectEqual(DiffSource.index, try (SourceFlags{ .staged = true }).build(.worktree));
+    try std.testing.expectEqual(DiffSource.worktree, try (SourceFlags{}).build(.worktree));
+}
+
+test "parseResetArgs: the index without --ref, that commit's changes with it" {
+    const allocator = std.testing.allocator;
+    {
+        var opts = try parseResetArgs(allocator, &.{"--all"});
+        defer deinitOptions(allocator, &opts);
+        try std.testing.expectEqual(DiffSource.index, opts.common.source);
+    }
+    {
+        var opts = try parseResetArgs(allocator, &.{ "--all", "--ref", "HEAD~1" });
+        defer deinitOptions(allocator, &opts);
+        try std.testing.expectEqualStrings("HEAD~1", opts.common.source.rev.ref.text);
+    }
+    {
+        var opts = try parseResetArgs(allocator, &.{ "--all", "--ref", "A..B" });
+        defer deinitOptions(allocator, &opts);
+        try std.testing.expectEqualStrings("A..B", opts.common.source.range.text);
+    }
 }
 
 test "deinitFileFilter no-op on empty list" {
@@ -1414,7 +1460,7 @@ test "deinitFileFilter frees owned entries and the list" {
 }
 
 test "parseListArgs leaks no memory when --file then --staged with range ref" {
-    // The argument loop succeeds; validateRefStagedCombo fails after it.
+    // The argument loop succeeds; building the diff source fails after it.
     const args_arr = [_][:0]const u8{ "--file", "a.txt", "--ref", "main..HEAD", "--staged" };
     try std.testing.expectError(error.InvalidArgument, parseListArgs(std.testing.allocator, &args_arr));
 }
@@ -1425,17 +1471,19 @@ test "parseListArgs leaks no memory when --file then --staged with range ref" {
 // ============================================================================
 
 /// `base` is the least a parser needs to succeed, so each case can append the
-/// flag under test. `ref` and `three_way` record whether the parser keeps the
-/// flag or rejects it after parsing.
+/// flag under test. `source` is the command's diff source without --ref or
+/// --staged; `ref` and `three_way` record whether the parser keeps the flag
+/// or rejects it after parsing.
 const common_flag_cases = .{
-    .{ .name = "list", .parse = parseListArgs, .base = [_][:0]const u8{}, .ref = true, .three_way = false },
-    .{ .name = "add/reset", .parse = parseAddResetArgs, .base = [_][:0]const u8{"--all"}, .ref = true, .three_way = true },
-    .{ .name = "diff", .parse = parseDiffArgs, .base = [_][:0]const u8{"abcd1234"}, .ref = true, .three_way = false },
-    .{ .name = "count", .parse = parseCountArgs, .base = [_][:0]const u8{}, .ref = true, .three_way = false },
-    .{ .name = "check", .parse = parseCheckArgs, .base = [_][:0]const u8{"abcd1234"}, .ref = true, .three_way = false },
-    .{ .name = "restore", .parse = parseRestoreArgs, .base = [_][:0]const u8{"--all"}, .ref = true, .three_way = true },
-    .{ .name = "stash", .parse = parseStashArgs, .base = [_][:0]const u8{"--all"}, .ref = false, .three_way = false },
-    .{ .name = "commit", .parse = parseCommitArgs, .base = [_][:0]const u8{ "--all", "-m", "msg" }, .ref = true, .three_way = true },
+    .{ .name = "list", .parse = parseListArgs, .base = [_][:0]const u8{}, .source = DiffSource.worktree, .ref = true, .three_way = false },
+    .{ .name = "add", .parse = parseAddArgs, .base = [_][:0]const u8{"--all"}, .source = DiffSource.worktree, .ref = true, .three_way = true },
+    .{ .name = "reset", .parse = parseResetArgs, .base = [_][:0]const u8{"--all"}, .source = DiffSource.index, .ref = true, .three_way = true },
+    .{ .name = "diff", .parse = parseDiffArgs, .base = [_][:0]const u8{"abcd1234"}, .source = DiffSource.worktree, .ref = true, .three_way = false },
+    .{ .name = "count", .parse = parseCountArgs, .base = [_][:0]const u8{}, .source = DiffSource.worktree, .ref = true, .three_way = false },
+    .{ .name = "check", .parse = parseCheckArgs, .base = [_][:0]const u8{"abcd1234"}, .source = DiffSource.worktree, .ref = true, .three_way = false },
+    .{ .name = "restore", .parse = parseRestoreArgs, .base = [_][:0]const u8{"--all"}, .source = DiffSource.worktree, .ref = true, .three_way = true },
+    .{ .name = "stash", .parse = parseStashArgs, .base = [_][:0]const u8{"--all"}, .source = DiffSource.worktree, .ref = false, .three_way = false },
+    .{ .name = "commit", .parse = parseCommitArgs, .base = [_][:0]const u8{ "--all", "-m", "msg" }, .source = DiffSource.worktree, .ref = true, .three_way = true },
 };
 
 fn ParseResult(comptime case: anytype) type {
@@ -1462,7 +1510,7 @@ fn expectCommonFlags(comptime case: anytype) !void {
         try t.expectEqual(OutputMode.human, opts.common.output);
         try t.expect(!opts.common.no_color);
         try t.expectEqual(@as(usize, 0), opts.common.file_filter.items.len);
-        try t.expectEqual(@as(?[]const u8, null), opts.common.ref);
+        try t.expectEqual(case.source, opts.common.source);
         try t.expectEqual(types.DiffFilter.all, opts.common.diff_filter);
         try t.expectEqual(@as(?u32, null), opts.common.context);
         try t.expectEqual(types.Verbosity.normal, opts.common.verbosity);
@@ -1520,7 +1568,7 @@ fn expectCommonFlags(comptime case: anytype) !void {
     if (case.ref) {
         var opts = try parseCase(case, &.{ "--ref", "main" });
         defer deinitOptions(t.allocator, &opts);
-        try t.expectEqualStrings("main", opts.common.ref.?);
+        try t.expectEqualStrings("main", opts.common.source.rev.ref.text);
     } else {
         try t.expectError(error.InvalidArgument, parseCase(case, &.{ "--ref", "main" }));
     }

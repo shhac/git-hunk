@@ -86,9 +86,9 @@ pub fn main(init: std.process.Init) !void {
 
         _ = arena_state.reset(.retain_capacity);
         const arena = arena_state.allocator();
-        inline for ([_]types.DiffMode{ .unstaged, .staged }) |mode| {
+        inline for ([_]types.Anchor{ .new, .old }) |anchor| {
             var hunks: std.ArrayList(types.Hunk) = .empty;
-            diff_mod.parseDiff(arena, buf.items, mode, &hunks) catch |err| {
+            diff_mod.parseDiff(arena, buf.items, anchor, &hunks) catch |err| {
                 std.debug.print("parseDiff error {s} at iteration {d} (seed {d})\ninput:\n{s}\n", .{ @errorName(err), i, seed, buf.items });
                 return err;
             };

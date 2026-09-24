@@ -157,12 +157,13 @@ fn buildTrackedStashTree(
     const tracked_file_paths = try patch_mod.collectUniqueFilePaths(arena, tracked_matched);
 
     // Run HEAD-relative diff + parse
-    const head_diff_output = try git.runGitDiffFiles(allocator, .unstaged, "HEAD", context, tracked_file_paths);
+    const head_source: types.DiffSource = .{ .worktree_against = .{ .text = "HEAD" } };
+    const head_diff_output = try git.runGitDiffFiles(allocator, head_source, context, tracked_file_paths);
     defer allocator.free(head_diff_output);
 
     var head_hunks: std.ArrayList(Hunk) = .empty;
     if (head_diff_output.len > 0) {
-        try diff_mod.parseDiff(arena, head_diff_output, .unstaged, &head_hunks);
+        try diff_mod.parseDiff(arena, head_diff_output, head_source.anchor(), &head_hunks);
     }
 
     // Build pointers to selected index hunks for the matcher

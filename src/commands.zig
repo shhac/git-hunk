@@ -19,7 +19,7 @@ const Allocator = std.mem.Allocator;
 const Hunk = types.Hunk;
 const LineRange = types.LineRange;
 const MatchedHunk = types.MatchedHunk;
-const DiffMode = types.DiffMode;
+const DiffSource = types.DiffSource;
 const ListOptions = types.ListOptions;
 const AddResetOptions = types.AddResetOptions;
 const DiffOptions = types.DiffOptions;
@@ -46,25 +46,24 @@ const Loaded = struct {
     tracked_diff: []const u8,
 };
 
-/// Diff and parse the hunks a command works on: tracked changes for `mode`
-/// and `common.ref`, plus untracked files (unstaged mode only), each narrowed
-/// by `common.diff_filter`. Hunks from untracked files have sections marked
-/// `is_untracked`.
-fn loadHunks(arena: Allocator, mode: DiffMode, common: types.Common) !Loaded {
+/// Diff and parse the hunks a command works on: tracked changes from
+/// `common.source`, plus untracked files where the source includes them, each
+/// narrowed by `common.diff_filter`. Hunks from untracked files have sections
+/// marked `is_untracked`.
+fn loadHunks(arena: Allocator, common: types.Common) !Loaded {
     var hunks: std.ArrayList(Hunk) = .empty;
+    const source = common.source;
 
     // Skip tracked diffs when only untracked files are requested
     const tracked_diff: []const u8 = if (common.diff_filter == .untracked_only)
         ""
     else
-        try git.runGitDiffFiles(arena, mode, common.ref, common.context, &.{});
+        try git.runGitDiffFiles(arena, source, common.context, &.{});
     if (tracked_diff.len > 0) {
-        try diff_mod.parseDiff(arena, tracked_diff, mode, &hunks);
+        try diff_mod.parseDiff(arena, tracked_diff, source.anchor(), &hunks);
     }
 
-    // Untracked files belong only to the index→worktree diff. Staged mode has
-    // the index on the right, and by now any unstaged ref is a commit range.
-    if (mode == .unstaged and common.ref == null and common.diff_filter != .tracked_only) {
+    if (source.includesUntracked() and common.diff_filter != .tracked_only) {
         const untracked_diff = try git.diffUntrackedFiles(arena, common.file_filter.items);
         if (untracked_diff.len > 0) {
             try diff_mod.parseUntrackedDiff(arena, untracked_diff, &hunks);
@@ -98,7 +97,7 @@ pub fn cmdList(allocator: Allocator, stdout: *std.Io.Writer, opts: ListOptions) 
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const loaded = try loadHunks(arena, opts.mode, opts.common);
+    const loaded = try loadHunks(arena, opts.common);
     const hunks = loaded.hunks;
 
     if (opts.common.verbosity == .verbose) {
@@ -135,8 +134,8 @@ pub fn cmdList(allocator: Allocator, stdout: *std.Io.Writer, opts: ListOptions) 
         hunk_count += 1;
         if (opts.common.verbosity != .quiet) {
             switch (opts.common.output) {
-                .human => try format.printHunkHuman(stdout, h, opts.mode, col_width, term_width, use_color),
-                .porcelain => try format.printHunkPorcelain(stdout, h, opts.mode),
+                .human => try format.printHunkHuman(stdout, h, opts.common.source.anchor(), col_width, term_width, use_color),
+                .porcelain => try format.printHunkPorcelain(stdout, h, opts.common.source.anchor()),
             }
             if (!opts.oneline) {
                 switch (opts.common.output) {
@@ -158,7 +157,7 @@ pub fn cmdCount(allocator: Allocator, stdout: *std.Io.Writer, opts: CountOptions
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const loaded = try loadHunks(arena, opts.mode, opts.common);
+    const loaded = try loadHunks(arena, opts.common);
 
     var count: usize = 0;
     for (loaded.hunks) |h| {
@@ -180,7 +179,7 @@ pub fn cmdCheck(allocator: Allocator, stdout: *std.Io.Writer, opts: CheckOptions
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const loaded = try loadHunks(arena, opts.mode, opts.common);
+    const loaded = try loadHunks(arena, opts.common);
 
     const summary = try check_mod.runChecks(arena, loaded.hunks, opts.sha_args.items, opts.common.file_filter.items, opts.exclusive);
 
@@ -333,10 +332,10 @@ fn matchAllInScope(arena: Allocator, hunks: []const Hunk, file_filter: []const [
 
 /// Print "no [un]staged changes\n" and exit(1). Centralises the message so it
 /// can't drift across commands.
-fn exitNoChanges(mode: DiffMode) noreturn {
-    const msg = switch (mode) {
-        .unstaged => "no unstaged changes\n",
-        .staged => "no staged changes\n",
+fn exitNoChanges(source: DiffSource) noreturn {
+    const msg = switch (source.anchor()) {
+        .new => "no unstaged changes\n",
+        .old => "no staged changes\n",
     };
     std.debug.print("{s}", .{msg});
     std.process.exit(1);
@@ -360,20 +359,31 @@ fn exitIfNoMatches(matched_len: usize, file_filter: []const []const u8) void {
     std.process.exit(1);
 }
 
-/// Diff against `target_mode` scoped to `file_paths` and parse into `hunks`.
-/// Soft-fails: any error leaves `hunks` empty.
+/// Diff `target` scoped to `file_paths` and parse into `hunks`. Untracked
+/// files never join in: they are what `add` stages from, never where a
+/// result lands. Soft-fails: any error leaves `hunks` empty.
 fn captureTargetHunks(
     arena: Allocator,
-    target_mode: DiffMode,
+    target: DiffSource,
     context: ?u32,
     file_paths: []const []const u8,
     hunks: *std.ArrayList(Hunk),
 ) !void {
     if (file_paths.len == 0) return;
-    const diff = git.runGitDiffFiles(arena, target_mode, null, context, file_paths) catch return;
+    const diff = git.runGitDiffFiles(arena, target, context, file_paths) catch return;
     if (diff.len > 0) {
-        diff_mod.parseDiff(arena, diff, target_mode, hunks) catch {};
+        diff_mod.parseDiff(arena, diff, target.anchor(), hunks) catch {};
     }
+}
+
+/// The revisions an apply failure names; null for the default diffs.
+fn refLabel(arena: Allocator, source: DiffSource) !?[]const u8 {
+    return switch (source) {
+        .worktree, .index => null,
+        .index_against, .worktree_against => |ref| ref.text,
+        .rev => |rev| try std.fmt.allocPrint(arena, "{s}..{s}", .{ rev.base.?, rev.ref.text }),
+        .range => |range| range.text,
+    };
 }
 
 /// Apply text patches forward (stage) or in reverse (unstage), then run
@@ -480,7 +490,7 @@ fn dryRunApplyHunks(
             .reverse = reverse,
             .target = .index,
             .check_only = true,
-            .ref = opts.common.ref,
+            .ref = try refLabel(arena, opts.common.source),
         });
     }
 
@@ -492,21 +502,12 @@ fn dryRunApplyHunks(
 }
 
 fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOptions, action: ApplyAction) !void {
-    // For staging: diff unstaged hunks (index vs worktree)
-    // For unstaging: diff staged hunks (HEAD vs index). A --ref instead names
-    // the diff the hunks come from, the one `list --ref` shows, which reset
-    // takes back out of the index just as add puts it in.
-    const diff_mode: DiffMode = switch (action) {
-        .stage => .unstaged,
-        .unstage => if (opts.common.ref == null) .staged else .unstaged,
-    };
-
     var arena_state = std.heap.ArenaAllocator.init(allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const hunks = (try loadHunks(arena, diff_mode, opts.common)).hunks;
-    if (hunks.len == 0) exitNoChanges(diff_mode);
+    const hunks = (try loadHunks(arena, opts.common)).hunks;
+    if (hunks.len == 0) exitNoChanges(opts.common.source);
     const matched = try selectHunks(arena, hunks, opts.sha_args.items, opts.common.file_filter.items);
 
     const partition = try patch_mod.partitionByKind(arena, matched);
@@ -525,20 +526,22 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
 
     // Capture target-side hunks BEFORE and AFTER applying so buildResultGroups
     // can detect merges and map applied hunks to their post-apply hashes.
+    // Whatever the hunks came from, add lands them in the index and reset
+    // hands them back to the worktree: read each back from that side's diff.
     const file_paths = try patch_mod.collectUniqueFilePaths(arena, matched);
-    const target_mode: DiffMode = switch (action) {
-        .stage => .staged,
-        .unstage => .unstaged,
+    const target: DiffSource = switch (action) {
+        .stage => .index,
+        .unstage => .worktree,
     };
     var old_target_hunks: std.ArrayList(Hunk) = .empty;
     defer old_target_hunks.deinit(arena);
-    if (text_matched.len > 0) try captureTargetHunks(arena, target_mode, opts.common.context, file_paths, &old_target_hunks);
+    if (text_matched.len > 0) try captureTargetHunks(arena, target, opts.common.context, file_paths, &old_target_hunks);
 
-    const had_conflicts = try applyTextAndBinary(allocator, arena, action, text_matched, binary_paths, opts.common.ref, opts.common.three_way);
+    const had_conflicts = try applyTextAndBinary(allocator, arena, action, text_matched, binary_paths, try refLabel(arena, opts.common.source), opts.common.three_way);
 
     var new_hunks: std.ArrayList(Hunk) = .empty;
     defer new_hunks.deinit(arena);
-    if (text_matched.len > 0) try captureTargetHunks(arena, target_mode, opts.common.context, file_paths, &new_hunks);
+    if (text_matched.len > 0) try captureTargetHunks(arena, target, opts.common.context, file_paths, &new_hunks);
 
     const result_groups = try buildResultGroups(arena, text_matched, old_target_hunks.items, new_hunks.items);
     try renderApplyResults(stdout, opts, action, result_groups, binary_matched, had_conflicts);
@@ -563,9 +566,8 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    // Restore always operates on unstaged hunks (worktree vs index)
-    const hunks = (try loadHunks(arena, .unstaged, opts.common)).hunks;
-    if (hunks.len == 0) exitNoChanges(.unstaged);
+    const hunks = (try loadHunks(arena, opts.common)).hunks;
+    if (hunks.len == 0) exitNoChanges(opts.common.source);
     const matched = try selectHunks(arena, hunks, opts.sha_args.items, opts.common.file_filter.items);
 
     // Dry-run bypasses the gate — safe to preview without --force
@@ -618,7 +620,7 @@ fn restoreWorktree(allocator: Allocator, arena: Allocator, matched: []const Matc
             .target = .worktree,
             .check_only = opts.dry_run,
             .three_way = opts.common.three_way and !opts.dry_run,
-            .ref = opts.common.ref,
+            .ref = try refLabel(arena, opts.common.source),
         });
         any_conflicts = result == .applied_with_conflicts;
     }
@@ -647,8 +649,8 @@ pub fn cmdDiff(allocator: Allocator, stdout: *std.Io.Writer, opts: DiffOptions) 
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const hunks = (try loadHunks(arena, opts.mode, opts.common)).hunks;
-    if (hunks.len == 0) exitNoChanges(opts.mode);
+    const hunks = (try loadHunks(arena, opts.common)).hunks;
+    if (hunks.len == 0) exitNoChanges(opts.common.source);
     const matched = try resolveMatchedHunks(arena, hunks, opts.sha_args.items, opts.common.file_filter.items);
 
     const use_color = format.shouldUseColor(opts.common.output, opts.common.no_color);
@@ -675,7 +677,7 @@ pub fn cmdDiff(allocator: Allocator, stdout: *std.Io.Writer, opts: DiffOptions) 
                     try stdout.writeAll("\n");
                 },
                 .porcelain => {
-                    try format.printHunkPorcelain(stdout, m.hunk.*, opts.mode);
+                    try format.printHunkPorcelain(stdout, m.hunk.*, opts.common.source.anchor());
                     try format.printDiffPorcelain(stdout, m.hunk.*);
                 },
             }
@@ -701,8 +703,8 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
         common.diff_filter = .tracked_only;
     }
 
-    const hunks = (try loadHunks(arena, .unstaged, common)).hunks;
-    if (hunks.len == 0) exitNoChanges(.unstaged);
+    const hunks = (try loadHunks(arena, common)).hunks;
+    if (hunks.len == 0) exitNoChanges(common.source);
     const matched = try selectHunks(arena, hunks, opts.sha_args.items, opts.common.file_filter.items);
 
     const partition = try patch_mod.partitionByKind(arena, matched);
@@ -747,8 +749,8 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
     // preview would be surprised to find their index changed.
     if (!opts.dry_run) try legacyRecoverIndexBackup(allocator);
 
-    const hunks = (try loadHunks(arena, .unstaged, opts.common)).hunks;
-    if (hunks.len == 0) exitNoChanges(.unstaged);
+    const hunks = (try loadHunks(arena, opts.common)).hunks;
+    if (hunks.len == 0) exitNoChanges(opts.common.source);
     const matched = try selectHunks(arena, hunks, opts.sha_args.items, opts.common.file_filter.items);
 
     const partition = try patch_mod.partitionByKind(arena, matched);
@@ -760,7 +762,7 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
     // Dry-run: validate patches against what the commit would build on and show what would be committed.
     // Checked before the message requirement — a preview has nothing to write a message onto.
     if (opts.dry_run) {
-        checkTempIndexCommit(allocator, patches, opts.common.ref) catch |err| switch (err) {
+        checkTempIndexCommit(allocator, patches, try refLabel(arena, opts.common.source)) catch |err| switch (err) {
             error.ReadTreeFailed => std.process.exit(1),
             else => return err,
         };
@@ -779,7 +781,7 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
         .message = message,
         .amend = opts.amend,
         .three_way = opts.common.three_way,
-        .ref = opts.common.ref,
+        .ref = try refLabel(arena, opts.common.source),
     }) catch |err| switch (err) {
         // git's own stderr has already been shown; exit without extra noise.
         error.ReadTreeFailed, error.CommitFailed, error.AddFailed => std.process.exit(1),

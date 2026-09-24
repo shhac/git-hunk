@@ -24,6 +24,7 @@ comptime {
     _ = @import("patch.zig");
     _ = @import("path.zig");
     _ = @import("result_groups.zig");
+    _ = @import("source.zig");
     _ = @import("stash.zig");
 }
 
@@ -90,8 +91,8 @@ fn run(init: std.process.Init) !void {
     switch (cmd) {
         .list => try runSubcommand(allocator, arena, stdout, sub_args, .list, args_mod.parseListArgs, commands.cmdList),
         .diff => try runSubcommand(allocator, arena, stdout, sub_args, .diff, args_mod.parseDiffArgs, commands.cmdDiff),
-        .add => try runSubcommand(allocator, arena, stdout, sub_args, .add, args_mod.parseAddResetArgs, commands.cmdAdd),
-        .reset => try runSubcommand(allocator, arena, stdout, sub_args, .reset, args_mod.parseAddResetArgs, commands.cmdReset),
+        .add => try runSubcommand(allocator, arena, stdout, sub_args, .add, args_mod.parseAddArgs, commands.cmdAdd),
+        .reset => try runSubcommand(allocator, arena, stdout, sub_args, .reset, args_mod.parseResetArgs, commands.cmdReset),
         .restore => try runSubcommand(allocator, arena, stdout, sub_args, .restore, args_mod.parseRestoreArgs, commands.cmdRestore),
         .count => try runSubcommand(allocator, arena, stdout, sub_args, .count, args_mod.parseCountArgs, commands.cmdCount),
         .check => try runSubcommand(allocator, arena, stdout, sub_args, .check, args_mod.parseCheckArgs, commands.cmdCheck),
@@ -101,7 +102,7 @@ fn run(init: std.process.Init) !void {
     try stdout.flush();
 }
 
-/// The lifecycle every subcommand shares: parse, expand `--ref`, run, free.
+/// The lifecycle every subcommand shares: parse, resolve the diff source, run, free.
 fn runSubcommand(
     allocator: std.mem.Allocator,
     arena: std.mem.Allocator,
@@ -113,8 +114,7 @@ fn runSubcommand(
 ) !void {
     var opts = parse(allocator, sub_args) catch |err| handleParseError(stdout, err, cmd);
     defer args_mod.deinitOptions(allocator, &opts);
-    const is_staged = @hasField(@TypeOf(opts), "mode") and opts.mode == .staged;
-    try expandRefShorthand(arena, &opts.common.ref, is_staged);
+    try resolveSource(arena, &opts.common.source);
     try exec(allocator, stdout, opts);
 }
 
@@ -131,23 +131,19 @@ fn exitUnknownCommand(stdout: *std.Io.Writer, name: []const u8) !noreturn {
     std.process.exit(1);
 }
 
-/// Expand a single-ref `--ref <commit>` into the equivalent range `<commit>^..<commit>`
-/// (matching `git show <commit>` semantics). For commits without a parent (initial
-/// commits), expands to `<empty-tree>..<commit>` so the full content is shown.
-/// Range refs (containing `..`) and null refs pass through unchanged.
-///
-/// `is_staged` short-circuits the expansion: with `--staged`, the user-visible
-/// meaning of `--ref X` is "diff staged index against X" — git diff with `--cached`
-/// silently ignores the second tree if a range is passed, so we must keep the
-/// single-ref form here.
-fn expandRefShorthand(arena: std.mem.Allocator, ref: *?[]const u8, is_staged: bool) !void {
-    if (is_staged) return;
-    const r = ref.* orelse return;
-    if (std.mem.indexOf(u8, r, "..") != null) return;
-    ref.* = if (git.refHasParent(arena, r))
-        try std.fmt.allocPrint(arena, "{s}^..{s}", .{ r, r })
-    else
-        try std.fmt.allocPrint(arena, "{s}..{s}", .{ try git.runGitEmptyTree(arena), r });
+/// Find what a single commit is compared with: its first parent, or the
+/// empty tree for a root commit, whose changes are then its whole content.
+/// Parsing cannot, since it takes running git.
+fn resolveSource(arena: std.mem.Allocator, source: *types.DiffSource) !void {
+    switch (source.*) {
+        .rev => |*rev| {
+            rev.base = if (git.refHasParent(arena, rev.ref.text))
+                try std.fmt.allocPrint(arena, "{s}^", .{rev.ref.text})
+            else
+                try git.runGitEmptyTree(arena);
+        },
+        else => {},
+    }
 }
 
 fn handleParseError(stdout: *std.Io.Writer, err: anyerror, cmd: help.Command) noreturn {

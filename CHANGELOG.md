@@ -13,6 +13,7 @@
 ### Changed
 - `restore` of an untracked file without `--force` now says `restoring it cannot be undone; use --force` instead of `use --force to delete`: restoring part of an untracked file removes only those lines.
 - File sections are parsed into data that hunks share, and patch headers are rendered when the patch is built instead of when the diff is read. A filtered hunk's `@@` line is written the way git writes it (a count of 1 is left out, and a side that becomes empty is numbered by the line before it).
+- `--staged` and `--ref` now choose a diff source once, while parsing, instead of a staged/unstaged mode plus a ref string that `--ref X` rewrote to `X^..X`. Hashes, ranges and patches are unchanged.
 
 ## [0.19.0] - 2026-09-23
 

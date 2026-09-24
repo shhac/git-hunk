@@ -3,7 +3,7 @@ const posix = std.posix;
 const types = @import("types.zig");
 
 const Hunk = types.Hunk;
-const DiffMode = types.DiffMode;
+const Anchor = types.Anchor;
 const LineSpec = types.LineSpec;
 
 const defaultIo = types.getIo;
@@ -77,13 +77,13 @@ fn truncateSummary(summary: []const u8, available: usize) struct { text: []const
     return .{ .text = summary[0 .. available - 1], .ellipsis = true };
 }
 
-pub fn printHunkHuman(stdout: *std.Io.Writer, h: Hunk, mode: DiffMode, col_width: usize, term_width: u16, use_color: bool) !void {
+pub fn printHunkHuman(stdout: *std.Io.Writer, h: Hunk, anchor: Anchor, col_width: usize, term_width: u16, use_color: bool) !void {
     const short_sha = h.sha_hex[0..7];
     var summary_buf: [256]u8 = undefined;
     const summary = hunkSummaryWithFallback(&summary_buf, h);
 
     var range_buf: [24]u8 = undefined;
-    const range = formatLineRange(&range_buf, h, mode);
+    const range = formatLineRange(&range_buf, h, anchor);
 
     const sha = paint(use_color, COLOR_YELLOW);
     try stdout.print("{s}{s}{s}  ", .{ sha.on, short_sha, sha.off });
@@ -102,13 +102,13 @@ pub fn printHunkHuman(stdout: *std.Io.Writer, h: Hunk, mode: DiffMode, col_width
     try stdout.writeByte('\n');
 }
 
-pub fn printHunkPorcelain(stdout: *std.Io.Writer, h: Hunk, mode: DiffMode) !void {
+pub fn printHunkPorcelain(stdout: *std.Io.Writer, h: Hunk, anchor: Anchor) !void {
     const short_sha = h.sha_hex[0..7];
     var summary_buf: [64]u8 = undefined;
     const summary = hunkSummaryWithFallback(&summary_buf, h);
 
-    const start_line = stableStartLine(h, mode);
-    const end_line = stableEndLine(h, mode);
+    const start_line = stableStartLine(h, anchor);
+    const end_line = stableEndLine(h, anchor);
 
     try stdout.print("{s}\t", .{short_sha});
     try writeFilePath(stdout, h.file_path, h.section.is_symlink);
@@ -298,17 +298,17 @@ pub fn printMatchedHunkLine(stdout: *std.Io.Writer, verb: []const u8, porcelain_
     }
 }
 
-fn stableStartLine(h: Hunk, mode: DiffMode) u32 {
-    return switch (mode) {
-        .unstaged => h.new_start,
-        .staged => h.old_start,
+fn stableStartLine(h: Hunk, anchor: Anchor) u32 {
+    return switch (anchor) {
+        .new => h.new_start,
+        .old => h.old_start,
     };
 }
 
-fn stableEndLine(h: Hunk, mode: DiffMode) u32 {
-    return switch (mode) {
-        .unstaged => if (h.new_count > 0) h.new_start + h.new_count - 1 else h.new_start,
-        .staged => if (h.old_count > 0) h.old_start + h.old_count - 1 else h.old_start,
+fn stableEndLine(h: Hunk, anchor: Anchor) u32 {
+    return switch (anchor) {
+        .new => if (h.new_count > 0) h.new_start + h.new_count - 1 else h.new_start,
+        .old => if (h.old_count > 0) h.old_start + h.old_count - 1 else h.old_start,
     };
 }
 
@@ -346,10 +346,10 @@ fn firstChangedLine(buf: []u8, diff_lines: []const u8) []const u8 {
     return "";
 }
 
-fn formatLineRange(buf: []u8, h: Hunk, mode: DiffMode) []const u8 {
+fn formatLineRange(buf: []u8, h: Hunk, anchor: Anchor) []const u8 {
     if (h.section.is_binary) return "(binary)";
-    const start = stableStartLine(h, mode);
-    const end = stableEndLine(h, mode);
+    const start = stableStartLine(h, anchor);
+    const end = stableEndLine(h, anchor);
     if (start == 0 and end == 0) return "empty";
     return std.fmt.bufPrint(buf, "{d}-{d}", .{ start, end }) catch "";
 }
@@ -684,34 +684,34 @@ test "hunkSummaryWithFallback first changed line" {
     try std.testing.expectEqualStrings("hello world", hunkSummaryWithFallback(&buf, h));
 }
 
-test "stableStartLine unstaged" {
+test "stableStartLine new anchor" {
     const h = testMakeHunk("f.txt", 5, 3, 10, 4);
-    try std.testing.expectEqual(@as(u32, 10), stableStartLine(h, .unstaged));
+    try std.testing.expectEqual(@as(u32, 10), stableStartLine(h, .new));
 }
 
-test "stableStartLine staged" {
+test "stableStartLine old anchor" {
     const h = testMakeHunk("f.txt", 5, 3, 10, 4);
-    try std.testing.expectEqual(@as(u32, 5), stableStartLine(h, .staged));
+    try std.testing.expectEqual(@as(u32, 5), stableStartLine(h, .old));
 }
 
-test "stableEndLine unstaged normal" {
+test "stableEndLine new anchor normal" {
     const h = testMakeHunk("f.txt", 5, 3, 10, 4);
-    try std.testing.expectEqual(@as(u32, 13), stableEndLine(h, .unstaged)); // 10+4-1=13
+    try std.testing.expectEqual(@as(u32, 13), stableEndLine(h, .new)); // 10+4-1=13
 }
 
-test "stableEndLine unstaged zero count" {
+test "stableEndLine new anchor zero count" {
     const h = testMakeHunk("f.txt", 5, 3, 10, 0);
-    try std.testing.expectEqual(@as(u32, 10), stableEndLine(h, .unstaged)); // count=0 → start
+    try std.testing.expectEqual(@as(u32, 10), stableEndLine(h, .new)); // count=0 → start
 }
 
-test "stableEndLine staged normal" {
+test "stableEndLine old anchor normal" {
     const h = testMakeHunk("f.txt", 5, 3, 10, 4);
-    try std.testing.expectEqual(@as(u32, 7), stableEndLine(h, .staged)); // 5+3-1=7
+    try std.testing.expectEqual(@as(u32, 7), stableEndLine(h, .old)); // 5+3-1=7
 }
 
-test "stableEndLine staged zero count" {
+test "stableEndLine old anchor zero count" {
     const h = testMakeHunk("f.txt", 5, 0, 10, 4);
-    try std.testing.expectEqual(@as(u32, 5), stableEndLine(h, .staged)); // count=0 → start
+    try std.testing.expectEqual(@as(u32, 5), stableEndLine(h, .old)); // count=0 → start
 }
 
 test "printHunkPorcelain format" {
@@ -724,7 +724,7 @@ test "printHunkPorcelain format" {
     h.sha_hex = sha;
     h.diff_lines = "+hello";
 
-    try printHunkPorcelain(&w.writer, h, .unstaged);
+    try printHunkPorcelain(&w.writer, h, .new);
 
     const output = w.writer.buffer[0..w.writer.end];
     // Format: "{sha7}\t{path}\t{start}\t{end}\t{summary}\n"
