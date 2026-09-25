@@ -278,6 +278,30 @@ for FMT863 in sha1 sha256; do
 done
 
 # ============================================================================
+# Test 864: an untracked symlink's synthesized diff names the path as git
+# would, C-quoted where git quotes it (under core.quotePath either way) and
+# with the TAB git ends a name containing a space with. It used to write the
+# path bare, so a symlink with a TAB in its name could not be added.
+# ============================================================================
+NAMES864=($'t\tab864' 'lïnk864' 'q"uote864' 'sp ïce864' 'plain864')
+for QP864 in true false; do
+    new_repo
+    git config core.quotePath "$QP864"
+    for NAME864 in "${NAMES864[@]}"; do ln -s alpha.txt "$NAME864"; done
+    for NAME864 in "${NAMES864[@]}"; do
+        SHA864="$(first_sha --file "$NAME864")"
+        [[ -n "$SHA864" ]] || { fail "test 864 ($QP864): no hunk for '$NAME864'"; continue; }
+        GOT864="$("$GIT_HUNK" diff --no-color "$SHA864" | od -c)"
+        WANT864="$({ git diff --no-index --src-prefix=a/ --dst-prefix=b/ --full-index /dev/null "$NAME864"; echo; } | od -c)"
+        [[ "$GOT864" == "$WANT864" ]] || fail "test 864 ($QP864): diff of '$NAME864' differs from git's"
+    done
+    OUT864="$("$GIT_HUNK" add --all 2>&1)" || fail "test 864 ($QP864): add --all failed: $OUT864"
+    [[ "$(git ls-files -s | grep -c '^120000 ')" == "${#NAMES864[@]}" ]] \
+        || fail "test 864 ($QP864): every symlink should be staged as one, got: $(git ls-files -s)"
+    pass "test 864: untracked symlink names are quoted as git quotes them (core.quotePath=$QP864)"
+done
+
+# ============================================================================
 # T20 — Typechange support (file replaced by symlink)
 # ============================================================================
 

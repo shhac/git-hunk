@@ -616,18 +616,75 @@ fn diffSingleUntrackedSymlink(allocator: Allocator, file_path: []const u8) !?[]u
     const zero_id = try allocator.alloc(u8, blob_sha.len);
     defer allocator.free(zero_id);
     @memset(zero_id, '0');
+    const quote_high_bytes = quotesHighBytes(allocator);
+    const old_name = try diffHeaderName(allocator, "a/", file_path, quote_high_bytes);
+    defer allocator.free(old_name);
+    const new_name = try diffHeaderName(allocator, "b/", file_path, quote_high_bytes);
+    defer allocator.free(new_name);
+    // git ends a `+++` name containing a space with a TAB.
+    const name_end: []const u8 = if (std.mem.indexOfScalar(u8, file_path, ' ') != null) "\t" else "";
     return try std.fmt.allocPrint(
         allocator,
-        "diff --git a/{s} b/{s}\n" ++
+        "diff --git {s} {s}\n" ++
             "new file mode 120000\n" ++
             "index {s}..{s}\n" ++
             "--- /dev/null\n" ++
-            "+++ b/{s}\n" ++
+            "+++ {s}{s}\n" ++
             "@@ -0,0 +1 @@\n" ++
             "+{s}\n" ++
             "\\ No newline at end of file\n",
-        .{ file_path, file_path, zero_id, blob_sha, file_path, target },
+        .{ old_name, new_name, zero_id, blob_sha, new_name, name_end, target },
     );
+}
+
+/// Whether git C-quotes bytes above 0x7f in the paths it prints: the
+/// `core.quotePath` setting, on unless set otherwise.
+fn quotesHighBytes(allocator: Allocator) bool {
+    const out = runGitCaptureErr(allocator, &.{ "git", "config", "--type=bool", "--get", "core.quotePath" }, .{}, error.ConfigUnset, .{}) catch return true;
+    defer allocator.free(out);
+    return !std.mem.eql(u8, out, "false");
+}
+
+/// `prefix` and `path` as a diff header names them: C-quoted, with the prefix
+/// inside the quotes, when the path has a byte git escapes, as is otherwise.
+fn diffHeaderName(allocator: Allocator, prefix: []const u8, path: []const u8, quote_high_bytes: bool) ![]u8 {
+    for (path) |c| {
+        if (mustQuote(c, quote_high_bytes)) break;
+    } else return std.mem.concat(allocator, u8, &.{ prefix, path });
+
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
+    try out.append(allocator, '"');
+    try out.appendSlice(allocator, prefix);
+    for (path) |c| {
+        if (!mustQuote(c, quote_high_bytes)) {
+            try out.append(allocator, c);
+            continue;
+        }
+        const letter: ?u8 = switch (c) {
+            0x07 => 'a',
+            0x08 => 'b',
+            '\t' => 't',
+            '\n' => 'n',
+            0x0b => 'v',
+            0x0c => 'f',
+            '\r' => 'r',
+            '"', '\\' => c,
+            else => null,
+        };
+        if (letter) |l| {
+            try out.print(allocator, "\\{c}", .{l});
+        } else {
+            try out.print(allocator, "\\{o:0>3}", .{c});
+        }
+    }
+    try out.append(allocator, '"');
+    return out.toOwnedSlice(allocator);
+}
+
+/// The bytes git's C-style quoting escapes.
+fn mustQuote(c: u8, quote_high_bytes: bool) bool {
+    return c < 0x20 or c == '"' or c == '\\' or c == 0x7f or (c >= 0x80 and quote_high_bytes);
 }
 
 // ─── Stash plumbing helpers ───────────────────────────────────────────
@@ -940,4 +997,22 @@ test "trimAndShrink empty string is a no-op" {
     const out = try trimAndShrink(allocator, buf);
     defer allocator.free(out);
     try std.testing.expectEqualStrings("", out);
+}
+
+test "diffHeaderName quotes as git does" {
+    const allocator = std.testing.allocator;
+    const cases = [_]struct { path: []const u8, quote_high_bytes: bool, want: []const u8 }{
+        .{ .path = "plain.txt", .quote_high_bytes = true, .want = "b/plain.txt" },
+        .{ .path = "sp ace", .quote_high_bytes = true, .want = "b/sp ace" },
+        .{ .path = "l\xc3\xafnk", .quote_high_bytes = true, .want = "\"b/l\\303\\257nk\"" },
+        .{ .path = "l\xc3\xafnk", .quote_high_bytes = false, .want = "b/l\xc3\xafnk" },
+        .{ .path = "q\"uote", .quote_high_bytes = false, .want = "\"b/q\\\"uote\"" },
+        .{ .path = "t\tab\\", .quote_high_bytes = false, .want = "\"b/t\\tab\\\\\"" },
+        .{ .path = "del\x7f\x01", .quote_high_bytes = false, .want = "\"b/del\\177\\001\"" },
+    };
+    for (cases) |case| {
+        const got = try diffHeaderName(allocator, "b/", case.path, case.quote_high_bytes);
+        defer allocator.free(got);
+        try std.testing.expectEqualStrings(case.want, got);
+    }
 }
