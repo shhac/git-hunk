@@ -84,11 +84,18 @@ const CommitContext = struct {
 
 /// A throwaway index holding HEAD's tree: the base every commit is built on.
 /// That holds for --amend too, since the hunks are relative to HEAD and the
-/// amended commit must keep everything HEAD already changed.
+/// amended commit must keep everything HEAD already changed. On an unborn
+/// branch the base is the empty tree, and the commit is the first.
 fn seedTempIndex(allocator: Allocator) !git.TempIndex {
     var tmp = try git.createTempIndex(allocator, "commit-");
     errdefer tmp.deinit();
-    try git.runGitReadTree(allocator, "HEAD", &tmp.env_map);
+    if (git.revisionExists(allocator, "HEAD")) {
+        try git.runGitReadTree(allocator, "HEAD", &tmp.env_map);
+        return tmp;
+    }
+    const empty_tree = try git.runGitEmptyTree(allocator);
+    defer allocator.free(empty_tree);
+    try git.runGitReadTree(allocator, empty_tree, &tmp.env_map);
     return tmp;
 }
 

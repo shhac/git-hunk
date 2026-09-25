@@ -693,6 +693,9 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
+    // A stash entry is a commit on top of HEAD, so there must be one.
+    if (!git.revisionExists(arena, "HEAD")) types.fatal("you do not have the initial commit yet", .{});
+
     // When --all is used without --include-untracked, default to tracked-only
     // (matching git stash behavior). Explicit hashes bypass this.
     var common = opts.common;
@@ -738,6 +741,7 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
     // from a backup, which is a real mutation. A user expecting a read-only
     // preview would be surprised to find their index changed.
     if (!opts.dry_run) try legacyRecoverIndexBackup(allocator);
+    if (opts.amend and !git.revisionExists(arena, "HEAD")) types.fatal("you have nothing to amend", .{});
 
     const hunks = (try loadHunks(arena, opts.common)).hunks;
     if (hunks.len == 0) exitNoChanges(opts.common.source);

@@ -329,11 +329,11 @@ git-hunk commit --dry-run a3f7 -m "check first"       # preview without committi
 
 ### Behavior
 
-- Commits through a throwaway temp index (`GIT_INDEX_FILE`): HEAD is read into a temporary index, only the target hunks are staged there, and `git commit` runs against it. Hooks fire normally and see exactly the content being committed.
+- Commits through a throwaway temp index (`GIT_INDEX_FILE`): HEAD is read into a temporary index (the empty tree on an unborn branch, where the commit is the first), only the target hunks are staged there, and `git commit` runs against it. Hooks fire normally and see exactly the content being committed.
 - The user's real index is never rewritten — existing staged changes are untouched throughout; only the specified hunks are committed. After the commit, the real index is re-synced with the new HEAD for the committed paths.
 - A crash at any point mid-commit leaves the index and staged work untouched (at worst a stray temp file in `/tmp`); rerunning needs no recovery step.
 - The worktree is not modified — only HEAD and the index change.
-- With `--amend`, seeds the temp index from `HEAD~1` and uses `git commit --amend`.
+- With `--amend`, uses `git commit --amend`; the temp index is still seeded from HEAD, so the amended commit keeps everything HEAD changed. On an unborn branch there is nothing to amend, as git says.
 - With `--dry-run`, validates the patch with `git apply --check` and prints "would commit" lines without committing.
 - Legacy crash recovery: a stale `.git/index.hunk-backup` left by an interrupted commit from an older version is still restored automatically.
 - If the post-commit index re-sync fails, a warning is printed but the exit code is 0 (the commit succeeded).
@@ -348,6 +348,7 @@ git-hunk commit --dry-run a3f7 -m "check first"       # preview without committi
 | `error: -m <message> is required` | No `-m` flag provided (and not `--dry-run`) |
 | `error: --staged is not supported by commit` | `--staged` flag used |
 | `error: commit aborted by hook` | Pre-commit or commit-msg hook rejected the commit |
+| `error: you have nothing to amend` | `--amend` on an unborn branch (no commits yet), as `git commit --amend` refuses it |
 | `error: patch did not apply cleanly` | Hunks don't apply to a clean HEAD index |
 | `warning: commit succeeded but index sync failed` | Post-commit index sync failed (non-fatal) |
 
@@ -703,6 +704,8 @@ git-hunk stash a3f7c21 --porcelain              # machine-readable output
 | `error: --include-untracked cannot be combined with --tracked-only` | Conflicting filter flags |
 | `no unstaged changes` | Nothing to stash |
 | `error: cannot stash while the index has unmerged paths` | A merge conflict is unresolved |
+| `error: cannot stash intent-to-add entry '<path>'` | A selected hunk is in a `git add -N` entry; `git add` it, or `git rm --cached` it |
+| `error: you do not have the initial commit yet` | The branch is unborn: a stash entry is a commit on top of HEAD, as `git stash` says |
 | `CONFLICT (content): Merge conflict in <path>` | `pop`: a stashed hunk overlaps a change made since; resolve it and `git add` the file. The entry is kept |
 | `<path> already exists, no checkout` / `error: could not restore untracked files from stash` | `pop`: an untracked file in the entry is in the way; nothing was restored |
 | `error: cannot remove the stashed changes from the worktree` | The entry was stored as `stash@{0}` but the worktree still has its changes; `git stash drop` to keep working on them, or remove them from the worktree to finish the stash |

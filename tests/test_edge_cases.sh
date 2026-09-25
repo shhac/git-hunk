@@ -261,6 +261,85 @@ cd "$CURRENT_REPO"
 pass "test 830: untracked file in empty repo (no commits) appears in list"
 
 # ============================================================================
+# Tests 831-834: an unborn branch (no commits yet). Where git works there,
+# against the empty tree, so does git-hunk; where git refuses, git-hunk
+# refuses in git's words instead of printing a raw rev-parse failure.
+# ============================================================================
+SAVED_REPO831="$CURRENT_REPO"
+new_unborn_repo() {
+    [[ "$CURRENT_REPO" == "$SAVED_REPO831" ]] || cleanup_repo
+    CURRENT_REPO="$(mktemp -d)"
+    cd "$CURRENT_REPO"
+    git init -q
+    git config user.email "t@t.com"
+    git config user.name "T"
+    printf 'staged\n' > staged.txt
+    printf 'bin\000ary\n' > staged.bin
+    git add staged.txt staged.bin
+    printf 'more\n' >> staged.txt
+    printf 'untracked\n' > new.txt
+}
+# Index entries, worktree state and stash list, for asserting a refusal
+# changed nothing.
+unborn_state() {
+    git ls-files -s
+    git status --porcelain=v2 --untracked-files=all
+    git stash list 2>&1
+}
+
+new_unborn_repo
+[[ "$("$GIT_HUNK" count --staged 2>&1)" == "2" ]] \
+    || fail "test 831: count --staged should see both staged files against the empty tree"
+"$GIT_HUNK" list --staged --porcelain --oneline 2>/dev/null | grep -q "staged.txt" \
+    || fail "test 831: list --staged should list staged.txt"
+OUT831="$("$GIT_HUNK" reset --all 2>&1)" || fail "test 831: reset --all on an unborn branch failed: $OUT831"
+[[ -z "$(git ls-files)" ]] || fail "test 831: reset should empty the index, got '$(git ls-files)'"
+[[ -f staged.txt && -f staged.bin ]] || fail "test 831: reset should leave the files in the worktree"
+pass "test 831: list --staged and reset work on an unborn branch, as git's do"
+
+new_unborn_repo
+SHA832="$(first_sha --file new.txt)"
+"$GIT_HUNK" commit --dry-run "$SHA832" > /dev/null 2>&1 \
+    || fail "test 832: commit --dry-run on an unborn branch should pass"
+OUT832="$("$GIT_HUNK" commit "$SHA832" -m "first" 2>&1)" \
+    || fail "test 832: commit on an unborn branch failed: $OUT832"
+[[ "$(git rev-list --count HEAD 2>/dev/null)" == "1" ]] || fail "test 832: commit should make the first commit"
+[[ "$(git ls-tree --name-only HEAD)" == "new.txt" ]] \
+    || fail "test 832: the first commit should hold only new.txt, got '$(git ls-tree --name-only HEAD)'"
+[[ "$(git diff --cached --name-only | sort | tr '\n' ' ')" == "staged.bin staged.txt " ]] \
+    || fail "test 832: what was staged should stay staged, got '$(git diff --cached --name-only)'"
+[[ -z "$(git status --porcelain -- new.txt)" ]] || fail "test 832: new.txt should be clean after commit"
+pass "test 832: commit on an unborn branch makes the first commit"
+
+new_unborn_repo
+BEFORE833="$(unborn_state)"
+for DRY833 in "" --dry-run; do
+    EC833=0
+    ERR833="$("$GIT_HUNK" commit --amend $DRY833 --file new.txt -m "amend" 2>&1)" || EC833=$?
+    [[ "$EC833" -eq 1 ]] || fail "test 833: commit --amend $DRY833 on an unborn branch should exit 1, got $EC833"
+    [[ "$ERR833" == "error: you have nothing to amend" ]] \
+        || fail "test 833: commit --amend $DRY833 should say there is nothing to amend, got: '$ERR833'"
+done
+[[ "$(unborn_state)" == "$BEFORE833" ]] || fail "test 833: a refused amend should change nothing"
+pass "test 833: commit --amend on an unborn branch says there is nothing to amend"
+
+new_unborn_repo
+BEFORE834="$(unborn_state)"
+for ARGS834 in "--all" "--all -u" "--file staged.txt"; do
+    EC834=0
+    ERR834="$("$GIT_HUNK" stash $ARGS834 2>&1)" || EC834=$?
+    [[ "$EC834" -eq 1 ]] || fail "test 834: stash $ARGS834 on an unborn branch should exit 1, got $EC834"
+    [[ "$ERR834" == "error: you do not have the initial commit yet" ]] \
+        || fail "test 834: stash $ARGS834 should say there is no commit yet, got: '$ERR834'"
+done
+[[ "$(unborn_state)" == "$BEFORE834" ]] || fail "test 834: a refused stash should change nothing"
+pass "test 834: stash on an unborn branch says there is no commit yet"
+
+cleanup_repo
+CURRENT_REPO="$SAVED_REPO831"
+cd "$CURRENT_REPO"
+
+# ============================================================================
 # T18 — Merge conflict behavior
 # ============================================================================
 
