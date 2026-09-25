@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.20.0] - 2026-09-25
 
 ### Added
 - `git hunk stash pop` merges a stash back into files that have other unstaged changes, which `git stash pop` refuses ("Your local changes to the following files would be overwritten by merge"). That refusal met every stash of some of a file's hunks and not others, and every file edited again after stashing. The entry's worktree changes are merged file by file, the index is left as it is, and a conflict is left as git leaves one: markers labelled `Updated upstream` and `Stashed changes`, unmerged index entries, `CONFLICT (content): Merge conflict in <path>` and `The stash entry is kept in case you need it again.`, exit 1. Where git's pop succeeds it still does the work, so the result is git's own. An untracked file in the way now refuses the pop before anything is restored, where git's pop merged the tracked changes first; and a conflict in git's own pop is now reported, where only the exit status said so before.
