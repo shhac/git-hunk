@@ -386,4 +386,62 @@ rm gamma.txt && ln -s alpha.txt gamma.txt
     || fail "test 875: dry runs changed the worktree"
 pass "test 875: add/reset/restore --dry-run accept typechanges"
 
+
+# ============================================================================
+# Tests 876-877: a typechange with a binary half goes through every command.
+# The binary half is staged, unstaged or restored by path, which takes the
+# whole path; applying the symlink half as a patch beside it failed with
+# "already exists in index" (or "in working directory").
+# ============================================================================
+# Commit a binary at bin.dat and a symlink at link, then swap their types:
+# bin.dat becomes a symlink, link becomes a binary.
+setup_binary_typechanges() {
+    new_repo
+    printf 'old\000binary\n' > bin.dat
+    ln -s alpha.txt link
+    git add bin.dat link && git commit -q -m "binary and symlink"
+    rm bin.dat link
+    ln -s beta.txt bin.dat
+    printf 'new\000binary\n' > link
+}
+
+# The index entry's mode for a path, and HEAD's.
+index_mode() { git ls-files -s -- "$1" | cut -d' ' -f1; }
+head_mode() { git ls-tree HEAD -- "$1" | cut -d' ' -f1; }
+
+for CASE in bin.dat link; do
+    NUM=876; WANT_MODE=120000; LABEL="binary → symlink"
+    [[ "$CASE" == link ]] && { NUM=877; WANT_MODE=100644; LABEL="symlink → binary"; }
+
+    setup_binary_typechanges
+    SHAS="$("$GIT_HUNK" list --porcelain --oneline --file "$CASE" | cut -f1 | tr '\n' ' ')"
+    [[ "$(echo $SHAS | wc -w | tr -d ' ')" == "2" ]] || fail "test $NUM: expected 2 hunks for $CASE, got '$SHAS'"
+
+    "$GIT_HUNK" add --dry-run $SHAS > /dev/null 2>&1 || fail "test $NUM: add --dry-run should pass"
+    OUT="$("$GIT_HUNK" add $SHAS 2>&1)" || fail "test $NUM: add failed: $OUT"
+    [[ "$(index_mode "$CASE")" == "$WANT_MODE" ]] || fail "test $NUM: add should stage mode $WANT_MODE, got '$(index_mode "$CASE")'"
+    [[ -z "$(git diff --name-only -- "$CASE")" ]] || fail "test $NUM: nothing should be left unstaged after add"
+
+    STAGED="$("$GIT_HUNK" list --staged --porcelain --oneline --file "$CASE" | cut -f1 | tr '\n' ' ')"
+    OUT="$("$GIT_HUNK" reset $STAGED 2>&1)" || fail "test $NUM: reset failed: $OUT"
+    [[ "$(index_mode "$CASE")" == "$(head_mode "$CASE")" ]] || fail "test $NUM: reset should restore HEAD's entry"
+
+    OUT="$("$GIT_HUNK" commit $SHAS -m "typechange $NUM" 2>&1)" || fail "test $NUM: commit failed: $OUT"
+    [[ "$(head_mode "$CASE")" == "$WANT_MODE" ]] || fail "test $NUM: commit should record mode $WANT_MODE, got '$(head_mode "$CASE")'"
+    [[ -z "$(git status --porcelain -- "$CASE")" ]] || fail "test $NUM: $CASE should be clean after commit"
+
+    setup_binary_typechanges
+    SHAS="$("$GIT_HUNK" list --porcelain --oneline --file "$CASE" | cut -f1 | tr '\n' ' ')"
+    OUT="$("$GIT_HUNK" stash $SHAS 2>&1)" || fail "test $NUM: stash failed: $OUT"
+    [[ -z "$(git status --porcelain -- "$CASE")" ]] || fail "test $NUM: stash should take $CASE out of the worktree"
+    [[ "$(git ls-tree stash@{0} -- "$CASE" | cut -d' ' -f1)" == "$WANT_MODE" ]] \
+        || fail "test $NUM: the stash should hold mode $WANT_MODE"
+    "$GIT_HUNK" stash pop > /dev/null 2>&1 || fail "test $NUM: stash pop failed"
+    [[ "$(git status --porcelain -- "$CASE")" == " T $CASE" ]] || fail "test $NUM: pop should bring the typechange back"
+
+    OUT="$("$GIT_HUNK" restore $SHAS 2>&1)" || fail "test $NUM: restore failed: $OUT"
+    [[ -z "$(git status --porcelain -- "$CASE")" ]] || fail "test $NUM: restore should leave $CASE clean"
+    pass "test $NUM: $LABEL typechange can be added, reset, committed, stashed and restored"
+done
+
 report_results

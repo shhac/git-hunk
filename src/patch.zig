@@ -62,6 +62,8 @@ pub fn collectResultPaths(arena: Allocator, matches: []const MatchedHunk) ![]con
 /// path lists for the binary buckets. Every slice is arena-owned.
 pub const HunkPartition = struct {
     tracked_text: []const MatchedHunk,
+    /// Includes the text half of a typechange whose other half is binary and
+    /// also selected: see `partitionByKind`.
     tracked_binary: []const MatchedHunk,
     untracked_text: []const MatchedHunk,
     untracked_binary: []const MatchedHunk,
@@ -96,6 +98,12 @@ pub const HunkPartition = struct {
 /// Partition matched hunks into tracked-text, tracked-binary, untracked-text,
 /// untracked-binary buckets plus deduped path lists for the binary cases.
 /// Arena-allocates all returned slices.
+///
+/// A binary has no patch, so its path is staged, unstaged or restored whole,
+/// and for a typechange that takes both halves at once. The text half
+/// selected with it goes the same way: applied as a patch beside that, it
+/// would create the path before the binary half deleted it, or after the
+/// whole path was already done.
 pub fn partitionByKind(arena: Allocator, matches: []const MatchedHunk) !HunkPartition {
     var tracked_text: std.ArrayList(MatchedHunk) = .empty;
     var tracked_binary: std.ArrayList(MatchedHunk) = .empty;
@@ -106,7 +114,7 @@ pub fn partitionByKind(arena: Allocator, matches: []const MatchedHunk) !HunkPart
         const list = if (section.is_untracked)
             (if (section.is_binary) &untracked_binary else &untracked_text)
         else
-            (if (section.is_binary) &tracked_binary else &tracked_text);
+            (if (section.is_binary or hasBinaryTypechangeHalf(matches, m)) &tracked_binary else &tracked_text);
         try list.append(arena, m);
     }
 
@@ -118,6 +126,18 @@ pub fn partitionByKind(arena: Allocator, matches: []const MatchedHunk) !HunkPart
         .tracked_binary_paths = try collectUniqueFilePaths(arena, tracked_binary.items),
         .untracked_binary_paths = try collectUniqueFilePaths(arena, untracked_binary.items),
     };
+}
+
+/// True if `m` is one half of a typechange and `matches` holds the other,
+/// binary half.
+fn hasBinaryTypechangeHalf(matches: []const MatchedHunk, m: MatchedHunk) bool {
+    if (!m.hunk.section.is_typechange) return false;
+    for (matches) |other| {
+        const section = other.hunk.section;
+        if (section == m.hunk.section or !section.is_typechange or !section.is_binary) continue;
+        if (std.mem.eql(u8, other.hunk.file_path, m.hunk.file_path)) return true;
+    }
+    return false;
 }
 
 /// How the caller will hand the resulting patch to `git apply`. Line-spec
@@ -1162,6 +1182,31 @@ test "partitionByKind allBinaryPaths combines tracked + untracked" {
     try std.testing.expectEqual(@as(usize, 1), p.untracked_binary_paths.len);
     const all_bin = try p.allBinaryPaths(arena.allocator());
     try std.testing.expectEqual(@as(usize, 2), all_bin.len);
+}
+
+test "partitionByKind sends a typechange's text half with its binary half" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const binary_delete: FileSection = .{ .is_binary = true, .is_typechange = true, .is_deleted_file = true };
+    const symlink_create: FileSection = .{ .is_symlink = true, .is_typechange = true, .is_new_file = true };
+    const symlink_delete: FileSection = .{ .is_symlink = true, .is_typechange = true, .is_deleted_file = true };
+    var hb = testMakeHunk("x", 1, 1, 1, 1);
+    hb.section = &binary_delete;
+    var hs = testMakeHunk("x", 1, 1, 1, 1);
+    hs.section = &symlink_create;
+    // The other half of this one is a text file, which is not selected.
+    var lone = testMakeHunk("y", 1, 1, 1, 1);
+    lone.section = &symlink_delete;
+    const matches = [_]MatchedHunk{
+        .{ .hunk = &hs, .line_spec = null },
+        .{ .hunk = &hb, .line_spec = null },
+        .{ .hunk = &lone, .line_spec = null },
+    };
+    const p = try partitionByKind(arena.allocator(), &matches);
+    try std.testing.expectEqual(@as(usize, 2), p.tracked_binary.len);
+    try std.testing.expectEqual(@as(usize, 1), p.tracked_binary_paths.len);
+    try std.testing.expectEqual(@as(usize, 1), p.tracked_text.len);
+    try std.testing.expectEqualStrings("y", p.tracked_text[0].hunk.file_path);
 }
 
 test "collectResultPaths adds a rename's old path once" {
