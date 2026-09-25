@@ -19,6 +19,16 @@ unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
       GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE \
       GIT_CEILING_DIRECTORIES GIT_PREFIX
 
+# Commits start `git maintenance run --auto --detach`, which can still be
+# writing into .git when a test removes or copies the repo; under load that
+# fails a suite at random with "Directory not empty". Nothing here tests
+# maintenance, so it is off for every git the suite starts, the ones git-hunk
+# spawns included. Environment config outranks the hostile profiles' global
+# config, which never sets these keys.
+export GIT_CONFIG_COUNT=2 \
+       GIT_CONFIG_KEY_0=maintenance.auto GIT_CONFIG_VALUE_0=false \
+       GIT_CONFIG_KEY_1=gc.auto GIT_CONFIG_VALUE_1=0
+
 # Resolved before the `git` function below exists, so it is the real binary
 # and not the function's own name. Tests that build a PATH shim must use this
 # to reach the real git — `command -v git` would report the function and the
