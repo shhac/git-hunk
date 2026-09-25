@@ -178,7 +178,10 @@ golden_expand() {
             bin) val="$(binary_hash "$arg" "$(git rev-parse ":$arg")" "$(git hash-object -- "$arg")")" ;;
             binroot) val="$(binary_hash "$arg" "$(git rev-parse HEAD | tr '0-9a-f' '0')" "$(git rev-parse "R:$arg")")" ;;
         esac
-        text="${text//"$tok"/"$val"}"
+        # Spliced rather than `${text//"$tok"/"$val"}`: bash 3.2 (macOS's)
+        # keeps those inner quotes literally, and bash 5.2+ reads `&` in an
+        # unquoted replacement as the match. The loop replaces one at a time.
+        text="${text%%"$tok"*}$val${text#*"$tok"}"
     done
     printf '%s' "$text"
 }
