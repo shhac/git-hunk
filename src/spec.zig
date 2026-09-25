@@ -514,7 +514,7 @@ pub const commands = [_]CommandSpec{
         },
         .subcommands = &.{
             .{ .label = "push", .desc = &.{"Stash hunks (default when omitted)"} },
-            .{ .label = "pop", .desc = &.{"Restore the most recent git-hunk stash"} },
+            .{ .label = "pop", .desc = &.{ "Restore the most recent stash, merging its hunks into", "files with other unstaged changes (git stash pop refuses)" } },
         },
         .args = &.{.{
             .label = "<sha>...",

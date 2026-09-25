@@ -147,17 +147,42 @@ pub const TempIndex = struct {
 /// shell and mktemp use, so a caller that has isolated its temp directory
 /// (a sandbox, a parallel test run) keeps that isolation.
 pub fn createTempIndex(allocator: Allocator, prefix: []const u8) !TempIndex {
-    var random_bytes: [8]u8 = undefined;
-    std.Io.random(types.getIo(), &random_bytes);
-    const random_val = std.mem.readInt(u64, &random_bytes, .little);
-    const tmp_dir = std.mem.trimEnd(u8, types.getEnv("TMPDIR") orelse "/tmp", "/");
-    const path_z = try std.fmt.allocPrintSentinel(allocator, "{s}/git-hunk-{s}idx.{x:0>16}", .{ tmp_dir, prefix, random_val }, 0);
+    const path_z = try tempPath(allocator, prefix, "idx");
     errdefer allocator.free(path_z);
 
     var env_map = try types.getEnvMap().clone(allocator);
     errdefer env_map.deinit();
     try env_map.put("GIT_INDEX_FILE", path_z);
     return .{ .env_map = env_map, .path_z = path_z, .allocator = allocator };
+}
+
+/// `<temp dir>/git-hunk-<prefix><kind>.<random>`, in the directory
+/// `createTempIndex` describes.
+fn tempPath(allocator: Allocator, prefix: []const u8, kind: []const u8) ![:0]u8 {
+    var random_bytes: [8]u8 = undefined;
+    std.Io.random(types.getIo(), &random_bytes);
+    const random_val = std.mem.readInt(u64, &random_bytes, .little);
+    const tmp_dir = std.mem.trimEnd(u8, types.getEnv("TMPDIR") orelse "/tmp", "/");
+    return std.fmt.allocPrintSentinel(allocator, "{s}/git-hunk-{s}{s}.{x:0>16}", .{ tmp_dir, prefix, kind, random_val }, 0);
+}
+
+/// A throwaway directory beside the temp indexes, removed with everything
+/// in it by `deinit`.
+pub const TempDir = struct {
+    path: [:0]const u8,
+    allocator: Allocator,
+
+    pub fn deinit(self: *TempDir) void {
+        std.Io.Dir.cwd().deleteTree(types.getIo(), self.path) catch {};
+        self.allocator.free(self.path);
+    }
+};
+
+pub fn createTempDir(allocator: Allocator, prefix: []const u8) !TempDir {
+    const path = try tempPath(allocator, prefix, "dir");
+    errdefer allocator.free(path);
+    try std.Io.Dir.cwd().createDirPath(types.getIo(), path);
+    return .{ .path = path, .allocator = allocator };
 }
 
 const CaptureErrOpts = struct {
@@ -317,7 +342,7 @@ fn mergeIntoWorktree(allocator: Allocator, patch: []const u8, opts: ApplyOptions
 
 /// Seed `dest` with the index as it stands. A repository that has never had
 /// an index has nothing to copy, and git reads a missing one as empty.
-fn copyIndexTo(allocator: Allocator, dest: []const u8) !void {
+pub fn copyIndexTo(allocator: Allocator, dest: []const u8) !void {
     const index_path = try runGitCapture(allocator, &.{ "git", "rev-parse", "--git-path", "index" }, .{}, "git rev-parse --git-path", .{});
     defer allocator.free(index_path);
     const cwd = std.Io.Dir.cwd();
@@ -669,15 +694,128 @@ pub fn runGitStashStore(allocator: Allocator, message: []const u8, commit_sha: [
     allocator.free(out);
 }
 
-/// Run `git stash pop`. On conflict (non-zero exit), print stderr and exit 1.
+/// Run `git stash pop`. On failure, show what git said and exit 1: its
+/// errors, then its report, which names any conflict and says the entry
+/// was kept.
 pub fn runGitStashPop(allocator: Allocator) !void {
     const result = try runCommand(allocator, &.{ "git", "stash", "pop" }, .{});
     defer allocator.free(result.stdout);
     defer allocator.free(result.stderr);
     if (result.exit_code != 0) {
-        if (result.stderr.len > 0) std.debug.print("{s}", .{result.stderr});
+        std.debug.print("{s}{s}", .{ result.stderr, result.stdout });
         std.process.exit(1);
     }
+}
+
+/// The commit `refs/stash` names, or null when there are no stash entries.
+pub fn resolveStash(allocator: Allocator) !?[]u8 {
+    return runGitCaptureErr(allocator, &.{ "git", "rev-parse", "-q", "--verify", "refs/stash" }, .{}, error.NoStash, .{}) catch |err| switch (err) {
+        error.NoStash => null,
+        else => err,
+    };
+}
+
+/// `git diff-tree -r -z` between two trees in raw form: for each changed
+/// path, `:<old mode> <new mode> <old id> <new id> <status>` then the path,
+/// each NUL-terminated.
+pub fn runGitDiffTreeRaw(allocator: Allocator, from: []const u8, to: []const u8) ![]u8 {
+    return runGitCaptureErr(allocator, &.{ "git", "diff-tree", "-r", "-z", "--no-renames", from, to, "--" }, .{}, error.DiffTreeFailed, .{ .echo_stderr = true, .trim = false });
+}
+
+/// Paths that differ between two trees, NUL-separated.
+pub fn runGitDiffTreeNamesBetween(allocator: Allocator, from: []const u8, to: []const u8) ![]u8 {
+    return runGitCaptureErr(allocator, &.{ "git", "diff-tree", "-r", "-z", "--name-only", "--no-renames", from, to, "--" }, .{}, error.DiffTreeFailed, .{ .echo_stderr = true, .trim = false });
+}
+
+/// Paths whose index entry differs from `tree`, NUL-separated.
+pub fn runGitDiffIndexCachedNames(allocator: Allocator, tree: []const u8) ![]u8 {
+    return runGitCaptureErr(allocator, &.{ "git", "diff-index", "--cached", "-z", "--name-only", "--no-renames", tree, "--" }, .{}, error.DiffIndexFailed, .{ .echo_stderr = true, .trim = false });
+}
+
+/// Paths with unstaged changes (`git diff --name-only -z`), NUL-separated.
+pub fn runGitDiffUnstagedNames(allocator: Allocator) ![]u8 {
+    var argv: std.ArrayList([]const u8) = .empty;
+    defer argv.deinit(allocator);
+    try argv.appendSlice(allocator, &.{ "git", "diff", "--name-only", "-z" });
+    try argv.appendSlice(allocator, name_only_hygiene_flags);
+    return runGitCaptureErr(allocator, argv.items, .{}, error.DiffFailed, .{ .echo_stderr = true, .trim = false });
+}
+
+/// Every path in `treeish`, NUL-separated.
+pub fn runGitLsTreeNames(allocator: Allocator, treeish: []const u8) ![]u8 {
+    return runGitCaptureErr(allocator, &.{ "git", "ls-tree", "-r", "-z", "--name-only", treeish, "--" }, .{}, error.LsTreeFailed, .{ .echo_stderr = true, .trim = false });
+}
+
+/// Every entry of the index `env_map` names (the real one when null) as
+/// `<mode> <id> <stage>\t<path>`, NUL-terminated.
+pub fn runGitLsFilesStaged(allocator: Allocator, env_map: ?*const EnvMap) ![]u8 {
+    return runGitCaptureErr(allocator, &.{ "git", "ls-files", "-s", "-z" }, .{ .env_map = env_map }, error.LsFilesFailed, .{ .echo_stderr = true, .trim = false });
+}
+
+/// Record each worktree path in `paths_z` (NUL-terminated) in the index
+/// `env_map` names as git would stage it, dropping those that are gone.
+pub fn runGitUpdateIndexFromWorktree(allocator: Allocator, paths_z: []const u8, env_map: ?*const EnvMap) !void {
+    const out = try runGitCaptureErr(allocator, &.{ "git", "update-index", "--add", "--remove", "-z", "--stdin" }, .{ .stdin_data = paths_z, .env_map = env_map }, error.UpdateIndexFailed, .{ .echo_stderr = true, .trim = false });
+    allocator.free(out);
+}
+
+/// Set index entries from `--index-info` lines (NUL-terminated) in the index
+/// `env_map` names (the real one when null).
+pub fn runGitUpdateIndexInfo(allocator: Allocator, index_info: []const u8, env_map: ?*const EnvMap) !void {
+    const out = try runGitCaptureErr(allocator, &.{ "git", "update-index", "-z", "--index-info" }, .{ .stdin_data = index_info, .env_map = env_map }, error.UpdateIndexFailed, .{ .echo_stderr = true, .trim = false });
+    allocator.free(out);
+}
+
+/// Write the entries for `paths_z` (NUL-terminated) out of the index
+/// `env_map` names, over whatever is there, under `prefix` when given (a
+/// directory path ending in '/') and into the worktree otherwise.
+pub fn runGitCheckoutIndexPaths(allocator: Allocator, prefix: ?[]const u8, paths_z: []const u8, env_map: *const EnvMap) !void {
+    var argv: std.ArrayList([]const u8) = .empty;
+    defer argv.deinit(allocator);
+    try argv.appendSlice(allocator, &.{ "git", "checkout-index", "-f", "-z", "--stdin" });
+    const prefix_arg = if (prefix) |p| try std.fmt.allocPrint(allocator, "--prefix={s}", .{p}) else null;
+    defer if (prefix_arg) |a| allocator.free(a);
+    if (prefix_arg) |a| try argv.append(allocator, a);
+    const out = try runGitCaptureErr(allocator, argv.items, .{ .stdin_data = paths_z, .env_map = env_map }, error.CheckoutIndexFailed, .{ .echo_stderr = true, .trim = false });
+    allocator.free(out);
+}
+
+/// Write every entry of the index `env_map` names into the worktree,
+/// refusing to overwrite a file that is already there.
+pub fn runGitCheckoutIndexAll(allocator: Allocator, env_map: *const EnvMap) !void {
+    const out = try runGitCaptureErr(allocator, &.{ "git", "checkout-index", "--all" }, .{ .env_map = env_map }, error.CheckoutIndexFailed, .{ .echo_stderr = true, .trim = false });
+    allocator.free(out);
+}
+
+pub const MergeFileResult = enum { clean, conflicts, binary };
+
+/// `git merge-file` of `base`→`other` into `current` in place, with the
+/// labels `git stash` gives its sides.
+pub fn runGitMergeFile(allocator: Allocator, current: []const u8, base: []const u8, other: []const u8) !MergeFileResult {
+    const result = try runCommand(allocator, &.{ "git", "merge-file", "-L", "Updated upstream", "-L", "Stash base", "-L", "Stashed changes", current, base, other }, .{});
+    defer allocator.free(result.stdout);
+    defer allocator.free(result.stderr);
+    // The exit code counts the conflicts; a negative one (255) is an error,
+    // which for readable files means one of them is binary.
+    return switch (result.exit_code) {
+        0 => .clean,
+        255 => .binary,
+        else => .conflicts,
+    };
+}
+
+/// Run `git hash-object -w --path=<path> <file>`: `file`'s content as git
+/// would store it at `path`. Returns the trimmed blob id.
+pub fn runGitHashObjectAs(allocator: Allocator, file: []const u8, path: []const u8) ![]u8 {
+    const path_arg = try std.fmt.allocPrint(allocator, "--path={s}", .{path});
+    defer allocator.free(path_arg);
+    return runGitCaptureErr(allocator, &.{ "git", "hash-object", "-w", path_arg, "--", file }, .{}, error.HashObjectFailed, .{ .echo_stderr = true });
+}
+
+/// Run `git stash drop -q`.
+pub fn runGitStashDrop(allocator: Allocator) !void {
+    const out = try runGitCaptureErr(allocator, &.{ "git", "stash", "drop", "-q" }, .{}, error.StashDropFailed, .{ .echo_stderr = true, .trim = false });
+    allocator.free(out);
 }
 
 /// Run `git hash-object -w <file_path>` and return the trimmed blob SHA.

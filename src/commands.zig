@@ -11,6 +11,7 @@ const patch_mod = @import("patch.zig");
 const format = @import("format.zig");
 
 const stash_mod = @import("stash.zig");
+const stash_pop_mod = @import("stash_pop.zig");
 const result_groups_mod = @import("result_groups.zig");
 const commit_mod = @import("commit.zig");
 const check_mod = @import("check.zig");
@@ -679,7 +680,11 @@ pub fn cmdDiff(allocator: Allocator, stdout: *std.Io.Writer, opts: DiffOptions) 
 
 pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions) !void {
     if (opts.pop) {
-        try stash_mod.stashPop(allocator, opts.common.verbosity);
+        stash_pop_mod.stashPop(allocator, opts.common.verbosity) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            // Git, or the pop itself, has said what went wrong.
+            else => std.process.exit(1),
+        };
         return;
     }
 

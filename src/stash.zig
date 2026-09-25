@@ -123,13 +123,6 @@ pub fn createStashCommit(
     return git.runGitCommitTree(allocator, trees.stash, &.{ head.sha, idx_commit, untracked_commit }, message);
 }
 
-pub fn stashPop(allocator: Allocator, verbosity: Verbosity) !void {
-    try git.runGitStashPop(allocator);
-    if (verbosity != .quiet) {
-        std.debug.print("popped stash@{{0}}\n", .{});
-    }
-}
-
 /// Build a git commit containing only the untracked files.
 /// Returns an allocator-owned commit SHA — caller must free.
 fn buildUntrackedCommit(

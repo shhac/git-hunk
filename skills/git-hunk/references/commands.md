@@ -625,7 +625,7 @@ git-hunk stash pop
 | Subcommand | Description |
 |------------|-------------|
 | `push` | Stash hunks (default, keyword optional). |
-| `pop` | Restore the most recent stash via `git stash pop`. No other flags or args accepted. |
+| `pop` | Restore the most recent stash, merging its hunks into files that have other unstaged changes, where `git stash pop` refuses. No other flags or args accepted. |
 
 ### Arguments
 
@@ -669,7 +669,7 @@ git-hunk stash a3f7c21 --porcelain              # machine-readable output
 - Reads unstaged diff, matches each SHA prefix to a hunk, creates a git stash containing those hunks, then removes them from the worktree.
 - The entry has the same shape as `git stash push --keep-index [-u] -- <paths>`, restricted to the chosen hunks: HEAD as its base, the index as it stands as its index commit (`stash^2`), and the index plus the stashed hunks as its tree. The index is left as it was, as with `--keep-index`.
 - Every git stash command treats it as it would that native entry. `git stash show` compares with HEAD, so it lists staged changes as well as the stashed hunks (`git diff stash^2 stash` shows the stashed hunks alone). `git stash pop` and `git stash pop --index` both put the hunks back unstaged and keep what is staged; `--index` also re-stages whatever was staged at stash time, should it have been unstaged since.
-- Git never applies a stash onto a file with unstaged changes. After stashing some of a file's hunks and not others, every pop is refused, with nothing lost, until the file's remaining changes are staged or committed.
+- Git never applies a stash onto a file with unstaged changes: after stashing some of a file's hunks and not others, or editing the file again, `git stash pop` is refused, with nothing lost. `git hunk stash pop` merges the hunks back instead (below).
 - With `--all`, stashes tracked hunks only (matching `git stash` behavior). Use `-u`/`--include-untracked` to include untracked files. Explicit hash targeting always works for untracked hunks regardless of `-u`.
 - Untracked files are stored using git's native 3-parent stash format (HEAD, index, untracked tree). `git stash pop` restores them as untracked files. Executable file permissions are preserved.
 - The message is the one `git stash push` would write: `WIP on <branch>: <sha> <subject>`, or `On <branch>: <msg>` with `-m`.
@@ -678,7 +678,12 @@ git-hunk stash a3f7c21 --porcelain              # machine-readable output
 - With `--verbose`, prints a count summary to stderr: `N hunk(s) stashed`.
 - With `--verbose`, prints a hint to stderr: `hint: use 'git stash list' to see stashed entries, 'git hunk stash pop' to restore`.
 - With `--porcelain`, output is tab-separated: `stashed\t{sha7}\t{file}`.
-- `pop` runs `git stash pop` and prints `popped stash@{0}` to stderr. Rejects all other flags and arguments.
+- `pop` restores `stash@{0}` and prints `popped stash@{0}` to stderr. Rejects all other flags and arguments.
+  - Where `git stash pop` can restore the entry, it does, so the result is git's own, and for a `git hunk stash` entry the same as `git stash pop --index`'s.
+  - Where git would refuse because a file the entry changes has other unstaged changes, the entry's worktree changes (`git diff stash^2 stash`) are merged into the worktree instead, file by file, as `git merge-file` merges them; the index is left as it is. The stashed hunks come back unstaged beside the file's other changes and whatever is staged stays staged.
+  - A conflict is left as `git stash pop` leaves one: markers in the file (labelled `Updated upstream` for the worktree and `Stashed changes` for the entry, honouring `merge.conflictStyle`), unmerged index entries for it (the index at stash time, the worktree before the pop, the entry), git's `CONFLICT (...)` line on stderr, and `The stash entry is kept in case you need it again.`; exit 1. Paths without a conflict are merged all the same. A binary or symlink changed on both sides conflicts and keeps the worktree's version. The entry is dropped only when everything went back cleanly.
+  - Untracked files come back as git restores them, never over a file already there: `<path> already exists, no checkout`, then `error: could not restore untracked files from stash`, exit 1. That is checked before anything is restored, so a refused pop changes nothing (git's own pop merges the tracked changes first).
+  - The merge is not attempted, and git's refusal stands, for a submodule change, an index with unmerged paths, or an entry whose staged changes to a file have left the index since, as a `git stash push` without `--keep-index` takes them: merging only its worktree changes would lose them.
 - Line specs (`sha:lines`) are rejected: `error: line specs not supported for stash`.
 - `--include-untracked` conflicts with `--tracked-only` — error if both given.
 - If the stashed changes cannot be taken back out of the worktree once the entry is stored, the entry stays, the worktree keeps the changes, and stash exits 1 saying so, as `git stash` stops with "Cannot remove worktree changes".
@@ -697,6 +702,8 @@ git-hunk stash a3f7c21 --porcelain              # machine-readable output
 | `error: --include-untracked cannot be combined with --tracked-only` | Conflicting filter flags |
 | `no unstaged changes` | Nothing to stash |
 | `error: cannot stash while the index has unmerged paths` | A merge conflict is unresolved |
+| `CONFLICT (content): Merge conflict in <path>` | `pop`: a stashed hunk overlaps a change made since; resolve it and `git add` the file. The entry is kept |
+| `<path> already exists, no checkout` / `error: could not restore untracked files from stash` | `pop`: an untracked file in the entry is in the way; nothing was restored |
 | `error: cannot remove the stashed changes from the worktree` | The entry was stored as `stash@{0}` but the worktree still has its changes; `git stash drop` to keep working on them, or remove them from the worktree to finish the stash |
 | `error: at least one <sha> argument required` | No SHA arguments and no `--all`/`--file` flag |
 

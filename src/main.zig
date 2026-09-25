@@ -25,6 +25,7 @@ comptime {
     _ = @import("result_groups.zig");
     _ = @import("source.zig");
     _ = @import("stash.zig");
+    _ = @import("stash_pop.zig");
 }
 
 const fatal = types.fatal;

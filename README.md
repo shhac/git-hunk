@@ -243,7 +243,10 @@ Saves selected hunks into a real `git stash` entry and removes them from the
 worktree, leaving the index alone. The entry has the same shape as
 `git stash push --keep-index -- <paths>` would give it, message included, so
 `git stash list`, `show`, `pop`, `pop --index`, `apply` and `branch` all treat
-it as a native one.
+it as a native one. `git hunk stash pop` goes one further: where a file the
+entry changes has other unstaged changes, which git's pop refuses, it merges
+the stashed hunks into the file, leaving git's conflict markers and keeping
+the entry if they overlap.
 
 Like `git stash`, `--all` excludes untracked files by default. Use `-u` /
 `--include-untracked` to include them. Explicit hash targeting always works

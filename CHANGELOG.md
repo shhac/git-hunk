@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- `git hunk stash pop` merges a stash back into files that have other unstaged changes, which `git stash pop` refuses ("Your local changes to the following files would be overwritten by merge"). That refusal met every stash of some of a file's hunks and not others, and every file edited again after stashing. The entry's worktree changes are merged file by file, the index is left as it is, and a conflict is left as git leaves one: markers labelled `Updated upstream` and `Stashed changes`, unmerged index entries, `CONFLICT (content): Merge conflict in <path>` and `The stash entry is kept in case you need it again.`, exit 1. Where git's pop succeeds it still does the work, so the result is git's own. An untracked file in the way now refuses the pop before anything is restored, where git's pop merged the tracked changes first; and a conflict in git's own pop is now reported, where only the exit status said so before.
+
 ### Fixed
 - A line spec on a new or deleted file failed in most directions. The patch header was fixed when the diff was read, so the filtered patch still claimed to create or delete the whole file while its body kept the deselected lines, and git refused it: `reset <sha>:2` on a staged new file, `restore --force <sha>:2` on an untracked file, and `add`/`commit` of part of a deletion all failed ("new file depends on old contents", "patch did not apply cleanly"). Headers are now rendered from what the line spec leaves: the deselected lines stay where they were, so a partial undo of a new file or a partial deletion is an edit to a file that still exists. The `index` line is kept, so `--3way` works on a partial selection too.
 

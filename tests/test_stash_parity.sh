@@ -2,7 +2,7 @@
 source "$(dirname "$0")/harness.sh" "$1"
 
 # ============================================================================
-# Stash parity with native git (tests 2200-2219). A `git hunk stash` of whole
+# Stash parity with native git (tests 2200-2229). A `git hunk stash` of whole
 # files must record the entry `git stash push --keep-index [-u] -- <paths>`
 # records: HEAD as first parent, the real index as the index commit, the
 # index plus the stashed changes as the stash tree, and the stashed untracked
@@ -14,7 +14,8 @@ source "$(dirname "$0")/harness.sh" "$1"
 # A stash of some hunks and not others has no native equivalent; popping it
 # must give back exactly the index and worktree it was taken from. Git never
 # merges a stash into a file that still has unstaged changes, so where the
-# stashed hunk's file keeps another, the pop is refused and must lose nothing.
+# stashed hunk's file keeps another, its pops are refused and must lose
+# nothing, while git hunk stash pop merges the hunk back into the file.
 # ============================================================================
 
 # A repo with a.txt and b.txt (twenty lines each), d.txt (three lines) and a
@@ -130,14 +131,18 @@ stash_parity() {
     cd "$top/hunk"
 }
 
-# pop_each <label> <expected state> <expected from> <expect-success|expect-refusal>:
-# every way of popping the entry in a copy of $CURRENT_REPO/hunk, which must
-# succeed or be refused as told and leave <expected state>.
+# pop_each <label> <expected state> <expected from> <expect-success|expect-refusal> [<op>...]:
+# each way of popping the entry (every one when none is named) in a copy of
+# $CURRENT_REPO/hunk, which must succeed or be refused as told and leave
+# <expected state>.
 pop_each() {
     local label="$1" want="$2" from="$3" outcome="$4"
+    shift 4
+    local ops=("$@")
+    [[ ${#ops[@]} -gt 0 ]] || ops=("git stash pop" "git stash pop --index" "$GIT_HUNK stash pop")
     local top="$CURRENT_REPO"
     local op status
-    for op in "git stash pop" "git stash pop --index" "$GIT_HUNK stash pop"; do
+    for op in "${ops[@]}"; do
         rm -rf "$top/op"
         cp -Rp "$top/hunk" "$top/op"
         cd "$top/op"
@@ -164,6 +169,19 @@ round_trip() {
     "$GIT_HUNK" stash "$@" > /dev/null || fail "$label: git hunk stash $* failed"
     [[ "$(repo_state)" != "$before" ]] || fail "$label: git hunk stash $* changed nothing"
     pop_each "$label" "$before" "the state before stashing" expect-success
+}
+
+# merge_round_trip <label> <git-hunk stash args...>: stash hunks whose files
+# keep other changes, which git's pops refuse; git hunk stash pop must merge
+# them back to exactly the index and worktree they were taken from.
+merge_round_trip() {
+    local label="$1"
+    shift
+    local before
+    before="$(repo_state)"
+    "$GIT_HUNK" stash "$@" > /dev/null || fail "$label: git hunk stash $* failed"
+    [[ "$(repo_state)" != "$before" ]] || fail "$label: git hunk stash $* changed nothing"
+    pop_each "$label" "$before" "the state before stashing" expect-success "$GIT_HUNK stash pop"
 }
 
 # The hash of the hunk of <file> whose new side starts at line <n>.
@@ -259,18 +277,21 @@ stash_parity "test 2208" --all -u -- -u
 
 # ============================================================================
 # Test 2210: one of two hunks in a file with a staged edit elsewhere in it.
-# The other hunk keeps the file dirty, so every pop is refused; the staged
-# edit, the kept hunk and the entry all survive the refusal.
+# The other hunk keeps the file dirty, so git refuses every pop, losing
+# nothing; git hunk stash pop merges the hunk back into the file instead,
+# restoring exactly the index and worktree it was taken from.
 # ============================================================================
 parity_repo
 edit_line a.txt 2 "a 02 staged"
 git add a.txt
 edit_line a.txt 10 "a 10 kept"
 edit_line a.txt 18 "a 18 stashed"
+BEFORE2210="$(repo_state)"
 "$GIT_HUNK" stash "$(hunk_at a.txt 15)" > /dev/null || fail "test 2210: git hunk stash failed"
 [[ "$(git diff)" == *"a 10 kept"* && "$(git diff)" != *"a 18 stashed"* ]] \
     || fail "test 2210: the stash did not take out just the hunk at line 18"
-pop_each "test 2210" "$(repo_state)" "the state before popping" expect-refusal
+pop_each "test 2210" "$(repo_state)" "the state before popping" expect-refusal "git stash pop" "git stash pop --index"
+pop_each "test 2210" "$BEFORE2210" "the state before stashing" expect-success "$GIT_HUNK stash pop"
 
 # ============================================================================
 # Test 2211: a hunk in one file, beside a staged edit and a kept hunk in
@@ -323,5 +344,162 @@ ERR2214="$("$GIT_HUNK" stash --file b.txt 2>&1 > /dev/null)" && fail "test 2214:
 check_same "test 2214" "error" "$ERR2214" "error: cannot stash while the index has unmerged paths" "the expected error"
 git stash push -q --keep-index -- b.txt > /dev/null 2>&1 && fail "test 2214: native stash with a conflicted index succeeded"
 check_same "test 2214" "state after both refusals" "$(repo_state)" "$BEFORE2214" "the state before"
+
+
+# ============================================================================
+# Test 2215: a file edited again after stashing one of its hunks. git hunk
+# stash pop merges the hunk into it, and a stashed deletion beside it goes
+# back too; the index is left exactly as it was and the entry is dropped.
+# ============================================================================
+parity_repo
+edit_line a.txt 2 "a 02 staged"
+edit_line b.txt 3 "b 03 staged"
+git add a.txt b.txt
+edit_line a.txt 18 "a 18 stashed"
+rm d.txt
+"$GIT_HUNK" stash "$(hunk_at a.txt 15)" "$(first_sha --file d.txt)" > /dev/null || fail "test 2215: git hunk stash failed"
+edit_line a.txt 5 "a 05 later"
+INDEX2215="$(git ls-files -s)"
+"$GIT_HUNK" stash pop > /dev/null 2>&1 || fail "test 2215: git hunk stash pop failed"
+{ lines a 1 1; echo "a 02 staged"; lines a 3 4; echo "a 05 later"; lines a 6 17; echo "a 18 stashed"; lines a 19 20; } > "$CURRENT_REPO/want2215"
+check_same "test 2215" "a.txt" "$(bytes_of a.txt)" "$(bytes_of "$CURRENT_REPO/want2215")" "the merged file"
+[[ ! -e d.txt ]] || fail "test 2215: the stashed deletion of d.txt was not restored"
+check_same "test 2215" "index" "$(git ls-files -s)" "$INDEX2215" "the index before popping"
+[[ -z "$(git stash list)" ]] || fail "test 2215: the entry was not dropped"
+
+# ============================================================================
+# Test 2216: the hunk conflicts with a later edit of the same line. Git's
+# markers and unmerged entries are left for the path, a path that merged
+# cleanly is restored unstaged, and the entry is kept.
+# ============================================================================
+parity_repo
+edit_line a.txt 2 "a 02 staged"
+git add a.txt
+edit_line a.txt 10 "a 10 kept"
+edit_line a.txt 18 "a 18 stashed"
+edit_line b.txt 10 "b 10 stashed"
+"$GIT_HUNK" stash "$(hunk_at a.txt 15)" "$(hunk_at b.txt 7)" > /dev/null || fail "test 2216: git hunk stash failed"
+STASH2216="$(git rev-parse stash)"
+edit_line a.txt 18 "a 18 later"
+OURS2216="$(git hash-object a.txt)"
+STATUS=0
+ERR2216="$("$GIT_HUNK" stash pop 2>&1 > /dev/null)" || STATUS=$?
+[[ "$STATUS" -eq 1 ]] || fail "test 2216: expected exit 1, got $STATUS"
+check_same "test 2216" "report" "$ERR2216" "$(printf 'CONFLICT (content): Merge conflict in a.txt\nThe stash entry is kept in case you need it again.')" "git's report"
+{ lines a 1 1; echo "a 02 staged"; lines a 3 9; echo "a 10 kept"; lines a 11 17
+  printf '%s\n' "<<<<<<< Updated upstream" "a 18 later" "=======" "a 18 stashed" ">>>>>>> Stashed changes"
+  lines a 19 20; } > "$CURRENT_REPO/want2216"
+check_same "test 2216" "a.txt" "$(bytes_of a.txt)" "$(bytes_of "$CURRENT_REPO/want2216")" "git's conflict markers"
+check_same "test 2216" "a.txt's index stages" "$(git ls-files -s a.txt | awk '{ print $2, $3 }')" \
+    "$(printf '%s 1\n%s 2\n%s 3' "$(git rev-parse "$STASH2216^2:a.txt")" "$OURS2216" "$(git rev-parse "$STASH2216:a.txt")")" "base, worktree and stash"
+[[ "$(git diff b.txt)" == *"+b 10 stashed"* && -z "$(git diff --cached b.txt)" ]] \
+    || fail "test 2216: b.txt should have its hunk back, unstaged"
+[[ "$(git rev-parse -q --verify stash)" == "$STASH2216" ]] || fail "test 2216: the entry was not kept"
+
+# ============================================================================
+# Test 2217: untracked files come back with a merged hunk; an untracked file
+# already in the way refuses the pop before anything changes, whether the
+# pop would merge or leave the work to git
+# ============================================================================
+parity_repo
+edit_line a.txt 10 "a 10 kept"
+edit_line a.txt 18 "a 18 stashed"
+printf 'untracked\n' > u.txt
+merge_round_trip "test 2217" "$(hunk_at a.txt 15)" "$(hunk_at u.txt 1)"
+
+for kept in yes no; do
+    parity_repo
+    [[ "$kept" == yes ]] && edit_line a.txt 10 "a 10 kept"
+    edit_line a.txt 18 "a 18 stashed"
+    printf 'untracked\n' > u.txt
+    "$GIT_HUNK" stash "$(hunk_at a.txt 15)" "$(hunk_at u.txt 1)" > /dev/null || fail "test 2217: git hunk stash failed"
+    printf 'in the way\n' > u.txt
+    BEFORE2217="$(repo_state)"
+    STATUS=0
+    ERR2217="$("$GIT_HUNK" stash pop 2>&1 > /dev/null)" || STATUS=$?
+    [[ "$STATUS" -eq 1 ]] || fail "test 2217 (kept hunk: $kept): expected exit 1, got $STATUS"
+    check_same "test 2217 (kept hunk: $kept)" "report" "$ERR2217" \
+        "$(printf 'u.txt already exists, no checkout\nerror: could not restore untracked files from stash\nThe stash entry is kept in case you need it again.')" "git's report"
+    check_same "test 2217 (kept hunk: $kept)" "state after the refusal" "$(repo_state)" "$BEFORE2217" "the state before"
+done
+
+# ============================================================================
+# Test 2218: a binary file goes back whole beside a merged hunk; a binary
+# changed since conflicts, as git cannot merge it, and keeps its new content
+# ============================================================================
+parity_repo
+edit_line a.txt 10 "a 10 kept"
+edit_line a.txt 18 "a 18 stashed"
+printf '\000\002bin changed\n' > bin.dat
+merge_round_trip "test 2218" "$(hunk_at a.txt 15)" "$(first_sha --file bin.dat)"
+
+parity_repo
+edit_line a.txt 10 "a 10 kept"
+edit_line a.txt 18 "a 18 stashed"
+printf '\000\002bin changed\n' > bin.dat
+"$GIT_HUNK" stash "$(hunk_at a.txt 15)" "$(first_sha --file bin.dat)" > /dev/null || fail "test 2218: git hunk stash failed"
+printf '\000\003bin later\n' > bin.dat
+STATUS=0
+ERR2218="$("$GIT_HUNK" stash pop 2>&1 > /dev/null)" || STATUS=$?
+[[ "$STATUS" -eq 1 ]] || fail "test 2218: expected exit 1, got $STATUS"
+check_same "test 2218" "report" "$ERR2218" \
+    "$(printf 'warning: Cannot merge binary files: bin.dat (Updated upstream vs. Stashed changes)\nCONFLICT (content): Merge conflict in bin.dat\nThe stash entry is kept in case you need it again.')" "git's report"
+check_same "test 2218" "bin.dat" "$(bytes_of bin.dat)" "$(want_bytes '\000\003bin later\n')" "its content before popping"
+[[ "$(git diff a.txt)" == *"+a 18 stashed"* ]] || fail "test 2218: a.txt's hunk did not go back"
+[[ "$(git stash list | wc -l | tr -d ' ')" == 1 ]] || fail "test 2218: the entry was not kept"
+
+# ============================================================================
+# Test 2219: where git's pop succeeds, git hunk stash pop leaves what
+# `git stash pop --index` leaves
+# ============================================================================
+parity_repo
+edit_line a.txt 2 "a 02 staged"
+printf 'new\n' > new.txt
+git add a.txt new.txt
+edit_line a.txt 18 "a 18 stashed"
+edit_line b.txt 10 "b 10 stashed"
+rm d.txt
+printf 'untracked\n' > u.txt
+"$GIT_HUNK" stash --all -u > /dev/null || fail "test 2219: git hunk stash failed"
+for op in "git stash pop --index" "$GIT_HUNK stash pop"; do
+    rm -rf "$CURRENT_REPO/op"
+    cp -Rp "$CURRENT_REPO/hunk" "$CURRENT_REPO/op"
+    STATUS=0
+    (cd "$CURRENT_REPO/op" && $op > /dev/null 2>&1) || STATUS=$?
+    printf 'exit: %s\n%s\n' "$STATUS" "$(cd "$CURRENT_REPO/op" && repo_state)" > "$CURRENT_REPO/${op##* }.out"
+done
+check_same "test 2219" "results of 'git hunk stash pop'" "$(cat "$CURRENT_REPO/pop.out")" "$(cat "$CURRENT_REPO/--index.out")" "git stash pop --index"
+grep -q '^exit: 0$' "$CURRENT_REPO/pop.out" || fail "test 2219: git hunk stash pop failed"
+
+# ============================================================================
+# Test 2220: a conflict in a pop git makes itself is reported as git
+# reports it
+# ============================================================================
+parity_repo
+edit_line b.txt 10 "b 10 stashed"
+"$GIT_HUNK" stash --file b.txt > /dev/null || fail "test 2220: git hunk stash failed"
+edit_line b.txt 10 "b 10 staged since"
+git add b.txt
+STATUS=0
+ERR2220="$("$GIT_HUNK" stash pop 2>&1 > /dev/null)" || STATUS=$?
+[[ "$STATUS" -eq 1 ]] || fail "test 2220: expected exit 1, got $STATUS"
+[[ "$ERR2220" == *"CONFLICT (content): Merge conflict in b.txt"* ]] || fail "test 2220: no conflict reported, got '$ERR2220'"
+[[ "$ERR2220" == *"The stash entry is kept in case you need it again."* ]] || fail "test 2220: not told the entry was kept, got '$ERR2220'"
+
+# ============================================================================
+# Test 2221: an entry `git stash push` made without --keep-index took a
+# staged edit out of the index and the worktree. Merging only its worktree
+# changes into the file edited since would lose the edit, so the pop is
+# refused, as git's is, and nothing is lost.
+# ============================================================================
+parity_repo
+edit_line a.txt 2 "a 02 staged"
+git add a.txt
+edit_line a.txt 18 "a 18 stashed"
+git stash push -q
+edit_line a.txt 10 "a 10 later"
+BEFORE2221="$(repo_state)"
+"$GIT_HUNK" stash pop > /dev/null 2>&1 && fail "test 2221: git hunk stash pop was not refused"
+check_same "test 2221" "state after the refusal" "$(repo_state)" "$BEFORE2221" "the state before"
 
 report_results
