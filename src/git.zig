@@ -732,6 +732,12 @@ pub fn runGitDiffIndexCachedNames(allocator: Allocator, tree: []const u8) ![]u8 
     return runGitCaptureErr(allocator, &.{ "git", "diff-index", "--cached", "-z", "--name-only", "--no-renames", tree, "--" }, .{}, error.DiffIndexFailed, .{ .echo_stderr = true, .trim = false });
 }
 
+/// Intent-to-add entries (`git add -N`), NUL-separated. Only such an entry
+/// can make a file show as added between the index and the worktree.
+pub fn runGitIntentToAddNames(allocator: Allocator) ![]u8 {
+    return runGitCaptureErr(allocator, &.{ "git", "diff-files", "-z", "--name-only", "--no-renames", "--diff-filter=A" }, .{}, error.DiffFilesFailed, .{ .echo_stderr = true, .trim = false });
+}
+
 /// Paths with unstaged changes (`git diff --name-only -z`), NUL-separated.
 pub fn runGitDiffUnstagedNames(allocator: Allocator) ![]u8 {
     var argv: std.ArrayList([]const u8) = .empty;

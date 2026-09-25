@@ -674,6 +674,7 @@ git-hunk stash a3f7c21 --porcelain              # machine-readable output
 - Untracked files are stored using git's native 3-parent stash format (HEAD, index, untracked tree). `git stash pop` restores them as untracked files. Executable file permissions are preserved.
 - The message is the one `git stash push` would write: `WIP on <branch>: <sha> <subject>`, or `On <branch>: <msg>` with `-m`.
 - Refuses to stash while the index has unmerged paths, as `git stash` does.
+- Refuses to stash a hunk in an intent-to-add entry (`git add -N`), the new side of a rename included, as `git stash` refuses one: `error: cannot stash intent-to-add entry '<path>'` for each, a hint, exit 1, nothing changed. Stage the file with `git add`, or make it untracked again with `git rm --cached`. Hunks in other files stash as usual; the entry is left alone.
 - On success, prints one line per stashed hunk to stdout: `stashed {sha7}  {file}`. SHA in yellow for human mode.
 - With `--verbose`, prints a count summary to stderr: `N hunk(s) stashed`.
 - With `--verbose`, prints a hint to stderr: `hint: use 'git stash list' to see stashed entries, 'git hunk stash pop' to restore`.
