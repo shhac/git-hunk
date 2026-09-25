@@ -601,4 +601,35 @@ STATUS1118="$(git status --porcelain)"
     || fail "test 1118: tree should be clean after commit, got: '$STATUS1118'"
 pass "test 1118: multi-file commit stays clean through hook cleanup"
 
+
+# ============================================================================
+# Test 1119: a committed rename goes through the hook cleanup cleanly. The
+# cleanup counts only the new path of a rename's hunk as a target, so the
+# old path, which the commit deleted, is reset to HEAD's absence of it: a
+# no-op that must stay one. Both ways a rename is committed: a deletion and
+# the untracked new file together, and a rename hunk (new path
+# intent-to-add). What the user had staged stays staged.
+# ============================================================================
+for MODE1119 in split intent-to-add; do
+    new_repo
+    mkdir -p .git/hooks
+    printf '#!/bin/sh\necho fixed > hookfix.txt\ngit add hookfix.txt\n' > .git/hooks/pre-commit
+    chmod +x .git/hooks/pre-commit
+    git mv alpha.txt moved1119.txt
+    git reset -q
+    sed -i.bak '10s/.*/moved and edited 1119/' moved1119.txt
+    [[ "$MODE1119" == intent-to-add ]] && git add -N moved1119.txt
+    sed -i.bak '1s/.*/staged beta 1119/' beta.txt && git add beta.txt
+    ARGS1119=(--file alpha.txt --file moved1119.txt)
+    [[ "$MODE1119" == intent-to-add ]] && ARGS1119=(--file moved1119.txt)
+    OUT1119="$("$GIT_HUNK" commit "${ARGS1119[@]}" -m "rename 1119" 2>&1)" \
+        || fail "test 1119 ($MODE1119): commit failed: $OUT1119"
+    [[ "$(git diff-tree -r -M --name-status --no-commit-id HEAD | cut -c1 | tr -d '\n')" == "AR" ]] \
+        || fail "test 1119 ($MODE1119): expected the hook file and the rename, got: '$(git diff-tree -r -M --name-status --no-commit-id HEAD)'"
+    STATUS1119="$(git status --porcelain)"
+    [[ "$STATUS1119" == "M  beta.txt" ]] \
+        || fail "test 1119 ($MODE1119): only beta.txt should be left, staged, got: '$STATUS1119'"
+    pass "test 1119: a committed rename ($MODE1119) stays clean through hook cleanup"
+done
+
 report_results
