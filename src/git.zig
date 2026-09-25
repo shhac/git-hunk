@@ -822,7 +822,9 @@ pub fn runGitLsTreeNames(allocator: Allocator, treeish: []const u8) ![]u8 {
 /// Every entry of the index `env_map` names (the real one when null) as
 /// `<mode> <id> <stage>\t<path>`, NUL-terminated.
 pub fn runGitLsFilesStaged(allocator: Allocator, env_map: ?*const EnvMap) ![]u8 {
-    return runGitCaptureErr(allocator, &.{ "git", "ls-files", "-s", "-z" }, .{ .env_map = env_map }, error.LsFilesFailed, .{ .echo_stderr = true, .trim = false });
+    // One entry per tracked file, so the listing grows with the repository,
+    // not with the change: the default cap would refuse a large checkout.
+    return runGitCaptureErr(allocator, &.{ "git", "ls-files", "-s", "-z" }, .{ .env_map = env_map, .max_bytes = 1 << 30 }, error.LsFilesFailed, .{ .echo_stderr = true, .trim = false });
 }
 
 /// Record each worktree path in `paths_z` (NUL-terminated) in the index

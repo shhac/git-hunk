@@ -502,4 +502,22 @@ BEFORE2221="$(repo_state)"
 "$GIT_HUNK" stash pop > /dev/null 2>&1 && fail "test 2221: git hunk stash pop was not refused"
 check_same "test 2221" "state after the refusal" "$(repo_state)" "$BEFORE2221" "the state before"
 
+# ============================================================================
+# Test 2222: the merge works in a repository whose index lists more than a
+# megabyte of entries. The pop reads the whole index back, and a cap sized for
+# a diff refused a large checkout ("output exceeds 1 MB").
+# ============================================================================
+parity_repo
+mkdir many
+for ((i = 1; i <= 25000; i++)); do : > "many/an-entry-with-a-long-enough-name-$i"; done
+git add many
+git commit -q -m "many entries"
+edit_line a.txt 3 "a 03 stashed"
+"$GIT_HUNK" stash "$(first_sha --file a.txt)" > /dev/null || fail "test 2222: git hunk stash failed"
+edit_line a.txt 17 "a 17 later"
+(( $(git ls-files -s -z | wc -c) > 1024 * 1024 )) || fail "test 2222: fixture index is under 1 MB"
+"$GIT_HUNK" stash pop > /dev/null 2>&1 || fail "test 2222: git hunk stash pop failed"
+check_same "test 2222" "a.txt" "$(sed -n '3p;17p' a.txt)" "$(printf 'a 03 stashed\na 17 later')" "both edits"
+[[ -z "$(git stash list)" ]] || fail "test 2222: the entry was not dropped"
+
 report_results
