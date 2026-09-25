@@ -475,4 +475,72 @@ EC727=0
     || fail "test 727: a refused stash --all should change nothing"
 pass "test 727: stash refuses a rename whose new side is intent-to-add"
 
+
+# ============================================================================
+# Tests 728-730: a git failure while a temp index is live removes it. Stash
+# used to exit on the spot when git failed writing the stash tree or the
+# untracked-files commit, skipping the cleanup and leaving a git-hunk-*
+# index in the temp directory. Each run gets its own TMPDIR to look in.
+# Pop (730) already returned errors there; it is here so it keeps doing so.
+# ============================================================================
+SHIM_DIR728="$(mktemp -d)"
+cp "$SCRIPT_DIR/git-shim.sh" "$SHIM_DIR728/git"
+chmod +x "$SHIM_DIR728/git"
+
+# Run git-hunk with the Nth call of one git subcommand failing, counting
+# only calls against a temp index: `shim_fail <label> <subcommand> <N>
+# <git-hunk args...>`. Sets EC_SHIM and ERR_SHIM, and fails the test if a
+# temp file is left behind.
+shim_fail() {
+    local label="$1" sub="$2" fail_on="$3"
+    shift 3
+    local tmp
+    tmp="$(mktemp -d)"
+    rm -f "$SHIM_DIR728/count"
+    EC_SHIM=0
+    ERR_SHIM="$(PATH="$SHIM_DIR728:$PATH" TMPDIR="$tmp" GIT_HUNK_SHIM_FAIL="$sub" GIT_HUNK_SHIM_FAIL_ON="$fail_on" \
+        GIT_HUNK_SHIM_TEMP_INDEX_ONLY=1 GIT_HUNK_SHIM_COUNT_FILE="$SHIM_DIR728/count" \
+        "$GIT_HUNK" "$@" 2>&1)" || EC_SHIM=$?
+    [[ -z "$(ls -A "$tmp")" ]] || fail "$label: left temp files behind: $(ls -A "$tmp" | tr '\n' ' ')"
+    rm -rf "$tmp"
+    echo "$ERR_SHIM" | grep -q "git-shim: injected failure for 'git $sub'" \
+        || fail "$label: the injected 'git $sub' failure never happened, got: '$ERR_SHIM'"
+    [[ "$EC_SHIM" -eq 1 ]] || fail "$label: should exit 1, got $EC_SHIM"
+}
+
+new_repo
+sed -i.bak '3s/.*/stashed 728/' alpha.txt
+sed -i.bak '3s/.*/staged 728/' beta.txt && git add beta.txt
+BEFORE728="$(stash_state alpha.txt beta.txt)"
+shim_fail "test 728" write-tree 1 stash --file alpha.txt
+echo "$ERR_SHIM" | grep -q "^error: git write-tree exited with code 1$" \
+    || fail "test 728: should say which git command failed, got: '$ERR_SHIM'"
+[[ "$(stash_state alpha.txt beta.txt)" == "$BEFORE728" ]] || fail "test 728: a failed stash should change nothing"
+pass "test 728: a failure writing the stash tree removes the temp index"
+
+new_repo
+sed -i.bak '3s/.*/stashed 729/' alpha.txt
+printf 'untracked 729\n' > new729.txt
+printf 'untracked 729 too\n' > new729b.txt
+BEFORE729="$(stash_state alpha.txt new729.txt new729b.txt)"
+# The second file's entry, once the first has written the index.
+shim_fail "test 729 (update-index)" update-index 2 stash --all -u
+[[ "$(stash_state alpha.txt new729.txt new729b.txt)" == "$BEFORE729" ]] \
+    || fail "test 729: a failed update-index should change nothing"
+# The untracked files' tree; the first temp-index write-tree is the stash tree.
+shim_fail "test 729 (write-tree)" write-tree 2 stash --all -u
+[[ "$(stash_state alpha.txt new729.txt new729b.txt)" == "$BEFORE729" ]] \
+    || fail "test 729: a failed write-tree should change nothing"
+pass "test 729: a failure building the untracked-files commit removes the temp index"
+
+new_repo
+sed -i.bak '3s/.*/stashed 730/' alpha.txt
+"$GIT_HUNK" stash --file alpha.txt > /dev/null 2>&1 || fail "test 730: setup stash failed"
+sed -i.bak '20s/.*/edited since 730/' alpha.txt
+BEFORE730="$(stash_state alpha.txt)"
+shim_fail "test 730" update-index 1 stash pop
+[[ "$(stash_state alpha.txt)" == "$BEFORE730" ]] || fail "test 730: a failed pop should change nothing"
+pass "test 730: a failure merging a pop removes its temp indexes and directory"
+rm -rf "$SHIM_DIR728"
+
 report_results

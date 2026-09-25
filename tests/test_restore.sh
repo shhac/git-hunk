@@ -641,4 +641,33 @@ grep -q '^<<<<<<<' f528.txt || fail "test 528: a conflicting restore --3way shou
     || fail "test 528: stage 2 should be what was staged"
 pass "test 528: restore --3way touches the index only to record a conflict"
 
+
+# ============================================================================
+# Test 529: a git failure recording a restore --3way conflict removes the
+# temp index the merge ran in. Listing its unmerged entries used to exit on
+# the spot, leaving a git-hunk-merge-idx.* file in the temp directory.
+# ============================================================================
+SHIM_DIR529="$(mktemp -d)"
+TMP529="$(mktemp -d)"
+cp "$SCRIPT_DIR/git-shim.sh" "$SHIM_DIR529/git"
+chmod +x "$SHIM_DIR529/git"
+new_repo
+for i in $(seq 1 20); do echo "line $i"; done > f529.txt
+git add f529.txt && git commit -q -m "f529"
+sed -i.bak 's/^line 5$/line 5 changed/' f529.txt && git commit -q -am "change 529"
+CHANGE529="$(git rev-parse HEAD)"
+SHA529="$(first_sha --ref "$CHANGE529" --file f529.txt)"
+sed -i.bak 's/^line 5 changed$/line 5 changed again/' f529.txt && git add f529.txt
+EC529=0
+ERR529="$(PATH="$SHIM_DIR529:$PATH" TMPDIR="$TMP529" GIT_HUNK_SHIM_FAIL=ls-files GIT_HUNK_SHIM_FAIL_ON=1 \
+    GIT_HUNK_SHIM_TEMP_INDEX_ONLY=1 GIT_HUNK_SHIM_COUNT_FILE="$SHIM_DIR529/count" \
+    "$GIT_HUNK" restore --ref "$CHANGE529" --3way "$SHA529" 2>&1)" || EC529=$?
+echo "$ERR529" | grep -q "git-shim: injected failure for 'git ls-files'" \
+    || fail "test 529: the injected 'git ls-files' failure never happened, got: '$ERR529'"
+[[ "$EC529" -eq 1 ]] || fail "test 529: should exit 1, got $EC529"
+[[ -z "$(ls -A "$TMP529")" ]] || fail "test 529: left temp files behind: $(ls -A "$TMP529" | tr '\n' ' ')"
+[[ -z "$(git ls-files -u)" ]] || fail "test 529: no conflict should be recorded in the index"
+rm -rf "$SHIM_DIR529" "$TMP529"
+pass "test 529: a failure recording a restore --3way conflict removes the temp index"
+
 report_results

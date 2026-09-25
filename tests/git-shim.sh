@@ -16,6 +16,10 @@
 #   GIT_HUNK_SHIM_COUNT_FILE file holding the running count of matching
 #                            invocations. Callers create/reset it; the shim
 #                            increments it on every match.
+#   GIT_HUNK_SHIM_TEMP_INDEX_ONLY
+#                            when set, only invocations run against a
+#                            temp index (GIT_INDEX_FILE set) match, so a
+#                            failure can land while one is live.
 #   GIT_HUNK_SHIM_TEE        directory to save each `git apply` patch into,
 #                            as apply.<N>.patch (N counts from 1 among the
 #                            files already there, so callers start from an
@@ -39,7 +43,8 @@ REAL_GIT="$(PATH="$CLEAN_PATH" command -v git)" || {
     exit 127
 }
 
-if [[ -n "${GIT_HUNK_SHIM_FAIL:-}" && "${1:-}" == "$GIT_HUNK_SHIM_FAIL" ]]; then
+if [[ -n "${GIT_HUNK_SHIM_FAIL:-}" && "${1:-}" == "$GIT_HUNK_SHIM_FAIL" ]] \
+    && [[ -z "${GIT_HUNK_SHIM_TEMP_INDEX_ONLY:-}" || -n "${GIT_INDEX_FILE:-}" ]]; then
     n=1
     if [[ -n "${GIT_HUNK_SHIM_COUNT_FILE:-}" ]]; then
         [[ -f "$GIT_HUNK_SHIM_COUNT_FILE" ]] && n="$(( $(cat "$GIT_HUNK_SHIM_COUNT_FILE") + 1 ))"

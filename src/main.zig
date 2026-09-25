@@ -32,7 +32,7 @@ const fatal = types.fatal;
 
 pub fn main(init: std.process.Init) !void {
     run(init) catch |err| {
-        if (err == error.PatchFailed or err == error.NoSelectedLines) {
+        if (err == error.PatchFailed or err == error.NoSelectedLines or err == error.GitFailed) {
             // Descriptive message already printed where the error arose
             std.process.exit(1);
         }

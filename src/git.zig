@@ -5,7 +5,6 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const EnvMap = std.process.Environ.Map;
 const DiffSource = types.DiffSource;
-const fatal = types.fatal;
 
 const defaultIo = types.getIo;
 
@@ -108,18 +107,29 @@ const CaptureOpts = struct {
 };
 
 /// Run a git command and return its stdout, trimmed unless `opts` says
-/// otherwise. Fatal on non-zero exit.
-fn runGitCapture(allocator: Allocator, argv: []const []const u8, run_opts: RunOpts, label: []const u8, opts: CaptureOpts) ![]u8 {
+/// otherwise. On a non-zero exit, show git's stderr and which command
+/// failed, and return `error.GitFailed`, which main exits on without saying
+/// more. For callers with a temp index or directory to remove on the way out.
+fn runGitChecked(allocator: Allocator, argv: []const []const u8, run_opts: RunOpts, label: []const u8, opts: CaptureOpts) ![]u8 {
     const result = try runCommand(allocator, argv, run_opts);
     defer allocator.free(result.stderr);
 
     if (result.exit_code != 0) {
         allocator.free(result.stdout);
         if (result.stderr.len > 0) std.debug.print("{s}", .{result.stderr});
-        fatal("{s} exited with code {d}", .{ label, result.exit_code });
+        std.debug.print("error: {s} exited with code {d}\n", .{ label, result.exit_code });
+        return error.GitFailed;
     }
 
     return if (opts.trim) trimAndShrink(allocator, result.stdout) else result.stdout;
+}
+
+/// `runGitChecked`, exiting on a non-zero exit.
+fn runGitCapture(allocator: Allocator, argv: []const []const u8, run_opts: RunOpts, label: []const u8, opts: CaptureOpts) ![]u8 {
+    return runGitChecked(allocator, argv, run_opts, label, opts) catch |err| switch (err) {
+        error.GitFailed => std.process.exit(1),
+        else => err,
+    };
 }
 
 /// A throwaway git index in the temp directory, pre-populated by
@@ -343,7 +353,7 @@ fn mergeIntoWorktree(allocator: Allocator, patch: []const u8, opts: ApplyOptions
 /// Seed `dest` with the index as it stands. A repository that has never had
 /// an index has nothing to copy, and git reads a missing one as empty.
 pub fn copyIndexTo(allocator: Allocator, dest: []const u8) !void {
-    const index_path = try runGitCapture(allocator, &.{ "git", "rev-parse", "--git-path", "index" }, .{}, "git rev-parse --git-path", .{});
+    const index_path = try runGitChecked(allocator, &.{ "git", "rev-parse", "--git-path", "index" }, .{}, "git rev-parse --git-path", .{});
     defer allocator.free(index_path);
     const cwd = std.Io.Dir.cwd();
     std.Io.Dir.copyFile(cwd, index_path, cwd, dest, types.getIo(), .{}) catch |err| switch (err) {
@@ -355,7 +365,7 @@ pub fn copyIndexTo(allocator: Allocator, dest: []const u8) !void {
 /// Copy the unmerged entries from the index `merged_env` names into the real
 /// index, each replacing that path's stage 0 entry.
 fn recordConflicts(allocator: Allocator, merged_env: *const EnvMap) !void {
-    const unmerged = try runGitCapture(allocator, &.{ "git", "ls-files", "-u", "-z" }, .{ .env_map = merged_env }, "git ls-files -u", .{ .trim = false });
+    const unmerged = try runGitChecked(allocator, &.{ "git", "ls-files", "-u", "-z" }, .{ .env_map = merged_env }, "git ls-files -u", .{ .trim = false });
     defer allocator.free(unmerged);
 
     var index_info: std.ArrayList(u8) = .empty;
@@ -380,7 +390,7 @@ fn recordConflicts(allocator: Allocator, merged_env: *const EnvMap) !void {
         try index_info.append(allocator, 0);
     }
     if (index_info.items.len == 0) return;
-    const out = try runGitCapture(allocator, &.{ "git", "update-index", "-z", "--index-info" }, .{ .stdin_data = index_info.items }, "git update-index --index-info", .{ .trim = false });
+    const out = try runGitChecked(allocator, &.{ "git", "update-index", "-z", "--index-info" }, .{ .stdin_data = index_info.items }, "git update-index --index-info", .{ .trim = false });
     allocator.free(out);
 }
 
@@ -675,7 +685,7 @@ pub fn indexHasUnmergedPaths(allocator: Allocator) !bool {
 /// Run `git write-tree` (against `env_map`'s index when given) and return
 /// the trimmed tree SHA.
 pub fn runGitWriteTree(allocator: Allocator, env_map: ?*const EnvMap) ![]u8 {
-    return runGitCapture(allocator, &.{ "git", "write-tree" }, .{ .env_map = env_map }, "git write-tree", .{});
+    return runGitChecked(allocator, &.{ "git", "write-tree" }, .{ .env_map = env_map }, "git write-tree", .{});
 }
 
 /// Run `git commit-tree -p <p1> [-p <p2>] -m <msg> <tree>` and return the trimmed commit SHA.
@@ -685,7 +695,7 @@ pub fn runGitCommitTree(allocator: Allocator, tree_sha: []const u8, parents: []c
     try argv.appendSlice(allocator, &.{ "git", "commit-tree" });
     for (parents) |p| try argv.appendSlice(allocator, &.{ "-p", p });
     try argv.appendSlice(allocator, &.{ "-m", message, tree_sha });
-    return runGitCapture(allocator, argv.items, .{}, "git commit-tree", .{});
+    return runGitChecked(allocator, argv.items, .{}, "git commit-tree", .{});
 }
 
 /// Run `git stash store -m <msg> <sha>`.
@@ -826,12 +836,12 @@ pub fn runGitStashDrop(allocator: Allocator) !void {
 
 /// Run `git hash-object -w <file_path>` and return the trimmed blob SHA.
 pub fn runGitHashObject(allocator: Allocator, file_path: []const u8) ![]u8 {
-    return runGitCapture(allocator, &.{ "git", "hash-object", "-w", file_path }, .{}, "git hash-object", .{});
+    return runGitChecked(allocator, &.{ "git", "hash-object", "-w", file_path }, .{}, "git hash-object", .{});
 }
 
 /// Run `git hash-object -w --stdin` with the given content piped in. Returns the trimmed blob SHA.
 pub fn runGitHashObjectStdin(allocator: Allocator, content: []const u8) ![]u8 {
-    return runGitCapture(allocator, &.{ "git", "hash-object", "-w", "--stdin" }, .{ .stdin_data = content }, "git hash-object --stdin", .{});
+    return runGitChecked(allocator, &.{ "git", "hash-object", "-w", "--stdin" }, .{ .stdin_data = content }, "git hash-object --stdin", .{});
 }
 
 /// Return the empty tree's object ID in this repository's object format.
@@ -839,14 +849,14 @@ pub fn runGitHashObjectStdin(allocator: Allocator, content: []const u8) ![]u8 {
 /// additions, which is how a parentless commit gets a diff at all. Asked of
 /// git rather than hardcoded because the ID differs between SHA-1 and SHA-256.
 pub fn runGitEmptyTree(allocator: Allocator) ![]u8 {
-    return runGitCapture(allocator, &.{ "git", "hash-object", "-t", "tree", "--stdin" }, .{ .stdin_data = "" }, "git hash-object -t tree", .{});
+    return runGitChecked(allocator, &.{ "git", "hash-object", "-t", "tree", "--stdin" }, .{ .stdin_data = "" }, "git hash-object -t tree", .{});
 }
 
 /// Run `git update-index --add --cacheinfo <mode>,<blob_hash>,<file_path>` with custom GIT_INDEX_FILE env.
 pub fn runGitUpdateIndexCacheinfo(allocator: Allocator, mode: []const u8, blob_hash: []const u8, file_path: []const u8, env_map: *const EnvMap) !void {
     const cacheinfo_arg = try std.fmt.allocPrint(allocator, "{s},{s},{s}", .{ mode, blob_hash, file_path });
     defer allocator.free(cacheinfo_arg);
-    const out = try runGitCapture(allocator, &.{ "git", "update-index", "--add", "--cacheinfo", cacheinfo_arg }, .{ .env_map = env_map }, "git update-index", .{});
+    const out = try runGitChecked(allocator, &.{ "git", "update-index", "--add", "--cacheinfo", cacheinfo_arg }, .{ .env_map = env_map }, "git update-index", .{});
     allocator.free(out);
 }
 
