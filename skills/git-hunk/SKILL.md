@@ -103,8 +103,8 @@ A `stash` entry has the same shape as `git stash push --keep-index -- <paths>`
 would give it, so `git stash pop --index` keeps what is staged staged.
 `git hunk stash pop` also merges the hunks back into a file that has other
 unstaged changes, which `git stash pop` refuses; a conflict keeps the entry
-and exits 1, as git's does. Like `git stash`, it refuses an intent-to-add
-(`git add -N`) file.
+and exits 1, as git's does. Like `git stash`, `git hunk stash` refuses while
+any intent-to-add (`git add -N`) entry exists.
 
 All commands accept `--help`, `--no-color`, `--tracked-only`, `--untracked-only`,
 `--quiet`/`-q`, `--verbose`/`-v`, and `-U<n>`/`--unified=<n>`. SHA prefixes need at least 4 hex characters. Use `--file`

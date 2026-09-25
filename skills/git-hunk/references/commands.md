@@ -675,7 +675,7 @@ git-hunk stash a3f7c21 --porcelain              # machine-readable output
 - Untracked files are stored using git's native 3-parent stash format (HEAD, index, untracked tree). `git stash pop` restores them as untracked files. Executable file permissions are preserved.
 - The message is the one `git stash push` would write: `WIP on <branch>: <sha> <subject>`, or `On <branch>: <msg>` with `-m`.
 - Refuses to stash while the index has unmerged paths, as `git stash` does.
-- Refuses to stash a hunk in an intent-to-add entry (`git add -N`), the new side of a rename included, as `git stash` refuses one: `error: cannot stash intent-to-add entry '<path>'` for each, a hint, exit 1, nothing changed. Stage the file with `git add`, or make it untracked again with `git rm --cached`. Hunks in other files stash as usual; the entry is left alone.
+- Refuses while the index holds any intent-to-add entry (`git add -N`, e.g. a rename's new side), as `git stash` does: `error: cannot stash while '<path>' is intent-to-add` for each, a hint, exit 1, nothing changed. This applies even when stashing other files, because no pop could restore that stash while the entry stands. Stage the file with `git add`, or make it untracked again with `git rm --cached`.
 - On success, prints one line per stashed hunk to stdout: `stashed {sha7}  {file}`. SHA in yellow for human mode.
 - With `--verbose`, prints a count summary to stderr: `N hunk(s) stashed`.
 - With `--verbose`, prints a hint to stderr: `hint: use 'git stash list' to see stashed entries, 'git hunk stash pop' to restore`.
@@ -704,7 +704,7 @@ git-hunk stash a3f7c21 --porcelain              # machine-readable output
 | `error: --include-untracked cannot be combined with --tracked-only` | Conflicting filter flags |
 | `no unstaged changes` | Nothing to stash |
 | `error: cannot stash while the index has unmerged paths` | A merge conflict is unresolved |
-| `error: cannot stash intent-to-add entry '<path>'` | A selected hunk is in a `git add -N` entry; `git add` it, or `git rm --cached` it |
+| `error: cannot stash while '<path>' is intent-to-add` | The index holds a `git add -N` entry; `git add` it, or `git rm --cached` it |
 | `error: you do not have the initial commit yet` | The branch is unborn: a stash entry is a commit on top of HEAD, as `git stash` says |
 | `CONFLICT (content): Merge conflict in <path>` | `pop`: a stashed hunk overlaps a change made since; resolve it and `git add` the file. The entry is kept |
 | `<path> already exists, no checkout` / `error: could not restore untracked files from stash` | `pop`: an untracked file in the entry is in the way; nothing was restored |

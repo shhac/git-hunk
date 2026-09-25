@@ -399,10 +399,11 @@ pass "test 724: a failed stash cleanup is an error that says where the changes a
 
 
 # ============================================================================
-# Tests 725-727: an intent-to-add entry (`git add -N`) is refused, as
-# `git stash` refuses it, and the refusal changes nothing. Stashing one used
-# to take the file out of the worktree and leave the entry naming it, so the
-# file showed as deleted.
+# Tests 725-727: while the index holds an intent-to-add entry (`git add -N`),
+# stash refuses, as `git stash` does, and the refusal changes nothing.
+# Stashing one used to take the file out of the worktree and leave the entry
+# naming it, so the file showed as deleted; and a stash of other files made
+# beside one could not be popped while the entry stood.
 # ============================================================================
 # Index entries, worktree state, file contents and stash list, for comparing
 # before and after a refused stash.
@@ -421,7 +422,7 @@ BEFORE725="$(stash_state alpha.txt ita.txt)"
 EC725=0
 ERR725="$("$GIT_HUNK" stash --all 2>&1)" || EC725=$?
 [[ "$EC725" -eq 1 ]] || fail "test 725: stash --all with an intent-to-add file should exit 1, got $EC725"
-echo "$ERR725" | grep -q "^error: cannot stash intent-to-add entry 'ita.txt'$" \
+echo "$ERR725" | grep -q "^error: cannot stash while 'ita.txt' is intent-to-add$" \
     || fail "test 725: should name the intent-to-add entry, got: '$ERR725'"
 echo "$ERR725" | grep -q "^hint: stage it with 'git add'" \
     || fail "test 725: should hint how to proceed, got: '$ERR725'"
@@ -442,19 +443,20 @@ BEFORE726="$(stash_state alpha.txt ita.txt)"
 EC726=0
 ERR726="$("$GIT_HUNK" stash --file ita.txt 2>&1)" || EC726=$?
 [[ "$EC726" -eq 1 ]] || fail "test 726: stash --file of an intent-to-add file should exit 1, got $EC726"
-echo "$ERR726" | grep -q "^error: cannot stash intent-to-add entry 'ita.txt'$" \
+echo "$ERR726" | grep -q "^error: cannot stash while 'ita.txt' is intent-to-add$" \
     || fail "test 726: should name the intent-to-add entry, got: '$ERR726'"
 [[ "$(stash_state alpha.txt ita.txt)" == "$BEFORE726" ]] \
     || fail "test 726: a refused --file stash should change nothing"
-# Only the paths being stashed matter: the entry stays as it is while another
-# file's hunks are stashed.
-"$GIT_HUNK" stash --file alpha.txt > /dev/null 2>&1 \
-    || fail "test 726: stash --file of another file should succeed"
-[[ "$(git stash list | wc -l | tr -d ' ')" == "1" ]] || fail "test 726: the other file should be stashed"
-[[ "$(sed -n 3p alpha.txt)" != "stashed 726" ]] || fail "test 726: alpha.txt should be clean after its stash"
-[[ "$(git status --porcelain -- ita.txt)" == " A ita.txt" ]] \
-    || fail "test 726: the intent-to-add entry should be untouched, got '$(git status --porcelain -- ita.txt)'"
-pass "test 726: stash --file refuses an intent-to-add file but stashes others"
+# Other files are refused too: no pop of a stash made beside the entry could
+# restore it while the entry stands.
+EC726=0
+ERR726="$("$GIT_HUNK" stash --file alpha.txt 2>&1)" || EC726=$?
+[[ "$EC726" -eq 1 ]] || fail "test 726: stash --file of another file should exit 1, got $EC726"
+echo "$ERR726" | grep -q "^error: cannot stash while 'ita.txt' is intent-to-add$" \
+    || fail "test 726: should name the intent-to-add entry, got: '$ERR726'"
+[[ "$(stash_state alpha.txt ita.txt)" == "$BEFORE726" ]] \
+    || fail "test 726: a refused stash of another file should change nothing"
+pass "test 726: stash refuses while any intent-to-add entry exists"
 
 new_repo
 mv alpha.txt moved.txt
@@ -464,7 +466,7 @@ BEFORE727="$(stash_state moved.txt)"
 EC727=0
 ERR727="$("$GIT_HUNK" stash --file moved.txt 2>&1)" || EC727=$?
 [[ "$EC727" -eq 1 ]] || fail "test 727: stash of a rename's intent-to-add new side should exit 1, got $EC727"
-echo "$ERR727" | grep -q "^error: cannot stash intent-to-add entry 'moved.txt'$" \
+echo "$ERR727" | grep -q "^error: cannot stash while 'moved.txt' is intent-to-add$" \
     || fail "test 727: should name the rename's new side, got: '$ERR727'"
 [[ "$(stash_state moved.txt)" == "$BEFORE727" ]] \
     || fail "test 727: a refused rename stash should change nothing"

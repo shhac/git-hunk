@@ -45,23 +45,19 @@ pub fn gatherHeadInfo(allocator: Allocator) !HeadInfo {
     return .{ .sha = sha, .branch = branch, .summary = summary };
 }
 
-/// Exit if a selected hunk is in an intent-to-add entry, the new side of a
-/// rename included. The entry has no content in the index, so the stash's
-/// index commit could not record it and taking the change back out of the
-/// worktree would leave the entry naming a missing file. `git stash` refuses
-/// these too.
-pub fn refuseIntentToAdd(arena: Allocator, matched: []const MatchedHunk) !void {
+/// Exit if the index holds an intent-to-add entry, whichever paths are being
+/// stashed. The entry has no content in the index, so the stash's index
+/// commit cannot record it, and every pop of such an entry is refused while
+/// it stands ("local changes would be overwritten"), even one stashing only
+/// other files. `git stash` refuses these for the same reason.
+pub fn refuseIntentToAdd(arena: Allocator) !void {
     const names_z = try git.runGitIntentToAddNames(arena);
     var refused = false;
     var names = std.mem.splitScalar(u8, names_z, 0);
     while (names.next()) |name| {
         if (name.len == 0) continue;
-        for (matched) |m| {
-            if (m.hunk.section.is_untracked or !std.mem.eql(u8, m.hunk.file_path, name)) continue;
-            std.debug.print("error: cannot stash intent-to-add entry '{s}'\n", .{name});
-            refused = true;
-            break;
-        }
+        std.debug.print("error: cannot stash while '{s}' is intent-to-add\n", .{name});
+        refused = true;
     }
     if (!refused) return;
     std.debug.print("hint: stage it with 'git add', or make it untracked again with 'git rm --cached', then stash\n", .{});

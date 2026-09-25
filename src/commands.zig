@@ -706,7 +706,7 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
     const hunks = (try loadHunks(arena, common)).hunks;
     if (hunks.len == 0) exitNoChanges(common.source);
     const matched = try selectHunks(arena, hunks, opts.sha_args.items, opts.common.file_filter.items);
-    try stash_mod.refuseIntentToAdd(arena, matched);
+    try stash_mod.refuseIntentToAdd(arena);
 
     const partition = try patch_mod.partitionByKind(arena, matched);
     var untracked_matched: std.ArrayList(MatchedHunk) = .empty;
