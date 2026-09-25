@@ -247,6 +247,12 @@ Unstaging a rename (the new path becomes untracked, the old one reads as deleted
 unstaged b34f350 → 7c745cd,aa914db  new-name.txt
 ```
 
+Staging a file's deletion together with the untracked file it moved to, which git stages as a rename (both reported under the rename's hash, as `list --staged` shows it):
+
+```
+staged 7c745cd aa914db → b34f350  new-name.txt
+```
+
 ### Color (human mode, when TTY)
 
 - Applied hashes: yellow (`\x1b[33m`)

@@ -74,6 +74,14 @@ fn reportedPath(matched: []const MatchedHunk, path: []const u8) []const u8 {
     return path;
 }
 
+/// True if `m` deletes the path the rename `created` moved from. Applied
+/// together with the file at the new path, the deletion became that rename,
+/// which is the one hunk a diff of the result shows for either.
+fn becameRenameSource(m: MatchedHunk, created: *const Hunk) bool {
+    const from = created.section.renamed_from_path orelse return false;
+    return m.hunk.section.is_deleted_file and m.line_spec == null and std.mem.eql(u8, m.hunk.file_path, from);
+}
+
 /// Find applied inputs that contributed to `created`. Match by content
 /// (line_spec=null + identical diff_lines) first, otherwise by new-side line
 /// overlap. Marks `applied_used[i]=true` for each match so a single applied
@@ -88,6 +96,11 @@ fn collectAppliedFor(
     const created_path = reportedPath(matched, created.file_path);
     for (matched, 0..) |m, i| {
         if (applied_used[i]) continue;
+        if (becameRenameSource(m, created)) {
+            try app_buf.append(arena, .{ .sha7 = m.hunk.sha_hex[0..7], .line_spec = m.line_spec });
+            applied_used[i] = true;
+            continue;
+        }
         if (!std.mem.eql(u8, m.hunk.file_path, created_path)) continue;
         const content_match = m.line_spec == null and
             std.mem.eql(u8, m.hunk.diff_lines, created.diff_lines);
@@ -963,4 +976,37 @@ test "buildResultGroups: an undone rename reports its old-path deletion and new-
     try std.testing.expectEqual(@as(usize, 2), groups[0].result_shas.len);
     try std.testing.expectEqualStrings("uuuuuuu", groups[0].result_shas[0]);
     try std.testing.expectEqualStrings("ddddddd", groups[0].result_shas[1]);
+}
+
+test "buildResultGroups: a deletion added with the new path it was renamed to reports the rename" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const deleted_section: types.FileSection = .{ .is_deleted_file = true };
+    var deletion = types.testMakeHunk("old.txt", 1, 12, 0, 0);
+    deletion.section = &deleted_section;
+    deletion.sha_hex = testSha("ddddddd");
+    const new_section: types.FileSection = .{ .is_new_file = true, .is_untracked = true };
+    var untracked = types.testMakeHunk("new.txt", 0, 0, 1, 12);
+    untracked.section = &new_section;
+    untracked.sha_hex = testSha("uuuuuuu");
+
+    const rename_section: types.FileSection = .{ .renamed_from_path = "old.txt" };
+    var rename = types.testMakeHunk("new.txt", 3, 7, 3, 7);
+    rename.section = &rename_section;
+    rename.sha_hex = testSha("aaaaaaa");
+
+    const matched = [_]MatchedHunk{
+        .{ .hunk = &untracked, .line_spec = null },
+        .{ .hunk = &deletion, .line_spec = null },
+    };
+    const groups = try buildResultGroups(arena, &matched, &.{}, &.{rename});
+
+    try std.testing.expectEqual(@as(usize, 1), groups.len);
+    try std.testing.expectEqualStrings("new.txt", groups[0].file_path);
+    try std.testing.expectEqual(@as(usize, 2), groups[0].applied.len);
+    try std.testing.expectEqualStrings("uuuuuuu", groups[0].applied[0].sha7);
+    try std.testing.expectEqualStrings("ddddddd", groups[0].applied[1].sha7);
+    try std.testing.expectEqualStrings("aaaaaaa", groups[0].result_shas[0]);
 }

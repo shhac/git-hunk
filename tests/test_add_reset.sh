@@ -1187,4 +1187,29 @@ for MODE253 in error fix; do
 done
 pass "test 253: apply.whitespace does not stop or alter add, stash and commit"
 
+
+# ============================================================================
+# Test 254: adding a file's deletion together with the untracked file it was
+# moved to lands as a rename, and both are reported under the rename's
+# hash, the one `list --staged` shows. The deletion used to report `→ ?`.
+# ============================================================================
+new_repo
+git mv alpha.txt moved254.txt
+git reset -q
+sed -i.bak '10s/.*/moved and edited 254/' moved254.txt
+DEL254="$(first_sha --file alpha.txt)"
+NEW254="$(first_sha --file moved254.txt)"
+[[ -n "$DEL254" && -n "$NEW254" ]] || fail "test 254: expected a deletion and an untracked file"
+OUT254="$("$GIT_HUNK" add --porcelain "$NEW254" "$DEL254" 2>&1)" || fail "test 254: add failed: $OUT254"
+RENAME254="$(first_sha --staged --file moved254.txt)"
+[[ -n "$RENAME254" ]] || fail "test 254: list --staged should show the rename"
+[[ "$(git diff --cached --name-status | tr '\t' ' ')" == "R"*" alpha.txt moved254.txt" ]] \
+    || fail "test 254: the two should be staged as a rename, got '$(git diff --cached --name-status)'"
+[[ "$(echo "$OUT254" | wc -l | tr -d ' ')" == "1" ]] || fail "test 254: expected one result line, got: '$OUT254'"
+[[ "$(echo "$OUT254" | cut -f3,4)" == "$(printf '%s\tmoved254.txt' "$RENAME254")" ]] \
+    || fail "test 254: the result should be the rename's hash $RENAME254, got: '$OUT254'"
+[[ " $(echo "$OUT254" | cut -f2) " == *" $DEL254 "* && " $(echo "$OUT254" | cut -f2) " == *" $NEW254 "* ]] \
+    || fail "test 254: both hunks should be reported on the rename's line, got: '$OUT254'"
+pass "test 254: a deletion added with its new path reports the rename list --staged shows"
+
 report_results
