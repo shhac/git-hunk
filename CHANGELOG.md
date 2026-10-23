@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.21.1] - 2026-10-23
 
 ### Fixed
 - The human listing called a staged new file `empty` whatever it held (`internal/cli/foo_test.go  empty  new file` for a 44-line file), and an unstaged deletion too. The range column shows the stable side's lines, HEAD's for staged hunks and the worktree's for unstaged ones, and the file has none there. It now shows the lines from the side that has them, `1-44`; `empty` is left for a file with no lines on either side. Porcelain is unchanged: its `start_line`/`end_line` keep the stable side's `0 0`, as documented.
