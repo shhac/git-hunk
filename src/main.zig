@@ -16,6 +16,7 @@ comptime {
     _ = @import("check.zig");
     _ = @import("commands.zig");
     _ = @import("commit.zig");
+    _ = @import("conflicts.zig");
     _ = @import("diff.zig");
     _ = @import("format.zig");
     _ = @import("git.zig");

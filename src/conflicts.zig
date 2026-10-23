@@ -102,29 +102,38 @@ fn onlyPath(paths: []const []const u8) ?[]const u8 {
     return if (paths.len == 1) paths[0] else null;
 }
 
-/// Exit if `action` would touch a conflicted path: one --file names, or one a
-/// selected hunk writes (a hunk from `--ref` can name any path). git's own
-/// hunk-level commands refuse such a path as "needs merge".
-pub fn exitIfTouched(
-    arena: Allocator,
-    paths: []const []const u8,
-    file_filter: []const []const u8,
-    matched: []const MatchedHunk,
-    action: Action,
-) !void {
+/// Exit if --file names a conflicted path: the user asked for that file, and
+/// leaving it out with only a note would read as done.
+pub fn exitIfNamed(arena: Allocator, paths: []const []const u8, file_filter: []const []const u8, action: Action) !void {
     for (paths) |p| {
-        const touched = for (matched) |m| {
-            if (std.mem.eql(u8, m.hunk.file_path, p)) break true;
-            const from = m.hunk.section.renamed_from_path orelse continue;
-            if (std.mem.eql(u8, from, p)) break true;
-        } else for (file_filter) |f| {
-            if (std.mem.eql(u8, f, p)) break true;
-        } else false;
-        if (!touched) continue;
-        std.debug.print("error: cannot {s} '{s}' while it has an unresolved merge conflict\n", .{ action.verb(), p });
-        try printResolveHint(arena, action, p);
-        std.process.exit(1);
+        for (file_filter) |f| {
+            if (std.mem.eql(u8, f, p)) try refuseTouched(arena, p, action);
+        }
     }
+}
+
+/// Exit if a selected hunk writes a conflicted path, which a hunk from
+/// `--ref` can. git's own hunk-level commands refuse one as "needs merge".
+pub fn exitIfWritten(arena: Allocator, paths: []const []const u8, matched: []const MatchedHunk, action: Action) !void {
+    for (paths) |p| {
+        for (matched) |m| {
+            if (writes(m, p)) try refuseTouched(arena, p, action);
+        }
+    }
+}
+
+/// Whether applying `m` changes `path`: its own path, or the one a rename
+/// takes it from. A copy leaves its source as it was.
+fn writes(m: MatchedHunk, path: []const u8) bool {
+    if (std.mem.eql(u8, m.hunk.file_path, path)) return true;
+    const from = m.hunk.section.renamed_from_path orelse return false;
+    return std.mem.eql(u8, from, path);
+}
+
+fn refuseTouched(arena: Allocator, path: []const u8, action: Action) !noreturn {
+    std.debug.print("error: cannot {s} '{s}' while it has an unresolved merge conflict\n", .{ action.verb(), path });
+    try printResolveHint(arena, action, path);
+    std.process.exit(1);
 }
 
 /// Exit if any path is conflicted: `what` ("stash", "pop a stash") needs the
@@ -189,4 +198,25 @@ fn printResolveHint(arena: Allocator, action: Action, path: ?[]const u8) !void {
 fn shellArgOrPlaceholder(arena: Allocator, path: ?[]const u8) ![]const u8 {
     const rel = path orelse return "<path>";
     return path_mod.shellArgFromCwd(arena, types.getRepoPrefix(), rel);
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+test "writes: a hunk writes its own path and a rename's source, not a copy's" {
+    const plain = types.testMakeHunk("a.txt", 1, 1, 1, 1);
+    try std.testing.expect(writes(.{ .hunk = &plain, .line_spec = null }, "a.txt"));
+    try std.testing.expect(!writes(.{ .hunk = &plain, .line_spec = null }, "b.txt"));
+
+    const renamed_section: types.FileSection = .{ .renamed_from_path = "old.txt" };
+    var renamed = types.testMakeHunk("new.txt", 1, 1, 1, 1);
+    renamed.section = &renamed_section;
+    try std.testing.expect(writes(.{ .hunk = &renamed, .line_spec = null }, "old.txt"));
+    try std.testing.expect(writes(.{ .hunk = &renamed, .line_spec = null }, "new.txt"));
+
+    const copied_section: types.FileSection = .{ .copied_from_path = "src.txt" };
+    var copied = types.testMakeHunk("copy.txt", 1, 1, 1, 1);
+    copied.section = &copied_section;
+    try std.testing.expect(!writes(.{ .hunk = &copied, .line_spec = null }, "src.txt"));
 }

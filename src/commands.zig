@@ -368,11 +368,11 @@ fn exitNoChanges(arena: Allocator, common: types.Common, action: conflicts.Actio
 fn selectWritableHunks(arena: Allocator, common: types.Common, sha_args: []const types.ShaArg, action: conflicts.Action) ![]MatchedHunk {
     const unmerged = try conflicts.all(arena);
     const file_filter = common.file_filter.items;
-    try conflicts.exitIfTouched(arena, unmerged, file_filter, &.{}, action);
+    try conflicts.exitIfNamed(arena, unmerged, file_filter, action);
     const hunks = (try loadHunks(arena, common)).hunks;
     if (hunks.len == 0) try exitNoChanges(arena, common, action);
     const matched = try selectHunks(arena, hunks, sha_args, file_filter);
-    try conflicts.exitIfTouched(arena, unmerged, &.{}, matched, action);
+    try conflicts.exitIfWritten(arena, unmerged, matched, action);
     return matched;
 }
 
