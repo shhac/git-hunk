@@ -230,8 +230,10 @@ sed -i.bak '1s/.*/Alpha from main./' alpha.txt
 git commit -q -a -m "main"
 git cherry-pick other > /dev/null 2>&1 && fail "test 2315: the cherry-pick did not conflict"
 sed -i.bak '1s/.*/Beta edited./' beta.txt
+BEFORE2315="$(repo_state; git rev-parse -q --verify CHERRY_PICK_HEAD)"
 "$GIT_HUNK" commit --all -m "partial" 2>&1 >/dev/null | grep -q "^hint: .*'git cherry-pick --continue' to conclude the cherry-pick (or 'git cherry-pick --abort' to abandon it)$" \
     || fail "test 2315: cherry-pick hint missing"
+[[ "$(repo_state; git rev-parse -q --verify CHERRY_PICK_HEAD)" == "$BEFORE2315" ]] || fail "test 2315: the cherry-pick refusal changed the repo"
 git cherry-pick --abort
 git checkout -q beta.txt
 sed -i.bak '3s/.*/Alpha three, first./' alpha.txt
@@ -240,9 +242,10 @@ sed -i.bak '3s/.*/Alpha three, second./' alpha.txt
 git commit -q -a -m "second"
 git revert --no-edit HEAD~1 > /dev/null 2>&1 && fail "test 2315: the revert did not conflict"
 sed -i.bak '1s/.*/Beta edited./' beta.txt
+BEFORE2315R="$(repo_state; git rev-parse -q --verify REVERT_HEAD)"
 "$GIT_HUNK" commit --all -m "partial" 2>&1 >/dev/null | grep -q "^error: cannot commit selected hunks during a revert;" \
     || fail "test 2315: revert refusal missing"
-git rev-parse -q --verify REVERT_HEAD > /dev/null || fail "test 2315: REVERT_HEAD is gone"
+[[ "$(repo_state; git rev-parse -q --verify REVERT_HEAD)" == "$BEFORE2315R" ]] || fail "test 2315: the revert refusal changed the repo"
 pass "test 2315: commit refuses during a cherry-pick and a revert"
 
 # ============================================================================
@@ -264,8 +267,27 @@ ERR2316="$("$GIT_HUNK" commit --all -m "beside the conflict" 2>&1 >/dev/null)" |
 [[ "$(git log -1 --format=%s)" == "beside the conflict" && -z "$(git log -1 --format=%P | grep ' ')" ]] \
     || fail "test 2316: expected a one-parent commit"
 [[ "$(git ls-files -u alpha.txt | wc -l | tr -d ' ')" == "3" ]] || fail "test 2316: alpha.txt should still be unmerged"
-git rebase --abort
 pass "test 2316: a rebase stop allows committing other hunks"
+
+# ============================================================================
+# Test 2323: mid-rebase, commit still refuses to write the conflicted path
+# itself, whether --file names it or a hunk from --ref touches it
+# ============================================================================
+BEFORE2323="$(repo_state)"
+ERR2323="$("$GIT_HUNK" commit --file alpha.txt -m "the conflict" 2>&1 >/dev/null)" && fail "test 2323: commit --file alpha.txt succeeded"
+WANT2323="error: cannot commit 'alpha.txt' while it has an unresolved merge conflict
+$HINT_ALPHA"
+[[ "$ERR2323" == "$WANT2323" ]] || fail "test 2323: commit --file stderr was: '$ERR2323'"
+# HEAD is 2316's commit; the one before it is the rebase's base, which
+# changed alpha.txt.
+REF_SHA2323="$(first_sha --ref HEAD~1 --file alpha.txt)"
+[[ -n "$REF_SHA2323" ]] || fail "test 2323: HEAD~1 should have an alpha.txt hunk"
+ERR2323R="$("$GIT_HUNK" commit --ref HEAD~1 "$REF_SHA2323" -m "from history" 2>&1 >/dev/null)" && fail "test 2323: commit --ref succeeded"
+[[ "$ERR2323R" == "error: cannot commit 'alpha.txt' while it has an unresolved merge conflict"* ]] \
+    || fail "test 2323: commit --ref stderr was: '$ERR2323R'"
+[[ "$(repo_state)" == "$BEFORE2323" ]] || fail "test 2323: the repo changed (HEAD included)"
+git rebase --abort
+pass "test 2323: commit never writes a conflicted path, even mid-rebase"
 
 # ============================================================================
 # Test 2317: stash and stash pop refuse while a conflict stands
@@ -275,6 +297,7 @@ BEFORE2317="$(repo_state)"
 ERR2317="$("$GIT_HUNK" stash --file beta.txt 2>&1 >/dev/null)" && fail "test 2317: stash succeeded"
 [[ "$ERR2317" == "error: cannot stash while 2 files have unresolved merge conflicts"$'\n'"note: alpha.txt: unresolved merge conflict"$'\n'* ]] \
     || fail "test 2317: stash stderr was: '$ERR2317'"
+[[ "$(repo_state)" == "$BEFORE2317" ]] || fail "test 2317: stash changed the repo"
 git merge --abort
 "$GIT_HUNK" stash --file beta.txt > /dev/null
 git merge -q other > /dev/null 2>&1 && fail "test 2317: the merge did not conflict"
@@ -367,18 +390,20 @@ pass "test 2321: notes past ten are summed up"
 new_repo
 sed -i.bak '2s/.*/Beta line two from history./' beta.txt
 git commit -q -a -m "history"
+git tag history2322
 git reset -q --hard HEAD~1
 sed -i.bak '2s/.*/Beta line two here./' beta.txt
 git commit -q -a -m "here"
-SHA2322="$(git log --all --format=%H -1 --grep=history)"
+SHA2322="history2322"
 REF2322="$(first_sha --ref "$SHA2322")"
 "$GIT_HUNK" add --3way --ref "$SHA2322" "$REF2322" > /dev/null 2>&1 && fail "test 2322: --3way did not conflict"
-if git ls-files -u beta.txt | grep -q .; then
-    "$GIT_HUNK" list 2>&1 >/dev/null | grep -q "^note: beta.txt: unresolved merge conflict — not listed$" \
-        || fail "test 2322: a --3way leftover should be noted"
-    sed -i.bak '1s/.*/Alpha edited./' alpha.txt
-    "$GIT_HUNK" commit --all -m "beside it" > /dev/null 2>&1 || fail "test 2322: with no merge in progress, commit should go ahead"
-fi
+git ls-files -u beta.txt | grep -q . || fail "test 2322: --3way left no unmerged entry"
+"$GIT_HUNK" list 2>&1 >/dev/null | grep -q "^note: beta.txt: unresolved merge conflict — not listed$" \
+    || fail "test 2322: a --3way leftover should be noted"
+sed -i.bak '1s/.*/Alpha edited./' alpha.txt
+"$GIT_HUNK" commit --all -m "beside it" > /dev/null 2>&1 || fail "test 2322: with no merge in progress, commit should go ahead"
+[[ "$(git log -1 --format=%s)" == "beside it" ]] || fail "test 2322: the commit did not land"
+git ls-files -u beta.txt | grep -q . || fail "test 2322: beta.txt should still be unmerged after the commit"
 pass "test 2322: --3way leftovers are noted and do not block a commit"
 
 report_results
