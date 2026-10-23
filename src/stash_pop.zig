@@ -23,7 +23,7 @@ pub fn stashPop(allocator: Allocator, verbosity: Verbosity) !void {
     // With no entry, git says so itself.
     const stash = try git.resolveStash(arena) orelse return popNatively(allocator, verbosity);
     // Git refuses too, with "could not write index" and a "needs merge" per path.
-    try conflicts.refuseAny(arena, try conflicts.all(arena), "pop a stash");
+    try conflicts.refuseAny(arena, try git.runGitUnmergedPaths(arena), "pop a stash");
     const untracked = try std.fmt.allocPrint(arena, "{s}^3", .{stash});
     const has_untracked = git.revisionExists(arena, untracked);
     // Git finds these only after merging the tracked changes, and stops

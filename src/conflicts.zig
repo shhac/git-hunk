@@ -27,6 +27,7 @@ pub const Action = enum {
     unstage,
     restore,
     commit,
+    stash,
 
     fn verb(self: Action) []const u8 {
         return switch (self) {
@@ -38,6 +39,7 @@ pub const Action = enum {
             .unstage => "unstage",
             .restore => "restore",
             .commit => "commit",
+            .stash => "stash",
         };
     }
 
@@ -51,6 +53,7 @@ pub const Action = enum {
             .unstage => "unstaged",
             .restore => "restored",
             .commit => "committed",
+            .stash => "stashed",
         };
     }
 };
@@ -59,19 +62,26 @@ pub const Action = enum {
 /// with hundreds of conflicts, and every listing would repeat them all.
 const max_notes = 10;
 
-/// Every conflicted path in the index, repo-relative.
-pub fn all(arena: Allocator) ![]const []const u8 {
+/// Of the index's conflicted paths, those a command reading `common` passes
+/// over: all of them, or none for a source that never reads the index.
+pub fn passedOver(common: types.Common, unmerged: []const []const u8) []const []const u8 {
+    return if (readsIndex(common)) unmerged else &.{};
+}
+
+/// `passedOver` for a command that has not read the conflicted paths itself,
+/// without asking git when it could not pass over any.
+pub fn loadPassedOver(arena: Allocator, common: types.Common) ![]const []const u8 {
+    if (!readsIndex(common)) return &.{};
     return git.runGitUnmergedPaths(arena);
 }
 
-/// The conflicted paths a listing of `common` passes over. History sources
-/// never read the index, and a conflicted path is tracked, so neither those
-/// nor --untracked-only can have one.
-pub fn inListing(arena: Allocator, common: types.Common) ![]const []const u8 {
-    if (common.diff_filter == .untracked_only) return &.{};
+/// History sources compare commits, never the index, and a conflicted path
+/// is tracked, so --untracked-only never meets one either.
+fn readsIndex(common: types.Common) bool {
+    if (common.diff_filter == .untracked_only) return false;
     return switch (common.source) {
-        .worktree, .index, .index_against => try all(arena),
-        .rev, .range => &.{},
+        .worktree, .index, .index_against => true,
+        .rev, .range => false,
     };
 }
 
@@ -219,4 +229,21 @@ test "writes: a hunk writes its own path and a rename's source, not a copy's" {
     var copied = types.testMakeHunk("copy.txt", 1, 1, 1, 1);
     copied.section = &copied_section;
     try std.testing.expect(!writes(.{ .hunk = &copied, .line_spec = null }, "src.txt"));
+}
+
+test "passedOver: only sources that read the index pass over a conflict" {
+    const unmerged = [_][]const u8{"f.txt"};
+    const reading = [_]types.Common{
+        .{ .source = .worktree },
+        .{ .source = .index },
+        .{ .source = .{ .index_against = .{ .text = "X" } } },
+        .{ .source = .worktree, .diff_filter = .tracked_only },
+    };
+    for (reading) |common| try std.testing.expectEqual(@as(usize, 1), passedOver(common, &unmerged).len);
+    const not_reading = [_]types.Common{
+        .{ .source = .{ .rev = .{ .ref = .{ .text = "X" }, .base = "X^" } } },
+        .{ .source = .{ .range = .{ .text = "A..B", .from = "A", .to = "B" } } },
+        .{ .source = .worktree, .diff_filter = .untracked_only },
+    };
+    for (not_reading) |common| try std.testing.expectEqual(@as(usize, 0), passedOver(common, &unmerged).len);
 }
