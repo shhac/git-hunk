@@ -33,7 +33,11 @@ The range shows `start_line-end_line` using the stable side:
 - **Unstaged hunks**: worktree (new/`+`) side line numbers
 - **Staged hunks**: HEAD (old/`-`) side line numbers
 
-For deleted files: `0-0` (no new-side lines).
+A file absent on the stable side (a staged new file is not in HEAD, an
+unstaged deletion is not in the worktree) has no lines there, so its range is
+taken from the side that has them: `1-N`, the file's lines. `empty` means a
+file with no lines on either side. Porcelain's `start_line`/`end_line` keep
+the stable side's numbers, `0` for such a file (see [Line numbers](#line-numbers)).
 
 ### Summary
 

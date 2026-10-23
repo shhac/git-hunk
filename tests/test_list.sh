@@ -316,4 +316,28 @@ echo "$OUT121" | grep -q "branchwork.txt" \
     || fail "test 121: three-dot range should include the branch hunk; got: '$OUT121'"
 pass "test 121: --ref A...B three-dot symmetric difference works"
 
+# ============================================================================
+# Test 122: a file absent on the stable side lists its lines from the side
+# that has them; only a file with no lines anywhere reads "empty"
+# ============================================================================
+new_repo
+printf '1\n2\n3\n4\n' > fresh.txt
+: > blank.txt
+rm gamma.txt
+GAMMA_LINES122="$(git show HEAD:gamma.txt | wc -l | tr -d ' ')"
+OUT122U="$("$GIT_HUNK" list --oneline --no-color)"
+echo "$OUT122U" | grep -qE "gamma\.txt +1-$GAMMA_LINES122 +deleted" \
+    || fail "test 122: an unstaged deletion should list 1-$GAMMA_LINES122, got: '$OUT122U'"
+git add fresh.txt blank.txt
+OUT122S="$("$GIT_HUNK" list --staged --oneline --no-color)"
+echo "$OUT122S" | grep -qE "fresh\.txt +1-4 +new file" \
+    || fail "test 122: a staged new file should list 1-4, got: '$OUT122S'"
+echo "$OUT122S" | grep -qE "blank\.txt +empty +new file" \
+    || fail "test 122: a staged empty file should still read empty, got: '$OUT122S'"
+# Porcelain keeps the stable side's numbers, as documented.
+PORC122="$("$GIT_HUNK" list --staged --oneline --porcelain --file fresh.txt)"
+[[ "$(echo "$PORC122" | cut -f2-4)" == "$(printf 'fresh.txt\t0\t0')" ]] \
+    || fail "test 122: porcelain should keep 0 0 for a staged new file, got: '$PORC122'"
+pass "test 122: absent-side files list the lines they have"
+
 report_results

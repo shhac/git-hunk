@@ -346,12 +346,26 @@ fn firstChangedLine(buf: []u8, diff_lines: []const u8) []const u8 {
     return "";
 }
 
+/// The lines the human listing shows for `h`: its stable side's, unless the
+/// file is absent there, as a staged new file is from HEAD and an unstaged
+/// deletion from the worktree. Its lines are then shown from the side that
+/// has them, so `empty` means a file with no lines on either side.
 fn formatLineRange(buf: []u8, h: Hunk, anchor: Anchor) []const u8 {
     if (h.section.is_binary) return "(binary)";
-    const start = stableStartLine(h, anchor);
-    const end = stableEndLine(h, anchor);
-    if (start == 0 and end == 0) return "empty";
-    return std.fmt.bufPrint(buf, "{d}-{d}", .{ start, end }) catch "";
+    const side: Anchor = if (!isAbsentOn(h, anchor)) anchor else switch (anchor) {
+        .old => .new,
+        .new => .old,
+    };
+    if (isAbsentOn(h, side)) return "empty";
+    return std.fmt.bufPrint(buf, "{d}-{d}", .{ stableStartLine(h, side), stableEndLine(h, side) }) catch "";
+}
+
+/// A `-0,0` or `+0,0` range: the file has no lines on that side.
+fn isAbsentOn(h: Hunk, side: Anchor) bool {
+    return switch (side) {
+        .old => h.old_start == 0 and h.old_count == 0,
+        .new => h.new_start == 0 and h.new_count == 0,
+    };
 }
 
 pub fn getTerminalWidth() u16 {
@@ -712,6 +726,29 @@ test "stableEndLine old anchor normal" {
 test "stableEndLine old anchor zero count" {
     const h = testMakeHunk("f.txt", 5, 0, 10, 4);
     try std.testing.expectEqual(@as(u32, 5), stableEndLine(h, .old)); // count=0 → start
+}
+
+test "formatLineRange: a file absent on the stable side shows the other side's lines" {
+    var buf: [32]u8 = undefined;
+    // Staged new file: @@ -0,0 +1,4 @@, anchored on HEAD.
+    try std.testing.expectEqualStrings("1-4", formatLineRange(&buf, testMakeHunk("f.txt", 0, 0, 1, 4), .old));
+    // Unstaged deletion: @@ -1,3 +0,0 @@, anchored on the worktree.
+    try std.testing.expectEqualStrings("1-3", formatLineRange(&buf, testMakeHunk("f.txt", 1, 3, 0, 0), .new));
+    // The same hunks on the side that has them read as before.
+    try std.testing.expectEqualStrings("1-4", formatLineRange(&buf, testMakeHunk("f.txt", 0, 0, 1, 4), .new));
+    try std.testing.expectEqualStrings("1-3", formatLineRange(&buf, testMakeHunk("f.txt", 1, 3, 0, 0), .old));
+}
+
+test "formatLineRange: empty only when neither side has lines" {
+    var buf: [32]u8 = undefined;
+    try std.testing.expectEqualStrings("empty", formatLineRange(&buf, testMakeHunk("f.txt", 0, 0, 0, 0), .old));
+    try std.testing.expectEqualStrings("empty", formatLineRange(&buf, testMakeHunk("f.txt", 0, 0, 0, 0), .new));
+}
+
+test "formatLineRange: a pure insertion keeps its stable-side position" {
+    var buf: [32]u8 = undefined;
+    // @@ -5,0 +6,3 @@ staged: three lines inserted after HEAD's line 5.
+    try std.testing.expectEqualStrings("5-5", formatLineRange(&buf, testMakeHunk("f.txt", 5, 0, 6, 3), .old));
 }
 
 test "printHunkPorcelain format" {
