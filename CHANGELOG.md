@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.21.0] - 2026-10-23
 
 ### Changed
 - Building from source needs Zig 0.17.0 or later (was 0.16.0): 0.17's build system replaced `b.args`, `b.build_root` and `getInstallPath`, and dropped the `**` array repetition operator.
