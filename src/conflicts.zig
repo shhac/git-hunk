@@ -17,7 +17,7 @@ const Allocator = std.mem.Allocator;
 const MatchedHunk = types.MatchedHunk;
 
 /// What a command does to hunks, for saying what it did not do to a
-/// conflicted path.
+/// conflicted path. Each tag is the verb itself.
 pub const Action = enum {
     list,
     count,
@@ -28,20 +28,6 @@ pub const Action = enum {
     restore,
     commit,
     stash,
-
-    fn verb(self: Action) []const u8 {
-        return switch (self) {
-            .list => "list",
-            .count => "count",
-            .check => "check",
-            .show => "show",
-            .stage => "stage",
-            .unstage => "unstage",
-            .restore => "restore",
-            .commit => "commit",
-            .stash => "stash",
-        };
-    }
 
     fn pastTense(self: Action) []const u8 {
         return switch (self) {
@@ -56,7 +42,15 @@ pub const Action = enum {
             .stash => "stashed",
         };
     }
+
+    fn hint(self: Action) Hint {
+        return if (self == .restore) .discard else .resolve;
+    }
 };
+
+/// The way past a conflicted path: finish resolving it, or, for a command
+/// that discards changes, start the file over.
+const Hint = enum { resolve, discard };
 
 /// Notes past this many are summed up in one line: a large merge can stop
 /// with hundreds of conflicts, and every listing would repeat them all.
@@ -94,7 +88,7 @@ pub fn noteLeftOut(arena: Allocator, paths: []const []const u8, file_filter: []c
     }
     if (in_scope.items.len == 0) return;
     printNotes(in_scope.items, action);
-    try printResolveHint(arena, action, onlyPath(in_scope.items));
+    try printResolveHint(arena, action.hint(), onlyPath(in_scope.items));
 }
 
 /// A note per path, capped, each saying what `left_out` did not do to it.
@@ -141,8 +135,8 @@ fn writes(m: MatchedHunk, path: []const u8) bool {
 }
 
 fn refuseTouched(arena: Allocator, path: []const u8, action: Action) !noreturn {
-    std.debug.print("error: cannot {s} '{s}' while it has an unresolved merge conflict\n", .{ action.verb(), path });
-    try printResolveHint(arena, action, path);
+    std.debug.print("error: cannot {s} '{s}' while it has an unresolved merge conflict\n", .{ @tagName(action), path });
+    try printResolveHint(arena, action.hint(), path);
     std.process.exit(1);
 }
 
@@ -156,7 +150,7 @@ pub fn refuseAny(arena: Allocator, paths: []const []const u8, what: []const u8) 
         std.debug.print("error: cannot {s} while {d} files have unresolved merge conflicts\n", .{ what, paths.len });
         printNotes(paths, null);
     }
-    try printResolveHint(arena, .stage, onlyPath(paths));
+    try printResolveHint(arena, .resolve, onlyPath(paths));
     std.process.exit(1);
 }
 
@@ -180,25 +174,31 @@ const sequences = [_]Sequence{
 /// too ("cannot do a partial commit during a merge"); for a revert it lets the
 /// commit through and loses the revert, which is refused here as well.
 pub fn refusePartialCommit(arena: Allocator, paths: []const []const u8) !void {
-    for (sequences) |seq| {
-        if (!git.revisionExists(arena, seq.head)) continue;
-        std.debug.print("error: cannot commit selected hunks during a {s}; its commit must record the whole resolution\n", .{seq.name});
-        if (paths.len == 0) {
-            std.debug.print("hint: run '{s}' to conclude the {s} (or '{s}' to abandon it), then commit hunks\n", .{ seq.conclude, seq.name, seq.abort });
-        } else {
-            printNotes(paths, null);
-            const p = try shellArgOrPlaceholder(arena, onlyPath(paths));
-            std.debug.print("hint: resolve the conflicts and mark each resolved with 'git add {s}' (or 'git rm {s}'), then run '{s}' to conclude the {s} (or '{s}' to abandon it)\n", .{ p, p, seq.conclude, seq.name, seq.abort });
-        }
+    const seq = pendingSequence(arena) orelse return;
+    std.debug.print("error: cannot commit selected hunks during a {s}; its commit must record the whole resolution\n", .{seq.name});
+    if (paths.len == 0) {
+        std.debug.print("hint: run '{s}' to conclude the {s} (or '{s}' to abandon it), then commit hunks\n", .{ seq.conclude, seq.name, seq.abort });
         std.process.exit(1);
     }
+    printNotes(paths, null);
+    const p = try shellArgOrPlaceholder(arena, onlyPath(paths));
+    std.debug.print("hint: resolve the conflicts and mark each resolved with 'git add {s}' (or 'git rm {s}'), then run '{s}' to conclude the {s} (or '{s}' to abandon it)\n", .{ p, p, seq.conclude, seq.name, seq.abort });
+    std.process.exit(1);
 }
 
-/// How to get past a conflicted path, naming it when there is one. Restoring
-/// one means discarding the resolution in progress, which git does by path.
-fn printResolveHint(arena: Allocator, action: Action, path: ?[]const u8) !void {
+fn pendingSequence(arena: Allocator) ?Sequence {
+    for (sequences) |seq| {
+        if (git.revisionExists(arena, seq.head)) return seq;
+    }
+    return null;
+}
+
+/// How to get past a conflicted path, naming it when there is one.
+/// Discarding means giving up the resolution in progress, which git does by
+/// path.
+fn printResolveHint(arena: Allocator, hint: Hint, path: ?[]const u8) !void {
     const p = try shellArgOrPlaceholder(arena, path);
-    if (action == .restore) {
+    if (hint == .discard) {
         std.debug.print("hint: a conflicted file has no hunks; 'git checkout --merge -- {s}' recreates its conflict markers, or 'git checkout --ours -- {s}' (or --theirs) takes one side\n", .{ p, p });
         return;
     }

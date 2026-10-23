@@ -94,12 +94,10 @@ pub fn shellArgFromCwd(allocator: Allocator, prefix: []const u8, repo_path: []co
     if (ups == 0 and std.mem.startsWith(u8, rest, "-")) try arg.appendSlice(allocator, "./");
     try arg.appendSlice(allocator, rest);
 
-    for (arg.items) |c| {
-        if (!isShellSafe(c)) break;
-    } else return allocator.dupe(u8, arg.items);
-    for (arg.items) |c| {
-        if (std.mem.indexOfScalar(u8, "$`\\\"!", c) != null) break;
-    } else return std.fmt.allocPrint(allocator, "\"{s}\"", .{arg.items});
+    if (isShellSafe(arg.items)) return allocator.dupe(u8, arg.items);
+    if (std.mem.indexOfAny(u8, arg.items, double_quote_specials) == null) {
+        return std.fmt.allocPrint(allocator, "\"{s}\"", .{arg.items});
+    }
 
     var quoted: std.ArrayList(u8) = .empty;
     errdefer quoted.deinit(allocator);
@@ -111,8 +109,15 @@ pub fn shellArgFromCwd(allocator: Allocator, prefix: []const u8, repo_path: []co
     return quoted.toOwnedSlice(allocator);
 }
 
-fn isShellSafe(c: u8) bool {
-    return std.ascii.isAlphanumeric(c) or std.mem.indexOfScalar(u8, "._-/+@%=:,", c) != null;
+/// What a shell still expands, or ends, inside double quotes.
+const double_quote_specials = "$`\\\"!";
+
+/// Whether a shell reads `arg` as one word, as written.
+fn isShellSafe(arg: []const u8) bool {
+    for (arg) |c| {
+        if (!std.ascii.isAlphanumeric(c) and std.mem.indexOfScalar(u8, "._-/+@%=:,", c) == null) return false;
+    }
+    return true;
 }
 
 // ============================================================================
