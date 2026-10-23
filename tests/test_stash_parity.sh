@@ -341,7 +341,8 @@ git merge -q other > /dev/null 2>&1 && fail "test 2214: the merge did not confli
 edit_line b.txt 10 "b 10 stashed"
 BEFORE2214="$(repo_state)"
 ERR2214="$("$GIT_HUNK" stash --file b.txt 2>&1 > /dev/null)" && fail "test 2214: stash with a conflicted index succeeded"
-check_same "test 2214" "error" "$ERR2214" "error: cannot stash while the index has unmerged paths" "the expected error"
+check_same "test 2214" "error" "$ERR2214" "error: cannot stash while 'd.txt' has an unresolved merge conflict
+hint: a conflicted file has no hunks; resolve the conflict, then mark it resolved with 'git add d.txt' (or 'git rm d.txt' to delete it)" "the expected error"
 git stash push -q --keep-index -- b.txt > /dev/null 2>&1 && fail "test 2214: native stash with a conflicted index succeeded"
 check_same "test 2214" "state after both refusals" "$(repo_state)" "$BEFORE2214" "the state before"
 

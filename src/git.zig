@@ -732,11 +732,27 @@ pub fn runGitHeadSummary(allocator: Allocator) ![]u8 {
     return runGitCapture(allocator, &.{ "git", "log", "-1", "--no-decorate", "--no-show-signature", "--no-color", "--format=%h %s", "HEAD", "--" }, .{}, "git log", .{});
 }
 
-/// True if the index holds an unresolved merge conflict.
-pub fn indexHasUnmergedPaths(allocator: Allocator) !bool {
-    const out = try runGitCapture(allocator, &.{ "git", "ls-files", "--unmerged" }, .{}, "git ls-files", .{ .trim = false });
-    defer allocator.free(out);
-    return out.len > 0;
+/// Paths with an unresolved merge conflict, each once, repo-relative.
+pub fn runGitUnmergedPaths(allocator: Allocator) ![]const []const u8 {
+    const listing = try runGitCapture(allocator, &.{ "git", "ls-files", "-u", "-z" }, .{}, "git ls-files -u", .{ .trim = false });
+    return parseUnmergedPaths(allocator, listing);
+}
+
+/// The paths of `git ls-files -u -z` output. A conflict has one entry per
+/// stage, adjacent because the index is sorted by path, so each path is kept
+/// once. The paths are sub-slices of `listing`.
+fn parseUnmergedPaths(allocator: Allocator, listing: []const u8) ![]const []const u8 {
+    var paths: std.ArrayList([]const u8) = .empty;
+    errdefer paths.deinit(allocator);
+    var entries = std.mem.splitScalar(u8, listing, 0);
+    while (entries.next()) |entry| {
+        // "<mode> <id> <stage>\t<path>"
+        const tab = std.mem.indexOfScalar(u8, entry, '\t') orelse continue;
+        const path = entry[tab + 1 ..];
+        if (paths.items.len > 0 and std.mem.eql(u8, paths.getLast(), path)) continue;
+        try paths.append(allocator, path);
+    }
+    return paths.toOwnedSlice(allocator);
 }
 
 /// Run `git write-tree` (against `env_map`'s index when given) and return
@@ -1017,4 +1033,26 @@ test "diffHeaderName quotes as git does" {
         defer allocator.free(got);
         try std.testing.expectEqualStrings(case.want, got);
     }
+}
+
+test "parseUnmergedPaths keeps each conflicted path once" {
+    const allocator = std.testing.allocator;
+    const listing = "100644 1111111111111111111111111111111111111111 1\tboth.txt\x00" ++
+        "100644 2222222222222222222222222222222222222222 2\tboth.txt\x00" ++
+        "100644 3333333333333333333333333333333333333333 3\tboth.txt\x00" ++
+        "100644 1111111111111111111111111111111111111111 1\tdeleted by us.txt\x00" ++
+        "100644 3333333333333333333333333333333333333333 3\tdeleted by us.txt\x00" ++
+        "100644 2222222222222222222222222222222222222222 2\tt\tab\x00";
+    const paths = try parseUnmergedPaths(allocator, listing);
+    defer allocator.free(paths);
+    try std.testing.expectEqual(@as(usize, 3), paths.len);
+    try std.testing.expectEqualStrings("both.txt", paths[0]);
+    try std.testing.expectEqualStrings("deleted by us.txt", paths[1]);
+    try std.testing.expectEqualStrings("t\tab", paths[2]);
+}
+
+test "parseUnmergedPaths of an empty listing is empty" {
+    const paths = try parseUnmergedPaths(std.testing.allocator, "");
+    defer std.testing.allocator.free(paths);
+    try std.testing.expectEqual(@as(usize, 0), paths.len);
 }

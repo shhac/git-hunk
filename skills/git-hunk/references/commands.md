@@ -84,6 +84,54 @@ unselected lines where they were, the way a hand edit would:
 Selecting every removal of a file that shrinks leaves it tracked and empty,
 never deleted.
 
+## Merge conflicts
+
+A file with an unresolved merge conflict (`UU`, `AA`, `DU`, `UD`, ... in
+`git status`) has an index entry for each side of the merge and no staged
+version, so it has no hunks: git writes it as a combined diff (`diff --cc`)
+and `git diff --cached` as `* Unmerged path`, and `git add -p` skips it with
+`needs merge`. Resolve it and mark it resolved with `git add <path>` (or
+`git rm <path>`); git-hunk does not stage resolutions.
+
+What each command does while one stands:
+
+- **Notes, on stderr, after the command's own output.** `list`, `count`,
+  `check` and `diff`, and `add`/`reset`/`restore`/`commit` selecting by
+  `--all` or `--file`, name each conflicted path they passed over in the
+  `--file` scope, then say how to resolve it:
+
+  ```
+  note: f.txt: unresolved merge conflict — not staged
+  hint: a conflicted file has no hunks; resolve the conflict, then mark it resolved with 'git add f.txt' (or 'git rm f.txt' to delete it)
+  ```
+
+  The verb follows the command (listed, counted, checked, shown, staged,
+  unstaged, restored, committed). `restore`'s hint names
+  `git checkout --merge` and `git checkout --ours`/`--theirs` instead. Past
+  ten paths the rest are summed up in one note. `-q` silences notes; porcelain
+  stdout never carries them. Unlike the `-v` notes for paths with no hunk,
+  these are on by default: a conflict blocks the operation in progress. The
+  hint's path is relative to the current directory and quoted for the shell,
+  so it can be pasted as is. A command that finds no hunks at all prints its
+  `no unstaged changes` line (or `staged`, ...) and then the notes, exit 1.
+  `--ref` sources and `--untracked-only` read no index entries, so they note
+  nothing.
+- **Refusals, exit 1, nothing changed.** `add`, `reset`, `restore` and
+  `commit` refuse a conflicted path that `--file` names, or that a selected
+  hunk would write (a hunk from `--ref` can name any path):
+  `error: cannot stage '<path>' while it has an unresolved merge conflict`
+  (`unstage`, `restore`, `commit`), with the hint.
+- **`commit`** refuses while a merge, cherry-pick or revert is waiting for its
+  commit, conflicted or not, since its commit must record the whole
+  resolution. git refuses this too (`cannot do a partial commit during a
+  merge`); one during a revert ends the revert with its conflict unresolved.
+  Mid-rebase, mid-`am`, or after a conflicted `stash pop` or `--3way`, it
+  commits other hunks beside the conflict, as `git commit <paths>` does, and
+  notes the conflicted paths it left out.
+- **`stash` and `stash pop`** refuse while any path is conflicted, as
+  `git stash` does (`error: cannot stash while '<path>' has an unresolved
+  merge conflict`, or `cannot pop a stash ...`).
+
 ## git-hunk list
 
 List diff hunks with content hashes.
@@ -130,6 +178,7 @@ git-hunk list --no-color                         # disable color output
 - Rename-only and copy-only changes (no content diff) are skipped.
 - Mode-only changes are skipped.
 - Untracked files are included by default in unstaged mode. Use `--tracked-only` or `--untracked-only` to filter.
+- A file with an unresolved merge conflict has no hunks; each one in scope is named on stderr after the listing (`note: <path>: unresolved merge conflict — not listed`), with a hint. Exit 0. See [Merge conflicts](#merge-conflicts).
 
 ---
 
@@ -273,10 +322,12 @@ git-hunk add a3f7c21 --no-color                  # disable color output
 | `error: ambiguous prefix '<sha>' -- matches multiple hunks` | Multiple hunks match the prefix |
 | `error: patch did not apply cleanly` | Index changed since hunks were listed |
 | `error: changes from '<ref>' do not apply cleanly to the index (try --3way)` | The `--ref` hunk's context no longer matches the index |
-| `no unstaged changes` | Nothing to stage |
+| `no unstaged changes` | Nothing to stage; followed by a note for each conflicted path, if any |
 | `no changes in '<ref>'` | `--ref` names an empty commit or range |
 | `error: bad revision '<ref>'` | `--ref` names something git cannot resolve |
 | `error: at least one <sha> argument required` | No SHA arguments and no `--all`/`--file` flag |
+| `error: cannot stage '<path>' while it has an unresolved merge conflict` | `--file` names a conflicted path, or a `--ref` hunk writes one; resolve it and `git add` it |
+| `note: <path>: unresolved merge conflict — not staged` | `--all`/`--file` passed over a conflicted path (exit 0); see [Merge conflicts](#merge-conflicts) |
 
 ---
 
@@ -340,6 +391,7 @@ git-hunk commit --dry-run a3f7 -m "check first"       # preview without committi
 - On success, prints one line per committed hunk: `committed {sha7}  {file}`, followed by git's commit output.
 - With `--porcelain`, output is tab-separated: `committed\t{sha7}\t{file}`.
 - With `--dry-run`, verb is `would commit` (human) or `would-commit` (porcelain).
+- Refuses while a merge, cherry-pick or revert is waiting for its commit, as `git commit` refuses a partial commit then; mid-rebase it commits beside a conflict. See [Merge conflicts](#merge-conflicts).
 
 ### Errors
 
@@ -351,6 +403,8 @@ git-hunk commit --dry-run a3f7 -m "check first"       # preview without committi
 | `error: you have nothing to amend` | `--amend` on an unborn branch (no commits yet), as `git commit --amend` refuses it |
 | `error: patch did not apply cleanly` | Hunks don't apply to a clean HEAD index |
 | `warning: commit succeeded but index sync failed` | Post-commit index sync failed (non-fatal) |
+| `error: cannot commit selected hunks during a <merge\|cherry-pick\|revert>; its commit must record the whole resolution` | Conclude it first: `git commit`, `git cherry-pick --continue` or `git revert --continue` (the hint names it, and any conflicts left) |
+| `error: cannot commit '<path>' while it has an unresolved merge conflict` | `--file` names a conflicted path, or a `--ref` hunk writes one |
 
 ---
 
@@ -411,7 +465,7 @@ git-hunk reset a3f7c21 --no-color               # disable color output
 
 ### Errors
 
-Same error types as `add`, with `no staged changes` instead of `no unstaged changes` (under `--ref`, `no changes in '<ref>'` as for `add`).
+Same error types as `add`, with `no staged changes` instead of `no unstaged changes` (under `--ref`, `no changes in '<ref>'` as for `add`), and `cannot unstage '<path>' while it has an unresolved merge conflict`.
 
 ---
 
@@ -495,6 +549,7 @@ git-hunk restore a3f7c21 --no-color                  # disable color output
 | `no unstaged changes` | Nothing to restore |
 | `no changes in '<ref>'` | `--ref` names an empty commit or range |
 | `error: at least one <sha> argument required` | No SHA arguments and no `--all`/`--file` flag |
+| `error: cannot restore '<path>' while it has an unresolved merge conflict` | `--file` names a conflicted path, or a `--ref` hunk writes one; `git checkout --merge -- <path>` recreates its markers, `git checkout --ours -- <path>` (or `--theirs`) takes one side |
 
 ---
 
@@ -674,18 +729,18 @@ git-hunk stash a3f7c21 --porcelain              # machine-readable output
 - With `--all`, stashes tracked hunks only (matching `git stash` behavior). Use `-u`/`--include-untracked` to include untracked files. Explicit hash targeting always works for untracked hunks regardless of `-u`.
 - Untracked files are stored using git's native 3-parent stash format (HEAD, index, untracked tree). `git stash pop` restores them as untracked files. Executable file permissions are preserved.
 - The message is the one `git stash push` would write: `WIP on <branch>: <sha> <subject>`, or `On <branch>: <msg>` with `-m`.
-- Refuses to stash while the index has unmerged paths, as `git stash` does.
+- Refuses to stash while any path has an unresolved merge conflict, as `git stash` does, naming it (or the count and each path), with a hint to resolve and `git add` it.
 - Refuses while the index holds any intent-to-add entry (`git add -N`, e.g. a rename's new side), as `git stash` does: `error: cannot stash while '<path>' is intent-to-add` for each, a hint, exit 1, nothing changed. This applies even when stashing other files, because no pop could restore that stash while the entry stands. Stage the file with `git add`, or make it untracked again with `git rm --cached`.
 - On success, prints one line per stashed hunk to stdout: `stashed {sha7}  {file}`. SHA in yellow for human mode.
 - With `--verbose`, prints a count summary to stderr: `N hunk(s) stashed`.
 - With `--verbose`, prints a hint to stderr: `hint: use 'git stash list' to see stashed entries, 'git hunk stash pop' to restore`.
 - With `--porcelain`, output is tab-separated: `stashed\t{sha7}\t{file}`.
-- `pop` restores `stash@{0}` and prints `popped stash@{0}` to stderr. Rejects all other flags and arguments.
+- `pop` restores `stash@{0}` and prints `popped stash@{0}` to stderr. Rejects all other flags and arguments. Refuses while any path has an unresolved merge conflict, as `git stash pop` does (`could not write index`), saying which.
   - Where `git stash pop` can restore the entry, it does, so the result is git's own, and for a `git hunk stash` entry the same as `git stash pop --index`'s.
   - Where git would refuse because a file the entry changes has other unstaged changes, the entry's worktree changes (`git diff stash^2 stash`) are merged into the worktree instead, file by file, as `git merge-file` merges them; the index is left as it is. The stashed hunks come back unstaged beside the file's other changes and whatever is staged stays staged.
   - A conflict is left as `git stash pop` leaves one: markers in the file (labelled `Updated upstream` for the worktree and `Stashed changes` for the entry, honouring `merge.conflictStyle`), unmerged index entries for it (the index at stash time, the worktree before the pop, the entry), git's `CONFLICT (...)` line on stderr, and `The stash entry is kept in case you need it again.`; exit 1. Paths without a conflict are merged all the same. A binary or symlink changed on both sides conflicts and keeps the worktree's version. The entry is dropped only when everything went back cleanly.
   - Untracked files come back as git restores them, never over a file already there: `<path> already exists, no checkout`, then `error: could not restore untracked files from stash`, exit 1. That is checked before anything is restored, so a refused pop changes nothing (git's own pop merges the tracked changes first).
-  - The merge is not attempted, and git's refusal stands, for a submodule change, an index with unmerged paths, or an entry whose staged changes to a file have left the index since, as a `git stash push` without `--keep-index` takes them: merging only its worktree changes would lose them.
+  - The merge is not attempted, and git's refusal stands, for a submodule change, or an entry whose staged changes to a file have left the index since, as a `git stash push` without `--keep-index` takes them: merging only its worktree changes would lose them.
 - Line specs (`sha:lines`) are rejected: `error: line specs not supported for stash`.
 - `--include-untracked` conflicts with `--tracked-only` — error if both given.
 - If the stashed changes cannot be taken back out of the worktree once the entry is stored, the entry stays, the worktree keeps the changes, and stash exits 1 saying so, as `git stash` stops with "Cannot remove worktree changes".
@@ -703,7 +758,8 @@ git-hunk stash a3f7c21 --porcelain              # machine-readable output
 | `error: pop does not accept arguments or flags` | `pop` used with other flags or arguments |
 | `error: --include-untracked cannot be combined with --tracked-only` | Conflicting filter flags |
 | `no unstaged changes` | Nothing to stash |
-| `error: cannot stash while the index has unmerged paths` | A merge conflict is unresolved |
+| `error: cannot stash while '<path>' has an unresolved merge conflict` | Resolve it and `git add` it first (with several: `cannot stash while N files have unresolved merge conflicts` and a note per path) |
+| `error: cannot pop a stash while '<path>' has an unresolved merge conflict` | `pop` with a conflict standing; resolve it first |
 | `error: cannot stash while '<path>' is intent-to-add` | The index holds a `git add -N` entry; `git add` it, or `git rm --cached` it |
 | `error: you do not have the initial commit yet` | The branch is unborn: a stash entry is a commit on top of HEAD, as `git stash` says |
 | `CONFLICT (content): Merge conflict in <path>` | `pop`: a stashed hunk overlaps a change made since; resolve it and `git add` the file. The entry is kept |

@@ -85,9 +85,6 @@ pub const StashTrees = struct {
 /// index tree gives exactly the worktree state being stashed, whatever else is
 /// staged in the same files.
 pub fn buildStashTrees(arena: Allocator, allocator: Allocator, partition: patch_mod.HunkPartition) !StashTrees {
-    // An index with conflicts has no tree to record, and git stash refuses it too.
-    if (try git.indexHasUnmergedPaths(allocator)) types.fatal("cannot stash while the index has unmerged paths", .{});
-
     const index_tree = try git.runGitWriteTree(allocator, null);
     errdefer allocator.free(index_tree);
 

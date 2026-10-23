@@ -15,6 +15,8 @@ const stash_pop_mod = @import("stash_pop.zig");
 const result_groups_mod = @import("result_groups.zig");
 const commit_mod = @import("commit.zig");
 const check_mod = @import("check.zig");
+const conflicts = @import("conflicts.zig");
+const path_mod = @import("path.zig");
 
 const Allocator = std.mem.Allocator;
 const Hunk = types.Hunk;
@@ -89,9 +91,22 @@ fn reportSkippedPaths(arena: Allocator, tracked_diff: []const u8, hunks: []const
     for (skipped.items) |sk| {
         if (!types.matchesFileFilter(sk.file_path, common.file_filter.items)) continue;
         std.debug.print("note: {s}: {s} has no hunk", .{ sk.file_path, sk.reason.describe() });
-        if (common.source == .worktree) std.debug.print(" — use 'git add {s}'", .{sk.file_path});
+        if (common.source == .worktree) {
+            std.debug.print(" — use 'git add {s}'", .{try path_mod.shellArgFromCwd(arena, types.getRepoPrefix(), sk.file_path)});
+        }
         std.debug.print("\n", .{});
     }
+}
+
+/// After a command's output, note the conflicted paths it passed over: they
+/// have no hunks, so nothing else would say they are there.
+fn noteConflicts(arena: Allocator, stdout: *std.Io.Writer, common: types.Common, action: conflicts.Action) !void {
+    if (common.verbosity == .quiet) return;
+    const unmerged = try conflicts.inListing(arena, common);
+    if (unmerged.len == 0) return;
+    // Flushed first so the notes follow the output on a terminal.
+    try stdout.flush();
+    try conflicts.noteLeftOut(arena, unmerged, common.file_filter.items, action);
 }
 
 pub fn cmdList(allocator: Allocator, stdout: *std.Io.Writer, opts: ListOptions) !void {
@@ -100,12 +115,16 @@ pub fn cmdList(allocator: Allocator, stdout: *std.Io.Writer, opts: ListOptions) 
     const arena = arena_state.allocator();
 
     const loaded = try loadHunks(arena, opts.common);
-    const hunks = loaded.hunks;
 
     if (opts.common.verbosity == .verbose) {
-        try reportSkippedPaths(arena, loaded.tracked_diff, hunks, opts.common);
+        try reportSkippedPaths(arena, loaded.tracked_diff, loaded.hunks, opts.common);
     }
 
+    try printListing(stdout, loaded.hunks, opts);
+    try noteConflicts(arena, stdout, opts.common, .list);
+}
+
+fn printListing(stdout: *std.Io.Writer, hunks: []const Hunk, opts: ListOptions) !void {
     if (hunks.len == 0) return;
 
     // Compute display parameters for human mode
@@ -174,6 +193,7 @@ pub fn cmdCount(allocator: Allocator, stdout: *std.Io.Writer, opts: CountOptions
     if (opts.common.verbosity != .quiet) {
         try stdout.print("{d}\n", .{count});
     }
+    try noteConflicts(arena, stdout, opts.common, .count);
 }
 
 pub fn cmdCheck(allocator: Allocator, stdout: *std.Io.Writer, opts: CheckOptions) !void {
@@ -187,9 +207,9 @@ pub fn cmdCheck(allocator: Allocator, stdout: *std.Io.Writer, opts: CheckOptions
 
     // --allow-empty with no SHAs: skip rendering "ok" entries (there are none) — only
     // unexpected hunks can fail. If there are none, exit successfully.
-    if (opts.allow_empty and opts.sha_args.items.len == 0 and !summary.has_failure) return;
+    const nothing_to_render = opts.allow_empty and opts.sha_args.items.len == 0 and !summary.has_failure;
 
-    if (opts.common.verbosity != .quiet) {
+    if (!nothing_to_render and opts.common.verbosity != .quiet) {
         if (opts.common.output == .porcelain) {
             try check_mod.renderCheckPorcelain(stdout, summary);
         } else {
@@ -197,6 +217,7 @@ pub fn cmdCheck(allocator: Allocator, stdout: *std.Io.Writer, opts: CheckOptions
             try check_mod.renderCheckHuman(stdout, summary, use_color);
         }
     }
+    try noteConflicts(arena, stdout, opts.common, .check);
 
     if (summary.has_failure) {
         try stdout.flush();
@@ -333,10 +354,26 @@ fn matchAllInScope(arena: Allocator, hunks: []const Hunk, file_filter: []const [
 }
 
 /// Say the source has no changes ("no staged changes", "no changes in 'X'")
-/// and exit(1). Centralises the message so it can't drift across commands.
-fn exitNoChanges(source: DiffSource) noreturn {
-    std.debug.print("no {f}\n", .{source.describe()});
+/// and exit(1), noting any conflicted paths, which are changes git-hunk has
+/// no hunks for. Centralises the message so it can't drift across commands.
+fn exitNoChanges(arena: Allocator, common: types.Common, action: conflicts.Action) !noreturn {
+    std.debug.print("no {f}\n", .{common.source.describe()});
+    try conflicts.noteLeftOut(arena, try conflicts.inListing(arena, common), common.file_filter.items, action);
     std.process.exit(1);
+}
+
+/// Load and select the hunks a writing command acts on, refusing any that
+/// would touch a conflicted path: one --file names, or one a hunk from
+/// `--ref` writes. The index is written whatever the hunks came from.
+fn selectWritableHunks(arena: Allocator, common: types.Common, sha_args: []const types.ShaArg, action: conflicts.Action) ![]MatchedHunk {
+    const unmerged = try conflicts.all(arena);
+    const file_filter = common.file_filter.items;
+    try conflicts.exitIfTouched(arena, unmerged, file_filter, &.{}, action);
+    const hunks = (try loadHunks(arena, common)).hunks;
+    if (hunks.len == 0) try exitNoChanges(arena, common, action);
+    const matched = try selectHunks(arena, hunks, sha_args, file_filter);
+    try conflicts.exitIfTouched(arena, unmerged, &.{}, matched, action);
+    return matched;
 }
 
 /// Exit with an error message if no hunks were matched. Only a file filter
@@ -499,9 +536,11 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const hunks = (try loadHunks(arena, opts.common)).hunks;
-    if (hunks.len == 0) exitNoChanges(opts.common.source);
-    const matched = try selectHunks(arena, hunks, opts.sha_args.items, opts.common.file_filter.items);
+    const conflict_action: conflicts.Action = switch (action) {
+        .stage => .stage,
+        .unstage => .unstage,
+    };
+    const matched = try selectWritableHunks(arena, opts.common, opts.sha_args.items, conflict_action);
 
     const partition = try patch_mod.partitionByKind(arena, matched);
     const text_matched = try partition.combinedText(arena);
@@ -514,6 +553,7 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
     // exactly what a dry run must not do. Matches restore --dry-run.
     if (opts.dry_run) {
         try dryRunApplyHunks(allocator, arena, stdout, opts, action, text_matched, matched);
+        if (opts.sha_args.items.len == 0) try noteConflicts(arena, stdout, opts.common, conflict_action);
         return;
     }
 
@@ -552,6 +592,7 @@ fn cmdApplyHunks(allocator: Allocator, stdout: *std.Io.Writer, opts: AddResetOpt
         std.debug.print("error: --3way landed unmerged index entries — {s}\n", .{resolution_hint});
         std.process.exit(1);
     }
+    if (opts.sha_args.items.len == 0) try noteConflicts(arena, stdout, opts.common, conflict_action);
 }
 
 pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOptions) !void {
@@ -559,9 +600,7 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const hunks = (try loadHunks(arena, opts.common)).hunks;
-    if (hunks.len == 0) exitNoChanges(opts.common.source);
-    const matched = try selectHunks(arena, hunks, opts.sha_args.items, opts.common.file_filter.items);
+    const matched = try selectWritableHunks(arena, opts.common, opts.sha_args.items, .restore);
 
     // Dry-run bypasses the gate — safe to preview without --force
     if (!opts.force and !opts.dry_run) rejectUntrackedWithoutForce(matched);
@@ -584,6 +623,7 @@ pub fn cmdRestore(allocator: Allocator, stdout: *std.Io.Writer, opts: RestoreOpt
         std.process.exit(1);
     }
     format.printHunkCountSummary(opts.common, matched.len, summary_verb);
+    if (opts.sha_args.items.len == 0) try noteConflicts(arena, stdout, opts.common, .restore);
 }
 
 /// Exit if any selected hunk is an untracked file: git has no copy to bring
@@ -643,7 +683,7 @@ pub fn cmdDiff(allocator: Allocator, stdout: *std.Io.Writer, opts: DiffOptions) 
     const arena = arena_state.allocator();
 
     const hunks = (try loadHunks(arena, opts.common)).hunks;
-    if (hunks.len == 0) exitNoChanges(opts.common.source);
+    if (hunks.len == 0) try exitNoChanges(arena, opts.common, .show);
     const matched = try resolveMatchedHunks(arena, hunks, opts.sha_args.items, opts.common.file_filter.items);
 
     const use_color = format.shouldUseColor(opts.common.output, opts.common.no_color);
@@ -695,6 +735,8 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
 
     // A stash entry is a commit on top of HEAD, so there must be one.
     if (!git.revisionExists(arena, "HEAD")) types.fatal("you do not have the initial commit yet", .{});
+    // An index with conflicts has no tree to record, and git stash refuses it too.
+    try conflicts.refuseAny(arena, try conflicts.all(arena), "stash");
 
     // When --all is used without --include-untracked, default to tracked-only
     // (matching git stash behavior). Explicit hashes bypass this.
@@ -704,7 +746,7 @@ pub fn cmdStash(allocator: Allocator, stdout: *std.Io.Writer, opts: StashOptions
     }
 
     const hunks = (try loadHunks(arena, common)).hunks;
-    if (hunks.len == 0) exitNoChanges(common.source);
+    if (hunks.len == 0) try exitNoChanges(arena, common, .stage);
     const matched = try selectHunks(arena, hunks, opts.sha_args.items, opts.common.file_filter.items);
     try stash_mod.refuseIntentToAdd(arena);
 
@@ -741,11 +783,10 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
     // from a backup, which is a real mutation. A user expecting a read-only
     // preview would be surprised to find their index changed.
     if (!opts.dry_run) try legacyRecoverIndexBackup(allocator);
+    try conflicts.refusePartialCommit(arena, try conflicts.all(arena));
     if (opts.amend and !git.revisionExists(arena, "HEAD")) types.fatal("you have nothing to amend", .{});
 
-    const hunks = (try loadHunks(arena, opts.common)).hunks;
-    if (hunks.len == 0) exitNoChanges(opts.common.source);
-    const matched = try selectHunks(arena, hunks, opts.sha_args.items, opts.common.file_filter.items);
+    const matched = try selectWritableHunks(arena, opts.common, opts.sha_args.items, .commit);
 
     const partition = try patch_mod.partitionByKind(arena, matched);
     const text_matched = try partition.combinedText(arena);
@@ -761,6 +802,7 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
             else => return err,
         };
         try format.printMatchedHunks(stdout, matched, "would commit", "would-commit", opts.common);
+        if (opts.sha_args.items.len == 0) try noteConflicts(arena, stdout, opts.common, .commit);
         return;
     }
 
@@ -784,6 +826,7 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
     defer allocator.free(commit_output);
 
     try printCommitResults(stdout, opts, matched, commit_output);
+    if (opts.sha_args.items.len == 0) try noteConflicts(arena, stdout, opts.common, .commit);
 }
 
 // ============================================================================

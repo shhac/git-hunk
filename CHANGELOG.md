@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- `commit` during a merge made a two-parent merge commit holding only the selected hunks, from a tree that lacked the other side's changes, ended the merge (`MERGE_HEAD` gone) and left any conflicted file `UU`. `git commit` refuses this (`cannot do a partial commit during a merge`). `commit` now refuses while a merge, cherry-pick or revert is waiting for its commit, conflicted or not, changing nothing: `error: cannot commit selected hunks during a merge; its commit must record the whole resolution`, a note per conflicted path, and a hint naming the command that concludes it (`git commit`, `git cherry-pick --continue`, `git revert --continue`) and the one that abandons it. Mid-rebase, mid-`am` or after a conflicted `stash pop`, it still commits other hunks beside a conflict, as `git commit <paths>` does.
+- A file with an unresolved merge conflict was silently missing: `list` and `count` left it out and exited 0, `add --file <path>` said `no unstaged changes` (or `no hunks matching file`), and `add --all` staged everything else without a word about it. A conflicted path has no staged version, so it has no hunks, and `git add -p` skips it too (`needs merge`). Every command that passes over one now says so on stderr after its own output, `note: <path>: unresolved merge conflict — not staged` (listed, counted, checked, shown, unstaged, restored, committed), with a hint giving the command that resolves it, `git add <path>` (or `git rm`), relative to the current directory and quoted so it can be pasted; `restore`'s names `git checkout --merge` and `--ours`/`--theirs`. Past ten paths the rest are summed up. `-q` silences the notes, and porcelain stdout is unchanged. A command that finds nothing else to do still exits 1, now with the notes after its `no unstaged changes` line.
+- `add`, `reset`, `restore` and `commit` with `--file` naming a conflicted path, or with a `--ref` hunk that writes one, failed with `no hunks matching file` or `does not exist in index (try --3way)`, and `--3way` failed the same way. They now refuse by name, changing nothing: `error: cannot stage '<path>' while it has an unresolved merge conflict`, with the hint.
+- `stash` refused a conflicted index only after reporting `no unstaged changes` when there was nothing else to stash, and never said which path: it now refuses first, `error: cannot stash while '<path>' has an unresolved merge conflict`. `stash pop` passed on git's `error: could not write index` and a `needs merge` per path; it now refuses the same way before touching anything.
+- The `-v` note for a path with no hunk said `use 'git add <path>'` with the path from the repo root, which fails from a subdirectory. The path is now relative to the current directory, and quoted where the shell needs it.
+
 ## [0.20.0] - 2026-09-25
 
 ### Added

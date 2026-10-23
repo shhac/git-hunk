@@ -86,6 +86,18 @@ changes.
 - `git add -N <file>` for intent-to-add on new untracked files (optional — untracked files appear in `list` automatically)
 - `git add <file>` (or `git rm <file>`) to mark a merge conflict resolved during a merge, rebase, cherry-pick, revert or `am`. A conflicted file has no staged version for a hunk to apply to, so git-hunk cannot stage it, just as `git add -p` skips it with `needs merge`. Resolve the markers, `git add` the whole file, then continue (`git rebase --continue`, `git commit`, ...)
 
+## During a merge, rebase or cherry-pick
+
+- `git hunk list` names each conflicted file on stderr
+  (`note: <path>: unresolved merge conflict — not listed`); it has no hunks.
+- Resolve the markers, then `git add <path>` (or `git rm <path>`) — the hint
+  prints the exact command — and continue (`git rebase --continue`,
+  `git commit`, ...).
+- Other files' hunks stage as usual; `--all` leaves conflicted files out and
+  says so. `--file <conflicted path>` refuses.
+- `git hunk commit` refuses during a merge, cherry-pick or revert (conclude it
+  with git first), as `git commit` refuses a partial commit then.
+
 ## Commands
 
 | Command | Purpose | Key flags |
@@ -252,6 +264,8 @@ All errors go to stderr. Exit 0 on success, 1 on error. Common errors:
 - `no unstaged changes` / `no staged changes` / `no changes in '<ref>'` / `no staged changes relative to '<ref>'` -- nothing to operate on
 - `error: line selection not supported for <binary file|typechange|symlink|empty file> '<file>'` -- use the whole hunk
 - `error: <sha> (<file>) is an untracked file -- restoring it cannot be undone; use --force` -- restore requires `--force` for untracked files (dry-run bypasses this gate)
+- `error: cannot stage '<path>' while it has an unresolved merge conflict` -- resolve it, then `git add <path>`
+- `error: cannot commit selected hunks during a merge` (or cherry-pick, revert) -- conclude it with `git commit` / `--continue` first
 
 ## References
 

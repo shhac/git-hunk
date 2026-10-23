@@ -9,6 +9,7 @@
 const std = @import("std");
 const types = @import("types.zig");
 const git = @import("git.zig");
+const conflicts = @import("conflicts.zig");
 
 const Allocator = std.mem.Allocator;
 const Verbosity = types.Verbosity;
@@ -21,6 +22,8 @@ pub fn stashPop(allocator: Allocator, verbosity: Verbosity) !void {
 
     // With no entry, git says so itself.
     const stash = try git.resolveStash(arena) orelse return popNatively(allocator, verbosity);
+    // Git refuses too, with "could not write index" and a "needs merge" per path.
+    try conflicts.refuseAny(arena, try conflicts.all(arena), "pop a stash");
     const untracked = try std.fmt.allocPrint(arena, "{s}^3", .{stash});
     const has_untracked = git.revisionExists(arena, untracked);
     // Git finds these only after merging the tracked changes, and stops
@@ -108,10 +111,10 @@ fn entryOf(mode: []const u8, id: []const u8) ?Entry {
 
 /// Git pops an entry into files without unstaged changes, and refuses the
 /// rest; merging is for what it refuses. Some of that it refuses for good
-/// reason: an index that is mid-merge, a submodule, and an entry whose
-/// staged changes to a file are no longer staged. An entry `git stash push`
-/// made without `--keep-index` took those out of the worktree too, and
-/// merging only its worktree changes would lose them.
+/// reason: a submodule, and an entry whose staged changes to a file are no
+/// longer staged (an index that is mid-merge is refused before this). An
+/// entry `git stash push` made without `--keep-index` took those out of the
+/// worktree too, and merging only its worktree changes would lose them.
 fn shouldMerge(arena: Allocator, stash: []const u8, changes: []const Change) !bool {
     if (changes.len == 0) return false;
     const unstaged = try nameSet(arena, try git.runGitDiffUnstagedNames(arena));
@@ -122,7 +125,6 @@ fn shouldMerge(arena: Allocator, stash: []const u8, changes: []const Change) !bo
     for (changes) |c| {
         if (Entry.isGitlink(c.base) or Entry.isGitlink(c.stashed)) return false;
     }
-    if (try git.indexHasUnmergedPaths(arena)) return false;
 
     const index_commit = try std.fmt.allocPrint(arena, "{s}^2", .{stash});
     const head_then = try std.fmt.allocPrint(arena, "{s}^1", .{stash});

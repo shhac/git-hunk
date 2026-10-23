@@ -71,6 +71,50 @@ pub fn chdirToRepoRoot(allocator: Allocator) ![]const u8 {
     return try allocator.dupe(u8, "");
 }
 
+/// `repo_path` as a shell argument naming it from the directory the user ran
+/// git-hunk in, `prefix` below the repo root: relative to there, quoted when a
+/// shell would split or expand it, and kept from reading as an option. For
+/// hints whose command is meant to be pasted as is. Double quotes where they
+/// suffice, since hints already wrap the whole command in single quotes.
+pub fn shellArgFromCwd(allocator: Allocator, prefix: []const u8, repo_path: []const u8) ![]const u8 {
+    var rest = repo_path;
+    var ups: usize = 0;
+    var components = std.mem.tokenizeScalar(u8, prefix, '/');
+    while (components.next()) |c| {
+        if (ups == 0 and rest.len > c.len and std.mem.startsWith(u8, rest, c) and rest[c.len] == '/') {
+            rest = rest[c.len + 1 ..];
+            continue;
+        }
+        ups += 1;
+    }
+
+    var arg: std.ArrayList(u8) = .empty;
+    defer arg.deinit(allocator);
+    for (0..ups) |_| try arg.appendSlice(allocator, "../");
+    if (ups == 0 and std.mem.startsWith(u8, rest, "-")) try arg.appendSlice(allocator, "./");
+    try arg.appendSlice(allocator, rest);
+
+    for (arg.items) |c| {
+        if (!isShellSafe(c)) break;
+    } else return allocator.dupe(u8, arg.items);
+    for (arg.items) |c| {
+        if (std.mem.indexOfScalar(u8, "$`\\\"!", c) != null) break;
+    } else return std.fmt.allocPrint(allocator, "\"{s}\"", .{arg.items});
+
+    var quoted: std.ArrayList(u8) = .empty;
+    errdefer quoted.deinit(allocator);
+    try quoted.append(allocator, '\'');
+    for (arg.items) |c| {
+        if (c == '\'') try quoted.appendSlice(allocator, "'\\''") else try quoted.append(allocator, c);
+    }
+    try quoted.append(allocator, '\'');
+    return quoted.toOwnedSlice(allocator);
+}
+
+fn isShellSafe(c: u8) bool {
+    return std.ascii.isAlphanumeric(c) or std.mem.indexOfScalar(u8, "._-/+@%=:,", c) != null;
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -129,4 +173,26 @@ test "resolveToRepoRelative: complex path" {
     const result = try resolveToRepoRelative(allocator, "src/lib", "../bin/./main.zig");
     defer allocator.free(result);
     try std.testing.expectEqualStrings("src/bin/main.zig", result);
+}
+
+test "shellArgFromCwd: names the path from the user's directory" {
+    const allocator = std.testing.allocator;
+    const cases = [_]struct { prefix: []const u8, path: []const u8, want: []const u8 }{
+        .{ .prefix = "", .path = "f.txt", .want = "f.txt" },
+        .{ .prefix = "", .path = "src/f.txt", .want = "src/f.txt" },
+        .{ .prefix = "src", .path = "src/f.txt", .want = "f.txt" },
+        .{ .prefix = "src", .path = "f.txt", .want = "../f.txt" },
+        .{ .prefix = "src/lib", .path = "src/bin/main.zig", .want = "../bin/main.zig" },
+        .{ .prefix = "src/lib", .path = "srcx/f", .want = "../../srcx/f" },
+        .{ .prefix = "", .path = "-rf", .want = "./-rf" },
+        .{ .prefix = "", .path = "with space.txt", .want = "\"with space.txt\"" },
+        .{ .prefix = "a", .path = "b/it's", .want = "\"../b/it's\"" },
+        .{ .prefix = "", .path = "it's $5", .want = "'it'\\''s $5'" },
+        .{ .prefix = "", .path = "$HOME", .want = "'$HOME'" },
+    };
+    for (cases) |case| {
+        const got = try shellArgFromCwd(allocator, case.prefix, case.path);
+        defer allocator.free(got);
+        try std.testing.expectEqualStrings(case.want, got);
+    }
 }

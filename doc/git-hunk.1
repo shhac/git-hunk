@@ -181,6 +181,26 @@ Select lines 3 through 5 and line 8.
 .TP
 .B a3f7c21:1,4\-6,10
 Select lines 1, 4 through 6, and 10.
+.SH MERGE CONFLICTS
+A file with an unresolved merge conflict has an index entry for each side of
+the merge and no staged version, so it has no hunks, and \fBgit add \-p\fR
+skips it too.
+Resolve the conflict and mark it resolved with \fBgit add \fI<path>\fR (or
+\fBgit rm \fI<path>\fR), as for any merge, rebase or cherry\-pick.
+.PP
+Every command that passes over a conflicted path says so on stderr, after its
+own output: \fBnote: \fI<path>\fB: unresolved merge conflict \(em not staged\fR
+(or listed, counted, restored, ...), with a \fBhint:\fR saying how to resolve
+it.
+\fB\-q\fR silences these notes; porcelain output on stdout never includes them.
+A command that would write to a conflicted path, because \fB\-\-file\fR names it
+or a hunk from \fB\-\-ref\fR touches it, refuses and changes nothing.
+.PP
+As \fBgit commit\fR refuses a partial commit then, \fBcommit\fR refuses while a
+merge, cherry\-pick or revert is waiting for its commit; conclude it first.
+Mid\-rebase it commits other hunks beside a conflict, as git does.
+\fBstash\fR and \fBstash pop\fR refuse while any path is conflicted, as
+\fBgit stash\fR does.
 .SH HASH STABILITY
 Hunk hashes are deterministic: the same diff content always produces the
 same hash. Hashes remain stable across invocations as long as the

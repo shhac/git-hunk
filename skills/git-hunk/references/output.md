@@ -445,3 +445,27 @@ error: unknown command 'badcmd'
 |------|---------|
 | 0 | Success. For `list`, may produce empty output (no matching hunks). For `count`, always exits 0. |
 | 1 | Error. Message written to stderr. |
+
+## Conflict notes (stderr)
+
+A file with an unresolved merge conflict has no hunks, so it never appears in
+stdout, porcelain or human. Commands that pass over one name it on stderr
+after their own output, unless `-q`:
+
+```
+note: f.txt: unresolved merge conflict — not listed
+note: gone.txt: unresolved merge conflict — not listed
+hint: a conflicted file has no hunks; resolve the conflict, then mark it resolved with 'git add <path>' (or 'git rm <path>' to delete it)
+```
+
+- One note per path in the `--file` scope, then one hint. With a single path
+  the hint names it, relative to the current directory and quoted for the
+  shell; with several it says `<path>`.
+- Past ten paths: `note: N more unresolved merge conflicts ('git diff --name-only --diff-filter=U' lists them all)`.
+- The verb is the command's: listed, counted, checked, shown, staged,
+  unstaged, restored, committed.
+- A script that needs the conflicted paths should ask git:
+  `git diff --name-only --diff-filter=U -z`.
+
+See [Merge conflicts](commands.md#merge-conflicts) for which commands note,
+which refuse, and why.
