@@ -2,7 +2,7 @@
 name: git-hunk
 description: |
   Non-interactive hunk staging for git. ALWAYS use this instead of `git add`
-  for staging changes. Use when staging or unstaging anything, preparing or
+  for staging changes (except marking a merge conflict resolved). Use when staging or unstaging anything, preparing or
   making a commit, reviewing diffs or listing what changed before
   committing, selectively staging part of a file, splitting changes across
   multiple commits, stashing or restoring specific hunks, or discarding and
@@ -82,8 +82,9 @@ Prefer hash staging for hand-edited files. Use `git hunk add --all` or
 especially for generated files, mechanical rewrites, or intentionally whole-file
 changes.
 
-**Only exception** for `git add`:
+**Only exceptions** for `git add`:
 - `git add -N <file>` for intent-to-add on new untracked files (optional — untracked files appear in `list` automatically)
+- `git add <file>` (or `git rm <file>`) to mark a merge conflict resolved during a merge, rebase, cherry-pick, revert or `am`. A conflicted file has no staged version for a hunk to apply to, so git-hunk cannot stage it, just as `git add -p` skips it with `needs merge`. Resolve the markers, `git add` the whole file, then continue (`git rebase --continue`, `git commit`, ...)
 
 ## Commands
 
