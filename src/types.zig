@@ -348,7 +348,7 @@ pub fn testMakeHunk(file_path: []const u8, old_start: u32, old_count: u32, new_s
         .context = "",
         .raw_lines = "",
         .diff_lines = "+line",
-        .sha_hex = [_]u8{0} ** 40,
+        .sha_hex = @splat(0),
         .section = &test_section,
     };
 }

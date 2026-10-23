@@ -33,7 +33,7 @@ jobs:
       - name: Setup Zig
         uses: shhac/setup-zig@215585c45325702506a3e8d6f4c9319073668d5f # v2.2.1-node24
         with:
-          version: '0.16.0'
+          version: '0.17.0'
 
       - name: Extract version from tag
         id: version

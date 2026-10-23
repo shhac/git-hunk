@@ -580,11 +580,11 @@ test "findConsumed returns hunks whose sha is absent from new_target" {
     const arena = arena_state.allocator();
 
     var h_old1 = types.testMakeHunk("a.txt", 1, 1, 1, 1);
-    h_old1.sha_hex = comptime [_]u8{'a'} ** 40;
+    h_old1.sha_hex = @splat('a');
     var h_old2 = types.testMakeHunk("a.txt", 5, 1, 5, 1);
-    h_old2.sha_hex = comptime [_]u8{'b'} ** 40;
+    h_old2.sha_hex = @splat('b');
     var h_new = types.testMakeHunk("a.txt", 1, 1, 1, 1);
-    h_new.sha_hex = comptime [_]u8{'a'} ** 40; // h_old1 survives, h_old2 consumed
+    h_new.sha_hex = @splat('a'); // h_old1 survives, h_old2 consumed
 
     const consumed = try findConsumed(arena, &.{ h_old1, h_old2 }, &.{h_new});
     try std.testing.expectEqual(@as(usize, 1), consumed.len);
@@ -597,7 +597,7 @@ test "findConsumed returns empty when all hunks survive" {
     const arena = arena_state.allocator();
 
     var h = types.testMakeHunk("a.txt", 1, 1, 1, 1);
-    h.sha_hex = comptime [_]u8{'a'} ** 40;
+    h.sha_hex = @splat('a');
     const consumed = try findConsumed(arena, &.{h}, &.{h});
     try std.testing.expectEqual(@as(usize, 0), consumed.len);
 }
@@ -608,11 +608,11 @@ test "findCreated returns hunks whose sha is absent from old_target" {
     const arena = arena_state.allocator();
 
     var h_old = types.testMakeHunk("a.txt", 1, 1, 1, 1);
-    h_old.sha_hex = comptime [_]u8{'a'} ** 40;
+    h_old.sha_hex = @splat('a');
     var h_new1 = types.testMakeHunk("a.txt", 1, 1, 1, 1);
-    h_new1.sha_hex = comptime [_]u8{'a'} ** 40; // already existed
+    h_new1.sha_hex = @splat('a'); // already existed
     var h_new2 = types.testMakeHunk("a.txt", 5, 1, 5, 1);
-    h_new2.sha_hex = comptime [_]u8{'c'} ** 40; // genuinely new
+    h_new2.sha_hex = @splat('c'); // genuinely new
 
     const created = try findCreated(arena, &.{h_old}, &.{ h_new1, h_new2 });
     try std.testing.expectEqual(@as(usize, 1), created.len);

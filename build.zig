@@ -25,9 +25,7 @@ pub fn build(b: *std.Build) void {
     const run_cmd = b.addRunArtifact(exe);
     run_step.dependOn(&run_cmd.step);
     run_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
-    }
+    run_cmd.addPassthruArgs();
 
     const test_step = b.step("test", "Run unit tests");
     const exe_tests = b.addTest(.{
@@ -47,7 +45,7 @@ pub fn build(b: *std.Build) void {
     });
     const fuzz_step = b.step("fuzz", "Brute-force fuzz the diff parser (args: iterations seed)");
     const run_fuzz = b.addRunArtifact(fuzz_exe);
-    if (b.args) |args| run_fuzz.addArgs(args);
+    run_fuzz.addPassthruArgs();
     fuzz_step.dependOn(&run_fuzz.step);
     // Install alongside the run so parallel campaigns can invoke zig-out/bin/fuzz-driver directly.
     fuzz_step.dependOn(&b.addInstallArtifact(fuzz_exe, .{}).step);
@@ -67,16 +65,16 @@ pub fn build(b: *std.Build) void {
     }));
     const docs_step = b.step("docs", "Regenerate man page sections and check doc/completion drift (-- --check for CI)");
     const run_docs = b.addRunArtifact(gen_docs);
-    run_docs.addArg(b.build_root.path orelse ".");
+    run_docs.addDirectoryArg(b.path("."));
     run_docs.addArg(version_option);
-    if (b.args) |args| run_docs.addArgs(args);
+    run_docs.addPassthruArgs();
     // Doc targets change out-of-band; never cache this run.
     run_docs.has_side_effects = true;
     docs_step.dependOn(&run_docs.step);
 
     const integration_step = b.step("test-integration", "Run integration tests (requires git)");
-    const bin_path = b.getInstallPath(.bin, "git-hunk");
-    const run_integration = b.addSystemCommand(&.{ "bash", "tests/run-all.sh", bin_path });
+    const run_integration = b.addSystemCommand(&.{ "bash", "tests/run-all.sh" });
+    run_integration.addArtifactArg(exe);
     run_integration.step.dependOn(b.getInstallStep());
     integration_step.dependOn(&run_integration.step);
 }

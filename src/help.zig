@@ -31,7 +31,7 @@ const item_col = 20;
 const example_col = 41;
 
 fn spaces(comptime n: usize) []const u8 {
-    return " " ** n;
+    return comptime &@as([n]u8, @splat(' '));
 }
 
 /// "  <label><pad><desc line>" with continuation lines indented to `col`.
