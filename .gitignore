@@ -63,3 +63,7 @@ git-hunk-*.zip
 
 # Scratch probe written by tests/test_git_env.sh (removed on a clean run)
 tests/.probe-git-env.*.sh
+
+# Field feedback from real repositories; only its README is part of the record.
+/FEEDBACK/*
+!/FEEDBACK/README.md
