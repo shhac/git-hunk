@@ -59,6 +59,23 @@ git hunk add a3f7c21 b82e0f4:1-73                     # specific hunks
 `--file` is also how you disambiguate a hash prefix that matches hunks in more
 than one file — that is the same scoping behaviour, used deliberately.
 
+### Several commits in a row: commit each with `git hunk commit`
+
+When a change splits into several commits, commit each one's hunks with
+`git hunk commit`:
+
+```bash
+git hunk commit a3f7c21 b82e0f4 -m "feat: add the parser"
+git hunk commit c91d2e3 -m "test: cover the parser"
+```
+
+It stages the hunks in a temporary index, so when a pre-commit hook rejects a
+commit, the real index stays as it was and the next commit holds only its own
+hunks. With `git hunk add` and `git commit`, a rejected commit leaves its hunks
+staged, and the next `git commit` takes them along with its own. On that path,
+check that each `git commit` exits 0 and that `git hunk list --staged` is empty
+before staging the next commit's hunks.
+
 ### After splitting: verify with something that compiles tests
 
 Splitting an implementation from its tests is an easy mis-slice, and many
