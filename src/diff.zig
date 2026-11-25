@@ -167,6 +167,15 @@ fn binaryShaPayload(arena: Allocator, index_line: ?[]const u8) ![]const u8 {
     return std.mem.concat(arena, u8, &.{ "binary ", ids[0..end] });
 }
 
+/// What stands in for the lines of a section that is all header, or null for
+/// one with nothing a hunk can carry (a mode change, a copy). A rename is
+/// told from the path's other changes by the path it came from.
+fn headerOnlyShaPayload(arena: Allocator, state: FileHeaderState) !?[]const u8 {
+    if (state.is_new_file or state.is_deleted_file) return "";
+    const from = state.rename_from orelse return null;
+    return try std.mem.concat(arena, u8, &.{ "rename from ", from });
+}
+
 const HunkBody = struct {
     diff_lines: []const u8,
     raw_lines: []const u8,
@@ -330,8 +339,9 @@ fn nextFileHeader(cursor: *DiffCursor) ?FileHeader {
 
 /// Parse what follows one file header into `hunks`: a synthesized whole-file
 /// hunk for binaries and empty new/deleted files, else one hunk per `@@`.
-/// Sections with nothing representable (submodules, mode or rename only)
-/// add nothing. Returns the section parsed, or null for one skipped.
+/// A rename with no content change gets a synthesized hunk too, so it can
+/// be selected. Sections with nothing representable (submodules, mode or
+/// copy only) add nothing. Returns the section parsed, or null for one skipped.
 fn parseFileSection(
     arena: Allocator,
     cursor: *DiffCursor,
@@ -354,11 +364,12 @@ fn parseFileSection(
 
     const minus_line = cursor.peek() orelse "";
     if (!std.mem.startsWith(u8, minus_line, "--- ")) {
-        // An empty new/deleted file has no ---/+++ at all.
-        if (!is_whole_file) return null;
+        // An empty new/deleted file has no ---/+++ at all, and neither does a
+        // rename that changes no content.
+        const sha_payload = (try headerOnlyShaPayload(arena, state)) orelse return null;
         const file_path = (try sectionFilePath(arena, header.diff_git_line, state)) orelse return null;
         const section = try newSection(arena, header, null, null, is_untracked);
-        try hunks.append(arena, synthesizeWholeFileHunk(file_path, section, ""));
+        try hunks.append(arena, synthesizeWholeFileHunk(file_path, section, sha_payload));
         return section;
     }
     cursor.advance();
@@ -1481,6 +1492,39 @@ test "parseDiff links the two halves of a typechange" {
     try std.testing.expect(hunks.items[0].section.is_typechange);
     try std.testing.expect(hunks.items[1].section.is_typechange);
     try std.testing.expect(!hunks.items[2].section.is_typechange);
+}
+
+test "parseDiff: a rename with no content change is one hunk, hashed by where it came from" {
+    const diff =
+        \\diff --git a/old.txt b/new.txt
+        \\similarity index 100%
+        \\rename from old.txt
+        \\rename to new.txt
+        \\diff --git a/other.txt b/new2.txt
+        \\similarity index 100%
+        \\rename from other.txt
+        \\rename to new2.txt
+        \\diff --git a/mode.sh b/mode.sh
+        \\old mode 100644
+        \\new mode 100755
+        \\
+    ;
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var hunks: std.ArrayList(Hunk) = .empty;
+    try parseDiff(arena, diff, .new, &hunks);
+
+    try std.testing.expectEqual(@as(usize, 2), hunks.items.len);
+    try std.testing.expectEqualStrings("new.txt", hunks.items[0].file_path);
+    try std.testing.expectEqualStrings("old.txt", hunks.items[0].pureRenameFrom().?);
+    try std.testing.expectEqualStrings("new2.txt", hunks.items[1].file_path);
+    try std.testing.expect(!std.mem.eql(u8, &hunks.items[0].sha_hex, &hunks.items[1].sha_hex));
+
+    var skipped: std.ArrayList(SkippedPath) = .empty;
+    try collectSkippedPaths(arena, diff, hunks.items, &skipped);
+    try std.testing.expectEqual(@as(usize, 1), skipped.items.len);
+    try std.testing.expectEqualStrings("mode.sh", skipped.items[0].file_path);
 }
 
 test "parseDiff binary rename takes the new path from rename to" {

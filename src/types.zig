@@ -71,6 +71,13 @@ pub const Hunk = struct {
     pub fn bodyLines(self: *const Hunk) BodyLineIterator {
         return .init(self.raw_lines);
     }
+
+    /// The path this hunk's file was renamed from, when the rename is all the
+    /// hunk carries: git found no content change to go with it.
+    pub fn pureRenameFrom(self: *const Hunk) ?[]const u8 {
+        if (self.raw_lines.len > 0 or self.section.is_binary) return null;
+        return self.section.renamed_from_path;
+    }
 };
 
 /// What a diff says about one file as a whole, shared by every hunk parsed

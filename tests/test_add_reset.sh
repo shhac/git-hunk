@@ -1212,4 +1212,37 @@ RENAME254="$(first_sha --staged --file moved254.txt)"
     || fail "test 254: both hunks should be reported on the rename's line, got: '$OUT254'"
 pass "test 254: a deletion added with its new path reports the rename list --staged shows"
 
+# ============================================================================
+# Test 255: a rename with no content change is a hunk of its own. A file moved
+# and its new path marked intent-to-add is a rename git finds nothing else to
+# say about, so it had no hunk, and `add --all` left it out without a word.
+# ============================================================================
+new_repo
+mkdir moved255
+mv alpha.txt moved255/alpha.txt
+mv beta.txt moved255/beta.txt
+sed -i.bak '3s/.*/edited beta 255/' moved255/beta.txt
+git add -N moved255
+LIST255="$("$GIT_HUNK" list --porcelain --oneline --file moved255/alpha.txt)"
+[[ "$(echo "$LIST255" | cut -f3-)" == "0	0	renamed from alpha.txt" ]] \
+    || fail "test 255: the rename should be listed as one hunk, got: '$LIST255'"
+"$GIT_HUNK" list --no-color --oneline --file moved255/alpha.txt | grep -q '(rename)  *renamed from alpha.txt$' \
+    || fail "test 255: human list should mark the rename, got: '$("$GIT_HUNK" list --no-color --oneline)'"
+ERR255="$("$GIT_HUNK" add "$(echo "$LIST255" | cut -f1):1" 2>&1)" && fail "test 255: a line spec on a rename should fail"
+echo "$ERR255" | grep -q "line selection not supported for rename 'moved255/alpha.txt'" \
+    || fail "test 255: line spec error should name the rename, got: '$ERR255'"
+"$GIT_HUNK" add --all > /dev/null 2>&1 || fail "test 255: add --all failed"
+STATUS255="$(git status --porcelain)"
+[[ "$STATUS255" == "R  alpha.txt -> moved255/alpha.txt
+R  beta.txt -> moved255/beta.txt" ]] \
+    || fail "test 255: both renames should be staged whole, got: '$STATUS255'"
+STAGED255="$(first_sha --staged --oneline --file moved255/alpha.txt)"
+[[ "$STAGED255" == "$(echo "$LIST255" | cut -f1)" ]] \
+    || fail "test 255: the staged rename should keep its hash, got: '$STAGED255'"
+"$GIT_HUNK" reset "$STAGED255" > /dev/null 2>&1 || fail "test 255: reset of the staged rename failed"
+[[ "$(git status --porcelain -- alpha.txt moved255/alpha.txt)" == " D alpha.txt
+?? moved255/alpha.txt" ]] \
+    || fail "test 255: reset should hand the rename back, got: '$(git status --porcelain)'"
+pass "test 255: a rename with no content change lists, stages and unstages as a hunk"
+
 report_results

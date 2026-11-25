@@ -258,9 +258,10 @@ fn resolveMatchedHunks(
     return matched.items;
 }
 
-/// Exit if a line spec cannot select part of `hunk`: a binary or empty file
-/// has no lines, a symlink's one line is its whole target, and the two halves
-/// of a typechange only make sense applied together.
+/// Exit if a line spec cannot select part of `hunk`: a binary, an empty file
+/// and a rename with no content change have no lines, a symlink's one line is
+/// its whole target, and the two halves of a typechange only make sense
+/// applied together.
 fn rejectLineSelection(hunk: *const Hunk) void {
     const section = hunk.section;
     const what: []const u8 = if (section.is_binary)
@@ -269,6 +270,8 @@ fn rejectLineSelection(hunk: *const Hunk) void {
         "typechange"
     else if (section.is_symlink)
         "symlink"
+    else if (hunk.pureRenameFrom() != null)
+        "rename"
     else if (hunk.raw_lines.len == 0)
         "empty file"
     else

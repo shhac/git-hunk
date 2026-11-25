@@ -319,12 +319,23 @@ fn hunkSummaryWithFallback(buf: []u8, h: Hunk) []const u8 {
     if (section.is_binary) return "binary";
     if (section.is_new_file) return "new file";
     if (section.is_deleted_file) return "deleted";
+    if (h.pureRenameFrom()) |from| return renameSummary(buf, from);
     // Prefer first changed line — answers "what changed?" for quick scanning
     const changed = firstChangedLine(buf, h.diff_lines);
     if (changed.len > 0) return changed;
     // Fall back to function context from @@ header
     if (h.context.len > 0) return h.context;
     return "";
+}
+
+/// "renamed from <path>", the path cut short where `buf` runs out.
+fn renameSummary(buf: []u8, from: []const u8) []const u8 {
+    const label = "renamed from ";
+    if (buf.len < label.len) return "";
+    const path_len = @min(from.len, buf.len - label.len);
+    @memcpy(buf[0..label.len], label);
+    @memcpy(buf[label.len..][0..path_len], from[0..path_len]);
+    return buf[0 .. label.len + path_len];
 }
 
 fn firstChangedLine(buf: []u8, diff_lines: []const u8) []const u8 {
@@ -352,6 +363,7 @@ fn firstChangedLine(buf: []u8, diff_lines: []const u8) []const u8 {
 /// has them, so `empty` means a file with no lines on either side.
 fn formatLineRange(buf: []u8, h: Hunk, anchor: Anchor) []const u8 {
     if (h.section.is_binary) return "(binary)";
+    if (h.pureRenameFrom() != null) return "(rename)";
     const side: Anchor = if (!isAbsentOn(h, anchor)) anchor else switch (anchor) {
         .old => .new,
         .new => .old,
@@ -689,6 +701,18 @@ test "hunkSummaryWithFallback deleted" {
     const section: types.FileSection = .{ .is_deleted_file = true };
     h.section = &section;
     try std.testing.expectEqualStrings("deleted", hunkSummaryWithFallback(&buf, h));
+}
+
+test "hunkSummaryWithFallback: a rename with no content names the path it came from" {
+    const section: types.FileSection = .{ .rename_from = "old/name.txt", .renamed_from_path = "old/name.txt" };
+    var h = types.testMakeHunk("new/name.txt", 0, 0, 0, 0);
+    h.section = &section;
+    var buf: [64]u8 = undefined;
+    try std.testing.expectEqualStrings("renamed from old/name.txt", hunkSummaryWithFallback(&buf, h));
+    var short: [16]u8 = undefined;
+    try std.testing.expectEqualStrings("renamed from old", hunkSummaryWithFallback(&short, h));
+    var range_buf: [24]u8 = undefined;
+    try std.testing.expectEqualStrings("(rename)", formatLineRange(&range_buf, h, .new));
 }
 
 test "hunkSummaryWithFallback first changed line" {
