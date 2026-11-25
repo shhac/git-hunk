@@ -672,6 +672,8 @@ check_usage_error "test 2009" "$RANGE_ERR" list --ref R..HEAD --staged
 check_usage_error "test 2009" "error: unknown flag '--bogus'" list --bogus --staged --ref R..HEAD
 check_usage_error "test 2009" "error: --tracked-only and --untracked-only are mutually exclusive" \
     list --tracked-only --untracked-only --staged --ref R..HEAD
+check_usage_error "test 2009" "error: --quiet and --verbose are mutually exclusive" list -q -v
+check_usage_error "test 2009" "error: --quiet and --verbose are mutually exclusive" add --all --verbose --quiet
 check_usage_error "test 2009" "error: --3way is not supported for this subcommand (only add, reset, restore, commit)" \
     stash --ref C1 --3way
 check_usage_error "test 2009" "error: unknown flag '--staged'" add --staged

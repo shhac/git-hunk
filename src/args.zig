@@ -49,11 +49,11 @@ fn parseCommonFlag(allocator: Allocator, arg: []const u8, i: *usize, args: []con
         sf.ref = try takeValue(args, i);
         return true;
     } else if (std.mem.eql(u8, arg, "--tracked-only")) {
-        if (c.diff_filter == .untracked_only) return error.ConflictingFilter;
+        if (c.diff_filter == .untracked_only) return conflictingFilter();
         c.diff_filter = .tracked_only;
         return true;
     } else if (std.mem.eql(u8, arg, "--untracked-only")) {
-        if (c.diff_filter == .tracked_only) return error.ConflictingFilter;
+        if (c.diff_filter == .tracked_only) return conflictingFilter();
         c.diff_filter = .untracked_only;
         return true;
     } else if (std.mem.eql(u8, arg, "--no-color")) {
@@ -72,11 +72,11 @@ fn parseCommonFlag(allocator: Allocator, arg: []const u8, i: *usize, args: []con
         c.context = try parseContext(arg["-U".len..]);
         return true;
     } else if (std.mem.eql(u8, arg, "--quiet") or std.mem.eql(u8, arg, "-q")) {
-        if (c.verbosity == .verbose) return error.ConflictingVerbosity;
+        if (c.verbosity == .verbose) return conflictingVerbosity();
         c.verbosity = .quiet;
         return true;
     } else if (std.mem.eql(u8, arg, "--verbose") or std.mem.eql(u8, arg, "-v")) {
-        if (c.verbosity == .quiet) return error.ConflictingVerbosity;
+        if (c.verbosity == .quiet) return conflictingVerbosity();
         c.verbosity = .verbose;
         return true;
     } else if (std.mem.eql(u8, arg, "--3way")) {
@@ -151,6 +151,16 @@ fn rejectUnsupported3way(comptime cmd: []const u8, common: Common) error{Unknown
 fn unknownFlag(arg: []const u8) error{UnknownFlag} {
     std.debug.print("error: unknown flag '{s}'\n", .{arg});
     return error.UnknownFlag;
+}
+
+fn conflictingFilter() error{ConflictingFilter} {
+    std.debug.print("error: --tracked-only and --untracked-only are mutually exclusive\n", .{});
+    return error.ConflictingFilter;
+}
+
+fn conflictingVerbosity() error{ConflictingVerbosity} {
+    std.debug.print("error: --quiet and --verbose are mutually exclusive\n", .{});
+    return error.ConflictingVerbosity;
 }
 
 /// What --ref and --staged said. Either may come first, so the diff source

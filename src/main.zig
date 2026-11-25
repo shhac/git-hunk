@@ -173,9 +173,6 @@ fn handleParseError(stdout: *std.Io.Writer, err: anyerror, cmd: help.Command) no
         stdout.flush() catch {};
         std.process.exit(0);
     }
-    if (err == error.ConflictingFilter) {
-        std.debug.print("error: --tracked-only and --untracked-only are mutually exclusive\n", .{});
-    }
     // The parser has said what is wrong. The usage of every command would
     // push that off the screen, so only where to find this command's is named.
     std.debug.print("hint: 'git hunk help {s}' shows usage\n", .{@tagName(cmd)});
