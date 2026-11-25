@@ -666,4 +666,25 @@ done
     || fail "test 1120: a hunk in a file with nothing staged should still commit"
 pass "test 1120: hunks that build on staged changes are refused with the reason"
 
+# ============================================================================
+# Test 1121: a commit that lands but cannot resync the index ends on the
+# warning. The resync's failed apply used to be explained like any other, so
+# a commit that had succeeded was followed by "run the same command again".
+# ============================================================================
+new_repo
+sed -i.bak '1s/.*/Changed alpha 1121./' alpha.txt
+touch .git/index.lock
+EC1121=0
+ERR1121="$("$GIT_HUNK" commit --all -m "locked 1121" 2>&1 > /dev/null)" || EC1121=$?
+rm -f .git/index.lock
+[[ "$EC1121" -eq 0 ]] || fail "test 1121: the commit should stand, got exit $EC1121: '$ERR1121'"
+[[ "$(git log -1 --format=%s)" == "locked 1121" ]] || fail "test 1121: the commit is missing"
+echo "$ERR1121" | grep -q "^warning: commit succeeded but index sync failed" \
+    || fail "test 1121: should warn that the index is behind, got: '$ERR1121'"
+echo "$ERR1121" | grep -q "run the same command again\|re-run 'list'" \
+    && fail "test 1121: should not tell the user to repeat a commit that landed, got: '$ERR1121'"
+git reset -q
+[[ -z "$(git status --porcelain)" ]] || fail "test 1121: the tree should be clean once the index is reset, got: '$(git status --porcelain)'"
+pass "test 1121: a failed index resync after a commit is a warning only"
+
 report_results

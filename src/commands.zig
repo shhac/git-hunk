@@ -454,7 +454,7 @@ fn applyTextAndBinary(
     if (text_matched.len > 0) {
         const reverse = action == .unstage;
         const patches = try patch_mod.sortAndBuildPatches(arena, text_matched, if (reverse) .reverse else .forward);
-        const result = try git.applyPatches(allocator, patches, .{ .reverse = reverse, .target = .index, .three_way = three_way, .ref = ref });
+        const result = try git.applyPatches(allocator, patches, .{ .reverse = reverse, .target = .index, .three_way = three_way, .on_failure = .forRef(ref) });
         any_conflicts = result == .applied_with_conflicts;
     }
     if (binary_paths.len > 0) {
@@ -542,7 +542,7 @@ fn dryRunApplyHunks(
             .reverse = reverse,
             .target = .index,
             .check_only = true,
-            .ref = opts.common.source.refText(),
+            .on_failure = .forRef(opts.common.source.refText()),
         });
     }
 
@@ -677,7 +677,7 @@ fn restoreWorktree(allocator: Allocator, arena: Allocator, matched: []const Matc
             .target = .worktree,
             .check_only = opts.dry_run,
             .three_way = opts.common.three_way and !opts.dry_run,
-            .ref = opts.common.source.refText(),
+            .on_failure = .forRef(opts.common.source.refText()),
         });
         any_conflicts = result == .applied_with_conflicts;
     }
@@ -823,11 +823,12 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
     const patches = try patch_mod.sortAndBuildPatches(arena, text_matched, .forward);
 
     const target_paths = try patch_mod.collectUniqueFilePaths(arena, matched);
+    const staged = try commit_mod.snapshotStaged(arena, target_paths, opts.common.source.refText());
 
     // Dry-run: validate patches against what the commit would build on and show what would be committed.
     // Checked before the message requirement — a preview has nothing to write a message onto.
     if (opts.dry_run) {
-        checkTempIndexCommit(allocator, patches, target_paths, opts.common.source.refText()) catch |err| switch (err) {
+        checkTempIndexCommit(allocator, patches, staged.on_failure) catch |err| switch (err) {
             error.ReadTreeFailed => std.process.exit(1),
             else => return err,
         };
@@ -847,7 +848,7 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
         .message = message,
         .amend = opts.amend,
         .three_way = opts.common.three_way,
-        .ref = opts.common.source.refText(),
+        .staged = staged,
     }) catch |err| switch (err) {
         // git's own stderr has already been shown; exit without extra noise.
         error.ReadTreeFailed, error.CommitFailed, error.AddFailed => std.process.exit(1),

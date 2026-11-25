@@ -286,19 +286,32 @@ const ApplyOptions = struct {
     /// `git apply` rejects `--3way` together with `--check`, so dry-run paths
     /// must drop this flag.
     three_way: bool = false,
-    /// The `--ref` in effect as the user typed it, for the failure message (so
-    /// the user knows which historical diff conflicted). Null means "current diff".
-    ref: ?[]const u8 = null,
     /// Optional child environment (e.g. GIT_INDEX_FILE pointing at a temp
     /// index). Null inherits the parent environment.
     env_map: ?*const EnvMap = null,
-    /// Follow git's own complaint with ours. Off for a caller whose failure
-    /// means something other than a stale or drifted hunk, which says so itself.
-    explain_failure: bool = true,
-    /// Paths the patch touches whose staged changes the target index lacks,
-    /// as a commit's does: it is built on HEAD. A hunk that builds on those
-    /// changes cannot apply there, however fresh its hash.
-    staged_paths: []const []const u8 = &.{},
+    on_failure: ApplyFailure = .stale_hunk,
+};
+
+/// What a patch that does not apply means to the caller, which decides what
+/// is said about it. A failure of git's own (see `gitStopped`) is reported as
+/// that whichever this is, unless nothing is to be said at all.
+pub const ApplyFailure = union(enum) {
+    /// Say nothing, git's complaint included: the caller has another way to try.
+    silent,
+    /// git's complaint and no more: the caller says what it means itself.
+    git_words_only,
+    /// A hunk of the current diff no longer fits, so its hash is stale.
+    stale_hunk,
+    /// Changes from this `--ref`, as the user typed it, have drifted from the target.
+    drifted_ref: []const u8,
+    /// The target is built on HEAD, as a commit's index is, and the patch
+    /// touches these paths, which have staged changes it may build on.
+    built_on_staged: []const []const u8,
+
+    /// For hunks from `ref`, or from the current diff when there is none.
+    pub fn forRef(ref: ?[]const u8) ApplyFailure {
+        return if (ref) |r| .{ .drifted_ref = r } else .stale_hunk;
+    }
 };
 
 const ApplyResult = enum { applied_clean, applied_with_conflicts };
@@ -329,7 +342,7 @@ pub fn applyPatches(allocator: Allocator, patches: []const []const u8, opts: App
 
 pub fn runGitApply(allocator: Allocator, patch: []const u8, opts: ApplyOptions) !ApplyResult {
     if (opts.three_way and opts.target == .worktree and !opts.check_only) return mergeIntoWorktree(allocator, patch, opts);
-    return execGitApply(allocator, patch, opts, .report);
+    return execGitApply(allocator, patch, opts);
 }
 
 /// `git apply --3way` implies `--index`: it would stage every path it
@@ -340,7 +353,8 @@ pub fn runGitApply(allocator: Allocator, patch: []const u8, opts: ApplyOptions) 
 fn mergeIntoWorktree(allocator: Allocator, patch: []const u8, opts: ApplyOptions) !ApplyResult {
     var direct = opts;
     direct.three_way = false;
-    if (execGitApply(allocator, patch, direct, .silent)) |result| {
+    direct.on_failure = .silent;
+    if (execGitApply(allocator, patch, direct)) |result| {
         return result;
     } else |err| if (err != error.PatchFailed) return err;
 
@@ -349,7 +363,7 @@ fn mergeIntoWorktree(allocator: Allocator, patch: []const u8, opts: ApplyOptions
     try copyIndexTo(allocator, tmp.path_z);
     var merge = opts;
     merge.env_map = &tmp.env_map;
-    const result = try execGitApply(allocator, patch, merge, .report);
+    const result = try execGitApply(allocator, patch, merge);
     if (result == .applied_with_conflicts) try recordConflicts(allocator, &tmp.env_map);
     return result;
 }
@@ -398,10 +412,7 @@ fn recordConflicts(allocator: Allocator, merged_env: *const EnvMap) !void {
     allocator.free(out);
 }
 
-/// Whether a failed apply prints git's complaint and ours.
-const FailureReport = enum { report, silent };
-
-fn execGitApply(allocator: Allocator, patch: []const u8, opts: ApplyOptions, failure_report: FailureReport) !ApplyResult {
+fn execGitApply(allocator: Allocator, patch: []const u8, opts: ApplyOptions) !ApplyResult {
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(allocator);
     try argv.appendSlice(allocator, &.{ "git", "apply" });
@@ -438,9 +449,9 @@ fn execGitApply(allocator: Allocator, patch: []const u8, opts: ApplyOptions, fai
         return .applied_with_conflicts;
     }
     if (result.exit_code != 0) {
-        if (failure_report == .silent) return error.PatchFailed;
+        if (opts.on_failure == .silent) return error.PatchFailed;
         if (result.stderr.len > 0) std.debug.print("{s}", .{result.stderr});
-        if (opts.explain_failure) explainApplyFailure(result.stderr, opts);
+        explainApplyFailure(result.stderr, opts);
         return error.PatchFailed;
     }
     return .applied_clean;
@@ -448,28 +459,34 @@ fn execGitApply(allocator: Allocator, patch: []const u8, opts: ApplyOptions, fai
 
 /// Say what a failed `git apply` means for the user, after git's own words.
 fn explainApplyFailure(stderr: []const u8, opts: ApplyOptions) void {
+    if (opts.on_failure == .silent or opts.on_failure == .git_words_only) return;
     if (gitStopped(stderr)) {
         std.debug.print("error: git stopped before applying the patch, for the reason above — the hashes are not stale; run the same command again once that is fixed\n", .{});
         return;
     }
-    const try_3way: []const u8 = if (opts.three_way) "" else " (try --3way)";
-    if (opts.ref) |r| {
-        const target: []const u8 = switch (opts.target) {
-            .index => "the index",
-            .worktree => "the worktree",
-        };
-        std.debug.print("error: changes from '{s}' do not apply cleanly to {s}{s}\n", .{ r, target, try_3way });
-    } else if (opts.staged_paths.len > 0) {
-        std.debug.print("error: the selected hunks do not apply to HEAD on their own — they may build on the staged changes to ", .{});
-        printPathList(opts.staged_paths);
-        std.debug.print(
-            "\nhint: a commit is built on HEAD in an index of its own, the one git names above, without what you have staged. Stage these hunks as well ('git hunk add') and run 'git commit', or commit the staged changes first\n",
-            .{},
-        );
-    } else if (opts.check_only) {
-        std.debug.print("error: patch would not apply cleanly — hashes may be stale\n", .{});
-    } else {
-        std.debug.print("error: patch did not apply cleanly — re-run 'list' and try again\n", .{});
+    switch (opts.on_failure) {
+        .silent, .git_words_only => unreachable,
+        .stale_hunk => if (opts.check_only) {
+            std.debug.print("error: patch would not apply cleanly — hashes may be stale\n", .{});
+        } else {
+            std.debug.print("error: patch did not apply cleanly — re-run 'list' and try again\n", .{});
+        },
+        .drifted_ref => |ref| {
+            const target: []const u8 = switch (opts.target) {
+                .index => "the index",
+                .worktree => "the worktree",
+            };
+            const try_3way: []const u8 = if (opts.three_way) "" else " (try --3way)";
+            std.debug.print("error: changes from '{s}' do not apply cleanly to {s}{s}\n", .{ ref, target, try_3way });
+        },
+        .built_on_staged => |paths| {
+            std.debug.print("error: the selected hunks do not apply to HEAD on their own — they may build on the staged changes to ", .{});
+            printPathList(paths);
+            std.debug.print(
+                "\nhint: a commit is built on HEAD in an index of its own, the one git names above, without what you have staged. Stage these hunks as well ('git hunk add') and run 'git commit', or commit the staged changes first\n",
+                .{},
+            );
+        },
     }
 }
 
@@ -1094,4 +1111,17 @@ test "parseUnmergedPaths of an empty listing is empty" {
     const paths = try parseUnmergedPaths(std.testing.allocator, "");
     defer std.testing.allocator.free(paths);
     try std.testing.expectEqual(@as(usize, 0), paths.len);
+}
+
+test "gitStopped: git's own failure is told from a patch that does not fit" {
+    try std.testing.expect(gitStopped("fatal: Unable to create '/r/.git/index.lock': File exists.\n\nAnother git process seems to be running\n"));
+    try std.testing.expect(gitStopped("warning: something\nfatal: unable to write new index file\n"));
+    try std.testing.expect(!gitStopped("error: patch failed: a.txt:1\nerror: a.txt: patch does not apply\n"));
+    try std.testing.expect(!gitStopped("error: a.txt: not fatal: only said so\n"));
+    try std.testing.expect(!gitStopped(""));
+}
+
+test "ApplyFailure.forRef: a ref makes a failure drift, none makes it a stale hash" {
+    try std.testing.expectEqualStrings("HEAD~2", ApplyFailure.forRef("HEAD~2").drifted_ref);
+    try std.testing.expectEqual(ApplyFailure.stale_hunk, ApplyFailure.forRef(null));
 }

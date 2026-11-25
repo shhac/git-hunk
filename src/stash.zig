@@ -197,7 +197,7 @@ pub fn cleanupWorktree(
         };
     }
     for (cleanup_patches) |patch| {
-        _ = git.runGitApply(allocator, patch, .{ .reverse = true, .target = .worktree, .explain_failure = false }) catch {
+        _ = git.runGitApply(allocator, patch, .{ .reverse = true, .target = .worktree, .on_failure = .git_words_only }) catch {
             removed_all = false;
             break;
         };

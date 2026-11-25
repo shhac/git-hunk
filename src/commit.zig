@@ -79,8 +79,27 @@ const CommitContext = struct {
     message: []const u8,
     amend: bool,
     three_way: bool,
-    ref: ?[]const u8,
+    staged: StagedSnapshot,
 };
+
+/// What the user had staged when the commit began, taken before HEAD moves.
+pub const StagedSnapshot = struct {
+    /// NUL-separated staged paths, or null if git could not list them.
+    raw: ?[]const u8,
+    /// What it means if the commit's patches do not apply to HEAD.
+    on_failure: git.ApplyFailure,
+};
+
+/// Snapshot the staged paths and work out from them, once for the commit and
+/// its dry run alike, how a patch that does not apply is to be explained:
+/// hunks from `ref` have drifted, and hunks of files the user has staged
+/// changes to may build on those.
+pub fn snapshotStaged(arena: Allocator, target_paths: []const []const u8, ref: ?[]const u8) !StagedSnapshot {
+    const raw: ?[]const u8 = git.runGitDiffCachedNames(arena) catch null;
+    if (ref) |r| return .{ .raw = raw, .on_failure = .{ .drifted_ref = r } };
+    const staged_targets = try stagedTargetPaths(arena, target_paths, raw);
+    return .{ .raw = raw, .on_failure = if (staged_targets.len > 0) .{ .built_on_staged = staged_targets } else .stale_hunk };
+}
 
 /// A throwaway index holding HEAD's tree: the base every commit is built on.
 /// That holds for --amend too, since the hunks are relative to HEAD and the
@@ -103,15 +122,10 @@ fn seedTempIndex(allocator: Allocator) !git.TempIndex {
 /// same HEAD-seeded index the real commit builds on, so a preview can never
 /// pass where the commit then fails. `--3way` is not passed: git rejects it
 /// alongside `--check`.
-pub fn checkTempIndexCommit(allocator: Allocator, patches: []const []const u8, target_paths: []const []const u8, ref: ?[]const u8) !void {
-    var arena_state = std.heap.ArenaAllocator.init(allocator);
-    defer arena_state.deinit();
+pub fn checkTempIndexCommit(allocator: Allocator, patches: []const []const u8, on_failure: git.ApplyFailure) !void {
     var tmp = try seedTempIndex(allocator);
     defer tmp.deinit();
-    const user_staged_raw: ?[]u8 = git.runGitDiffCachedNames(allocator) catch null;
-    defer if (user_staged_raw) |raw| allocator.free(raw);
-    const staged_targets = try stagedTargetPaths(arena_state.allocator(), target_paths, user_staged_raw);
-    _ = try git.applyPatches(allocator, patches, .{ .target = .index, .check_only = true, .ref = ref, .env_map = &tmp.env_map, .staged_paths = staged_targets });
+    _ = try git.applyPatches(allocator, patches, .{ .target = .index, .check_only = true, .env_map = &tmp.env_map, .on_failure = on_failure });
 }
 
 /// The target paths the user also has staged changes to. The commit is built
@@ -141,18 +155,11 @@ pub fn runTempIndexCommit(ctx: CommitContext) ![]const u8 {
     var tmp = try seedTempIndex(ctx.allocator);
     defer tmp.deinit();
 
-    // Snapshot the user's staged paths before HEAD moves: a failed apply is
-    // explained by them, and the hook-path cleanup below must never touch
-    // anything the user had staged.
-    const user_staged_raw: ?[]u8 = git.runGitDiffCachedNames(ctx.allocator) catch null;
-    defer if (user_staged_raw) |raw| ctx.allocator.free(raw);
-    const staged_targets = try stagedTargetPaths(arena, ctx.target_paths, user_staged_raw);
-
     // 2. Stage target hunks into the temp index (text via patch, binary via
     // git add). A --3way conflict would leave unmerged temp-index entries
     // that `git commit` refuses; abort early with a clear instruction.
     for (ctx.patches) |p| {
-        const result = try git.runGitApply(ctx.allocator, p, .{ .target = .index, .three_way = ctx.three_way, .ref = ctx.ref, .env_map = &tmp.env_map, .staged_paths = staged_targets });
+        const result = try git.runGitApply(ctx.allocator, p, .{ .target = .index, .three_way = ctx.three_way, .env_map = &tmp.env_map, .on_failure = ctx.staged.on_failure });
         if (result == .applied_with_conflicts) {
             std.debug.print("error: --3way produced conflicts; cannot commit. Use `git hunk restore --ref <X> --3way <sha>` then resolve and `git commit` normally.\n", .{});
             return error.PatchFailed;
@@ -175,7 +182,7 @@ pub fn runTempIndexCommit(ctx: CommitContext) ![]const u8 {
     // deletions, since the real index never learned about them. Point their
     // index entries at the new HEAD. Best-effort cosmetic cleanup: any git
     // failure here just skips it.
-    syncHookCreatedPaths(arena, ctx, user_staged_raw) catch {};
+    syncHookCreatedPaths(arena, ctx, ctx.staged.raw) catch {};
 
     return commit_output;
 }
@@ -189,7 +196,9 @@ fn syncRealIndex(ctx: CommitContext) void {
     var failed_paths: std.ArrayList([]const u8) = .empty;
     defer failed_paths.deinit(ctx.allocator);
     for (ctx.patches) |p| {
-        const r = git.runGitApply(ctx.allocator, p, .{ .target = .index, .three_way = ctx.three_way, .ref = ctx.ref }) catch {
+        // The commit stands, so this is not a hash to re-list or a command
+        // to run again: the warning below says what is left to do.
+        const r = git.runGitApply(ctx.allocator, p, .{ .target = .index, .three_way = ctx.three_way, .on_failure = .git_words_only }) catch {
             failed_paths.append(ctx.allocator, firstPatchPath(p) orelse "<unknown>") catch {};
             continue;
         };
