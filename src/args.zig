@@ -560,9 +560,11 @@ fn appendPathsFromFile(allocator: Allocator, source: []const u8, list: *std.Arra
 /// Append an owned, repo-relative copy of a path the user typed from their
 /// own directory: the process has already chdir'd to the repo root.
 fn appendRepoRelative(allocator: Allocator, list: *std.ArrayList([]const u8), path: []const u8) !void {
-    const owned = try path_mod.resolveToRepoRelative(allocator, types.getRepoPrefix(), path);
-    errdefer allocator.free(owned);
-    try list.append(allocator, owned);
+    const resolved = try path_mod.resolveToRepoRelative(allocator, types.getRepoPrefix(), path);
+    errdefer allocator.free(resolved);
+    if (resolved.len > 0) return list.append(allocator, resolved);
+    allocator.free(resolved);
+    try list.append(allocator, try allocator.dupe(u8, types.repo_root_selector));
 }
 
 fn looksLikePathArg(arg: []const u8) bool {

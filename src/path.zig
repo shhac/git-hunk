@@ -10,10 +10,8 @@ const defaultIo = types.getIo;
 /// Resolve a path relative to the original cwd into a repo-relative path.
 /// prefix: path components from repo root to original cwd (e.g., "bar/sub")
 /// rel_path: user-provided path relative to original cwd
-/// Returns repo-relative path. Caller owns the memory.
+/// Returns repo-relative path, empty for the repo root itself. Caller owns the memory.
 pub fn resolveToRepoRelative(allocator: Allocator, prefix: []const u8, rel_path: []const u8) ![]const u8 {
-    if (prefix.len == 0) return try allocator.dupe(u8, rel_path);
-
     var parts: std.ArrayList([]const u8) = .empty;
     defer parts.deinit(allocator);
 
@@ -129,6 +127,16 @@ test "resolveToRepoRelative: empty prefix passes through" {
     const result = try resolveToRepoRelative(allocator, "", "foo.txt");
     defer allocator.free(result);
     try std.testing.expectEqualStrings("foo.txt", result);
+}
+
+test "resolveToRepoRelative: a path typed at the root is tidied like any other" {
+    const allocator = std.testing.allocator;
+    const cases = [_][2][]const u8{ .{ "./foo.txt", "foo.txt" }, .{ "dir/", "dir" }, .{ "dir//sub/./f", "dir/sub/f" }, .{ ".", "" } };
+    for (cases) |case| {
+        const result = try resolveToRepoRelative(allocator, "", case[0]);
+        defer allocator.free(result);
+        try std.testing.expectEqualStrings(case[1], result);
+    }
 }
 
 test "resolveToRepoRelative: simple prefix join" {

@@ -328,10 +328,22 @@ pub fn computeHunkSha(file_path: []const u8, anchor_line: u32, diff_lines: []con
 pub fn matchesFileFilter(file_path: []const u8, filter: []const []const u8) bool {
     if (filter.len == 0) return true;
     for (filter) |f| {
-        if (std.mem.eql(u8, file_path, f)) return true;
+        if (selectsPath(f, file_path)) return true;
     }
     return false;
 }
+
+/// Whether `selector`, one --file value, covers `file_path`: the file it
+/// names, or any file under the directory it names.
+fn selectsPath(selector: []const u8, file_path: []const u8) bool {
+    if (std.mem.eql(u8, selector, repo_root_selector)) return true;
+    if (!std.mem.startsWith(u8, file_path, selector)) return false;
+    return file_path.len == selector.len or file_path[selector.len] == '/';
+}
+
+/// The --file value for the repository root, which resolves to no path at
+/// all. Kept as `.` because git refuses an empty pathspec.
+pub const repo_root_selector = ".";
 
 /// Check whether two line ranges overlap (treating count=0 as spanning 1 line).
 pub fn rangesOverlap(a_start: u32, a_count: u32, b_start: u32, b_count: u32) bool {
@@ -462,7 +474,16 @@ test "matchesFileFilter any-of with multiple entries" {
     try std.testing.expect(!matchesFileFilter("d.zig", &filter));
 }
 
-test "matchesFileFilter requires exact equality (no prefix match)" {
+test "matchesFileFilter: a directory selects the files under it" {
+    const filter = [_][]const u8{"src/lib"};
+    try std.testing.expect(matchesFileFilter("src/lib/a.zig", &filter));
+    try std.testing.expect(matchesFileFilter("src/lib/deep/b.zig", &filter));
+    try std.testing.expect(!matchesFileFilter("src/library.zig", &filter));
+    try std.testing.expect(!matchesFileFilter("src/a.zig", &filter));
+    try std.testing.expect(matchesFileFilter("anything/at/all.zig", &.{repo_root_selector}));
+}
+
+test "matchesFileFilter: a file name is not a prefix of its neighbours" {
     const filter = [_][]const u8{"a.txt"};
     try std.testing.expect(!matchesFileFilter("a.txt.bak", &filter));
     try std.testing.expect(!matchesFileFilter("dir/a.txt", &filter));
