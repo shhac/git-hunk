@@ -125,10 +125,15 @@ fn printHelp(stdout: *std.Io.Writer, topic: ?[]const u8) !void {
     try help.printCommandHelp(stdout, cmd);
 }
 
+/// The usage goes first so the error is the last thing on the screen, where
+/// `| tail` and a reader's eye both land.
 fn exitUnknownCommand(stdout: *std.Io.Writer, name: []const u8) !noreturn {
-    std.debug.print("error: unknown command '{s}'\n", .{name});
     try printUsage(stdout);
     try stdout.flush();
+    std.debug.print("error: unknown command '{s}'\n", .{name});
+    if (help.commandForGitWord(name)) |cmd| {
+        std.debug.print("hint: did you mean 'git hunk {s}'?\n", .{@tagName(cmd)});
+    }
     std.process.exit(1);
 }
 
@@ -163,17 +168,17 @@ fn requireRevision(arena: std.mem.Allocator, rev: []const u8) void {
 }
 
 fn handleParseError(stdout: *std.Io.Writer, err: anyerror, cmd: help.Command) noreturn {
-    if (err == error.ConflictingFilter) {
-        std.debug.print("error: --tracked-only and --untracked-only are mutually exclusive\n", .{});
-        std.process.exit(1);
-    }
     if (err == error.HelpRequested) {
         help.printCommandHelp(stdout, cmd) catch {};
         stdout.flush() catch {};
         std.process.exit(0);
     }
-    printUsage(stdout) catch {};
-    stdout.flush() catch {};
+    if (err == error.ConflictingFilter) {
+        std.debug.print("error: --tracked-only and --untracked-only are mutually exclusive\n", .{});
+    }
+    // The parser has said what is wrong. The usage of every command would
+    // push that off the screen, so only where to find this command's is named.
+    std.debug.print("hint: 'git hunk help {s}' shows usage\n", .{@tagName(cmd)});
     std.process.exit(1);
 }
 

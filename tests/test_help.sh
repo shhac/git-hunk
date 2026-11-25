@@ -118,4 +118,27 @@ for CMD in list count add reset diff check restore stash commit; do
 done
 pass "test 609: all commands name an unknown flag"
 
+# ============================================================================
+# Test 610: an unknown command's error comes after the usage, with the
+# command git's own word maps to. `git hunk stage` used to print the error
+# first and bury it under the usage.
+# ============================================================================
+new_repo
+EC610=0
+OUT610="$("$GIT_HUNK" stage 2>&1)" || EC610=$?
+[[ "$EC610" -eq 1 ]] || fail "test 610: unknown command should exit 1, got $EC610"
+[[ "$(echo "$OUT610" | tail -2)" == "error: unknown command 'stage'
+hint: did you mean 'git hunk add'?" ]] \
+    || fail "test 610: error and suggestion should end the output, got: '$(echo "$OUT610" | tail -3)'"
+echo "$OUT610" | grep -q "^commands:$" || fail "test 610: the command list should still be shown"
+OUT610B="$("$GIT_HUNK" frobnicate 2>&1 || true)"
+[[ "$(echo "$OUT610B" | tail -1)" == "error: unknown command 'frobnicate'" ]] \
+    || fail "test 610: an unrecognised word gets no suggestion, got: '$(echo "$OUT610B" | tail -2)'"
+for CASE610 in "list --file|--file requires a value" "list -U x|invalid number of context lines 'x'" "commit --all -m|-m requires a value"; do
+    ERR610="$("$GIT_HUNK" ${CASE610%%|*} 2>&1 || true)"
+    [[ "$(echo "$ERR610" | head -1)" == "error: ${CASE610##*|}" ]] \
+        || fail "test 610: '${CASE610%%|*}' should say what is wrong, got: '$ERR610'"
+done
+pass "test 610: unknown commands and bad values end with a message that says what to do"
+
 report_results

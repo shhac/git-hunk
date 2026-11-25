@@ -639,8 +639,8 @@ sed -i.bak '1s/.*/Changed alpha./' alpha.txt
 ERR232=$("$GIT_HUNK" add alpha.txt 2>&1 >/dev/null || true)
 echo "$ERR232" | grep -q "error: 'alpha.txt' looks like a path, not a hunk hash" \
     || fail "test 232a: expected path-vs-hash error for dotted file, got: '$ERR232'"
-echo "$ERR232" | grep -q "hint: run 'git hunk list --oneline' to find hashes; use '--file <path>' to narrow by path" \
-    || fail "test 232a: expected list/narrow hint for dotted file, got: '$ERR232'"
+echo "$ERR232" | grep -q "hint: select by path with '--file alpha.txt' (a directory selects every file under it); 'git hunk list --oneline' shows hashes" \
+    || fail "test 232a: expected a hint naming --file for dotted file, got: '$ERR232'"
 
 ERR232_SHA_MISS=$("$GIT_HUNK" add 00000000 2>&1 >/dev/null || true)
 echo "$ERR232_SHA_MISS" | grep -q "no hunk matching '00000000'" \
@@ -1244,5 +1244,53 @@ STAGED255="$(first_sha --staged --oneline --file moved255/alpha.txt)"
 ?? moved255/alpha.txt" ]] \
     || fail "test 255: reset should hand the rename back, got: '$(git status --porcelain)'"
 pass "test 255: a rename with no content change lists, stages and unstages as a hunk"
+
+# ============================================================================
+# Test 256: an argument error is the last thing printed. A path given where a
+# hash belongs used to be followed by the usage of every command, so
+# `2>&1 | tail` showed only the usage's closing note and nothing was staged.
+# ============================================================================
+new_repo
+mkdir -p pkg256/inner
+for F256 in pkg256/one.txt pkg256/inner/two.txt; do echo "base 256" > "$F256"; done
+git add pkg256 && git commit -q -m "pkg 256"
+echo "changed 256" > pkg256/one.txt
+echo "changed 256" > pkg256/inner/two.txt
+echo "new 256" > pkg256/inner/three.txt
+sed -i.bak '1s/.*/Changed alpha 256./' alpha.txt
+for ARGS256 in "add --all pkg256" "add pkg256/one.txt alpha.txt" "reset pkg256" "commit pkg256 -m x"; do
+    EC256=0
+    # shellcheck disable=SC2086
+    OUT256="$("$GIT_HUNK" $ARGS256 2>&1)" || EC256=$?
+    [[ "$EC256" -eq 1 ]] || fail "test 256: '$ARGS256' should exit 1, got $EC256"
+    [[ "$(echo "$OUT256" | wc -l | tr -d ' ')" -eq 3 ]] \
+        || fail "test 256: '$ARGS256' should print the error and two hints only, got: '$OUT256'"
+    echo "$OUT256" | head -1 | grep -q "looks like a path, not a hunk hash$" \
+        || fail "test 256: '$ARGS256' should say the argument is a path, got: '$OUT256'"
+    echo "$OUT256" | tail -1 | grep -q "^hint: 'git hunk help ${ARGS256%% *}' shows usage$" \
+        || fail "test 256: '$ARGS256' should end by naming the command's help, got: '$OUT256'"
+done
+[[ -z "$(git diff --cached --name-only)" ]] || fail "test 256: a refused command staged something"
+pass "test 256: an argument error ends the output and stages nothing"
+
+# ============================================================================
+# Test 257: --file with a directory selects every file under it, tracked and
+# untracked, and nothing beside it: the selection `add --all <dir>` reaches for.
+# ============================================================================
+echo "sibling 257" > pkg256-sibling.txt
+"$GIT_HUNK" add --file pkg256 > /dev/null 2>&1 || fail "test 257: add --file <dir> failed"
+[[ "$(git diff --cached --name-only | tr '\n' ' ')" == "pkg256/inner/three.txt pkg256/inner/two.txt pkg256/one.txt " ]] \
+    || fail "test 257: only the directory's files should be staged, got: '$(git diff --cached --name-only | tr '\n' ' ')'"
+"$GIT_HUNK" reset --file pkg256/inner/ > /dev/null 2>&1 || fail "test 257: reset --file <dir>/ failed"
+[[ "$(git diff --cached --name-only)" == "pkg256/one.txt" ]] \
+    || fail "test 257: reset of the inner directory should leave one.txt staged, got: '$(git diff --cached --name-only | tr '\n' ' ')'"
+git reset -q
+[[ "$(cd pkg256 && "$GIT_HUNK" count --file .)" -eq 3 ]] \
+    || fail "test 257: --file . from a subdirectory should count that directory's hunks"
+[[ "$("$GIT_HUNK" count --file .)" -eq "$("$GIT_HUNK" count)" ]] \
+    || fail "test 257: --file . at the root should select everything"
+[[ "$("$GIT_HUNK" count --file ./alpha.txt)" -eq 1 ]] \
+    || fail "test 257: ./alpha.txt should name alpha.txt"
+pass "test 257: --file selects a directory's files"
 
 report_results

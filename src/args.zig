@@ -88,13 +88,20 @@ fn parseCommonFlag(allocator: Allocator, arg: []const u8, i: *usize, args: []con
 
 /// Advance past a value-taking flag and return its value.
 fn takeValue(args: []const [:0]const u8, i: *usize) error{MissingArgument}![]const u8 {
+    const flag = args[i.*];
     i.* += 1;
-    if (i.* >= args.len) return error.MissingArgument;
+    if (i.* >= args.len) {
+        std.debug.print("error: {s} requires a value\n", .{flag});
+        return error.MissingArgument;
+    }
     return args[i.*];
 }
 
 fn parseContext(val: []const u8) error{InvalidArgument}!u32 {
-    return std.fmt.parseInt(u32, val, 10) catch error.InvalidArgument;
+    return std.fmt.parseInt(u32, val, 10) catch {
+        std.debug.print("error: invalid number of context lines '{s}'\n", .{val});
+        return error.InvalidArgument;
+    };
 }
 
 /// Parse a positional hunk hash (with optional `:lines` spec) and append it.
@@ -481,7 +488,7 @@ fn parseShaArg(allocator: Allocator, arg: []const u8) !ShaArg {
 fn invalidShaPrefix(sha_part: []const u8) error{InvalidArgument} {
     if (looksLikePathArg(sha_part) or pathExists(sha_part)) {
         std.debug.print("error: '{s}' looks like a path, not a hunk hash\n", .{sha_part});
-        std.debug.print("hint: run 'git hunk list --oneline' to find hashes; use '--file <path>' to narrow by path\n", .{});
+        std.debug.print("hint: select by path with '--file {s}' (a directory selects every file under it); 'git hunk list --oneline' shows hashes\n", .{sha_part});
         return error.InvalidArgument;
     }
     if (sha_part.len < 4) {

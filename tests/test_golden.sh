@@ -637,7 +637,7 @@ check_diff "test 2008" rename --staged b34f350
 pass "test 2008: diff --no-color output pinned for every kind"
 
 # check_error <label> <exit> <stderr> <git-hunk args>: exact exit code and
-# stderr. Stdout is not compared: parse errors also print usage there.
+# stderr, with nothing on stdout to bury it.
 check_error() {
     local label="$1" want_rc="$2" want_err="$3"
     shift 3
@@ -647,24 +647,35 @@ check_error() {
     check_text "$label: stderr of git-hunk $*" "$want_err" "$err"
 }
 
+# check_usage_error <label> <error line> <git-hunk args>: an argument the
+# parser refuses. The error is followed by where to find the command's usage,
+# and nothing else.
+check_usage_error() {
+    local label="$1" want_err="$2"
+    shift 2
+    check_error "$label" 1 "$want_err
+hint: 'git hunk help $1' shows usage" "$@"
+    [[ -z "$("$GIT_HUNK" "$@" 2> /dev/null)" ]] || fail "$label: git-hunk $* should print nothing on stdout"
+}
+
 # ============================================================================
 # Test 2009: which error wins when flags touching --ref/--staged conflict.
 # The diff-source refactor moves this validation; the order must survive it.
 # ============================================================================
 golden_repo mixed_state
 RANGE_ERR="error: --staged compares the index with one commit; 'R..HEAD' is a range"
-check_error "test 2009" 1 "$RANGE_ERR" diff --staged --ref R..HEAD
-check_error "test 2009" 1 "$RANGE_ERR" diff --staged --ref R..HEAD 27a3329
-check_error "test 2009" 1 "$RANGE_ERR" check --staged --ref R..HEAD
-check_error "test 2009" 1 "$RANGE_ERR" check --staged --ref R..HEAD --allow-empty
-check_error "test 2009" 1 "$RANGE_ERR" list --ref R..HEAD --staged
-check_error "test 2009" 1 "error: unknown flag '--bogus'" list --bogus --staged --ref R..HEAD
-check_error "test 2009" 1 "error: --tracked-only and --untracked-only are mutually exclusive" \
+check_usage_error "test 2009" "$RANGE_ERR" diff --staged --ref R..HEAD
+check_usage_error "test 2009" "$RANGE_ERR" diff --staged --ref R..HEAD 27a3329
+check_usage_error "test 2009" "$RANGE_ERR" check --staged --ref R..HEAD
+check_usage_error "test 2009" "$RANGE_ERR" check --staged --ref R..HEAD --allow-empty
+check_usage_error "test 2009" "$RANGE_ERR" list --ref R..HEAD --staged
+check_usage_error "test 2009" "error: unknown flag '--bogus'" list --bogus --staged --ref R..HEAD
+check_usage_error "test 2009" "error: --tracked-only and --untracked-only are mutually exclusive" \
     list --tracked-only --untracked-only --staged --ref R..HEAD
-check_error "test 2009" 1 "error: --3way is not supported for this subcommand (only add, reset, restore, commit)" \
+check_usage_error "test 2009" "error: --3way is not supported for this subcommand (only add, reset, restore, commit)" \
     stash --ref C1 --3way
-check_error "test 2009" 1 "error: unknown flag '--staged'" add --staged
-check_error "test 2009" 1 "error: --staged is not supported by commit -- use 'git commit' directly" commit --staged
+check_usage_error "test 2009" "error: unknown flag '--staged'" add --staged
+check_usage_error "test 2009" "error: --staged is not supported by commit -- use 'git commit' directly" commit --staged
 check_error "test 2009" 1 "error: bad revision 'nope'" add --ref nope 27a3329
 pass "test 2009: error precedence pinned for --ref/--staged flag combinations"
 

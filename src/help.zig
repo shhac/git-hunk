@@ -21,6 +21,24 @@ pub fn commandFromString(s: []const u8) ?Command {
     return std.meta.stringToEnum(Command, s);
 }
 
+/// The command behind a word git or other tools use for the same thing, for
+/// pointing someone who typed it at the right one.
+pub fn commandForGitWord(word: []const u8) ?Command {
+    const words = [_]struct { []const u8, Command }{
+        .{ "stage", .add },
+        .{ "unstage", .reset },
+        .{ "discard", .restore },
+        .{ "checkout", .restore },
+        .{ "show", .diff },
+        .{ "ls", .list },
+        .{ "status", .list },
+    };
+    for (words) |entry| {
+        if (std.mem.eql(u8, entry[0], word)) return entry[1];
+    }
+    return null;
+}
+
 pub fn printCommandHelp(stdout: *std.Io.Writer, cmd: Command) !void {
     switch (cmd) {
         inline else => |c| try stdout.writeAll(comptime renderCommandHelp(spec.get(@tagName(c)))),
