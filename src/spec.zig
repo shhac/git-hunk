@@ -224,7 +224,10 @@ pub const commands = [_]CommandSpec{
                 "(repeatable: pass multiple --file flags to match any of them)",
             }),
             f_files_from,
-            f_porcelain.withHelp(&.{"Machine-readable output (tab-separated fields)"}),
+            f_porcelain.withHelp(&.{
+                "Machine-readable output: a tab-separated row per hunk,",
+                "each followed by its diff lines unless --oneline is given",
+            }),
             f_oneline,
             f_no_color,
             f_tracked_only.withHelp(&.{"Only show hunks from tracked files"}),

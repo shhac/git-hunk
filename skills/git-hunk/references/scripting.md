@@ -5,6 +5,10 @@
 All list/show output is available in machine-readable form with `--porcelain`.
 Tab-separated fields: `sha\tfile\tstart_line\tend_line\tsummary`
 
+Always pair it with `--oneline` when parsing rows. `list --porcelain` alone
+prints each hunk's diff lines after its row, so `cut -f1` picks up `@@` and
+context lines as if they were hashes.
+
 ```bash
 # Extract all hashes
 git hunk list --porcelain --oneline | cut -f1

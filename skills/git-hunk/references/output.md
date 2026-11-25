@@ -131,7 +131,12 @@ a3f7c21	src/main.zig	12	18	Add error handling
 
 ## Porcelain (`--porcelain`)
 
-Tab-separated fields, one hunk per line. No headers, no alignment padding.
+Tab-separated fields, one row per hunk. No headers, no alignment padding.
+
+`list --porcelain` on its own follows each row with the hunk's diff lines and
+a blank line (see [Porcelain mode](#porcelain-mode) under the diff content
+above). Pass `--oneline` as well to get the rows alone: without it,
+`cut -f1` returns `@@` and context lines among the hashes.
 
 ```
 sha\tfile\tstart_line\tend_line\tsummary\n

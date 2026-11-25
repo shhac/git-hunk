@@ -284,8 +284,10 @@ git commit -m "feat: add error handling"
 
 ## Porcelain format
 
-`--porcelain` outputs tab-separated fields, one hunk per line, with no headers
-or alignment padding:
+`--porcelain` outputs tab-separated fields, one row per hunk, with no headers
+or alignment padding. `list --porcelain` follows each row with the hunk's diff
+lines (see [Diff output](#diff-output)); add `--oneline` when a script wants
+the rows alone, as `cut -f1` does:
 
 ```
 sha\tfile\tstart_line\tend_line\tsummary
