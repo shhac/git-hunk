@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.22.0] - 2026-11-25
+
+### Added
+- `--file` takes a directory, and selects every file under it, tracked or untracked: `git hunk add --file src/`. It matched one exact path before, so staging a directory took a `--files-from` pipeline. `.` is the directory git-hunk was run from. Paths typed at the repo root are tidied like those typed below it, so `./a.txt` and `dir/` name what they look like they name. An empty value, or a path that climbs above the repository, is an error (`error: '../x' is outside the repository`).
+- A rename with no content change is a hunk: `8d34f19  new/name.txt  (rename)  renamed from old/name.txt`. A file moved and marked intent-to-add (`mv`, then `git add -N`), or moved with `git mv`, is a rename git has no lines to show for; it had no hunk, so `add --all`, `commit --all` and `reset --all` passed it over without saying so. It now stages, unstages, restores and commits like any other hunk, keeps its hash once staged, and takes no line spec. A rename that also changes mode, and a copy with no content change, still have no hunk; `-v` names them.
+
+### Fixed
+- An argument the parser refused was buried: `git hunk add src/a.txt` or `git hunk add --all src` printed `error: 'src' looks like a path, not a hunk hash` and then the usage of every command, so `2>&1 | tail` showed only the usage's closing note and it was easy to miss that nothing had been staged. The error now ends the output, followed by the `--file` form of the path and `hint: 'git hunk help add' shows usage`. An unknown command prints its error after the command list rather than before it, and names the command git's word maps to: `git hunk stage` gets `hint: did you mean 'git hunk add'?`. A flag missing its value, a bad `-U` value, and `--quiet` with `--verbose` now say what is wrong.
+- Every failed `git apply` was reported as a stale hash (`patch did not apply cleanly — re-run 'list' and try again`), including failures re-listing cannot help:
+  - git stopping for a reason of its own, such as an index it could not lock or write (`fatal: Unable to create '.git/index.lock'`). It now says `error: git stopped before applying the patch, for the reason above — the hashes are not stale; run the same command again once that is fixed`.
+  - `commit` given hunks that build on staged changes: an edit to a line staged differently, or to a file that is only staged. A commit is built on HEAD without what is staged, so they cannot apply, and git's `does not exist in index` read as a claim about the user's own index. It now says `error: the selected hunks do not apply to HEAD on their own — they may build on the staged changes to 'a.txt'`, with the two ways forward; `commit --dry-run` says the same.
+  - The index resync after a commit that landed no longer follows its own failure with advice to run the command again: the `warning: commit succeeded but index sync failed` line says what is left to do.
+
+### Changed
+- The `list --porcelain` help, README and skill references say that each row is followed by the hunk's diff lines unless `--oneline` is given. The format was described as one hunk per line, which holds only with `--oneline`; without it `cut -f1` returns `@@` and context lines among the hashes.
+- `count`, `list` and `check --exclusive` include bare renames, as above: a tree with one now counts one more hunk.
+
 ## [0.21.1] - 2026-10-23
 
 ### Fixed
