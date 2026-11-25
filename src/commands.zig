@@ -272,7 +272,7 @@ fn rejectLineSelection(hunk: *const Hunk) void {
         "symlink"
     else if (hunk.pureRenameFrom() != null)
         "rename"
-    else if (hunk.raw_lines.len == 0)
+    else if (hunk.isHeaderOnly())
         "empty file"
     else
         return;
@@ -722,8 +722,8 @@ pub fn cmdDiff(allocator: Allocator, stdout: *std.Io.Writer, opts: DiffOptions) 
                     try stdout.writeAll(try patch_mod.renderSectionHeader(arena, m.hunk.section));
                     if (m.hunk.section.is_binary) {
                         try stdout.writeAll("Binary file changed\n\n");
-                    } else if (m.hunk.raw_lines.len == 0) {
-                        // An empty file is all header.
+                    } else if (m.hunk.isHeaderOnly()) {
+                        // An empty file or a bare rename is all header.
                     } else if (m.line_spec orelse emptyLineSpecIf(opts.number)) |ls| {
                         // -n and a line spec share this renderer; an empty spec
                         // selects nothing, so -n alone numbers without markers.

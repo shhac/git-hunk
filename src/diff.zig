@@ -231,7 +231,6 @@ fn parseHunkBody(arena: Allocator, cursor: *DiffCursor, diff: []const u8, hunk_h
 const SkipReason = enum {
     submodule,
     mode_only,
-    rename_only,
     copy_only,
     other,
 
@@ -240,7 +239,6 @@ const SkipReason = enum {
         return switch (self) {
             .submodule => "submodule pointer change",
             .mode_only => "mode change",
-            .rename_only => "rename with no content change",
             .copy_only => "copy with no content change",
             .other => "change",
         };
@@ -285,8 +283,6 @@ pub fn collectSkippedPaths(
             .mode_only
         else if (state.is_submodule)
             .submodule
-        else if (state.rename_from != null)
-            .rename_only
         else if (state.copy_from != null)
             .copy_only
         else
@@ -1581,21 +1577,21 @@ test "parseDiff unquotes the path a rename came from" {
     try std.testing.expectEqualStrings("\"h\\303\\251llo.txt\"", hunks.items[0].section.rename_from.?);
 }
 
-test "collectSkippedPaths reports a pure rename under its new path" {
+test "collectSkippedPaths reports a pure copy under its new path" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const diff =
         \\diff --git a/short b/much-longer-name
         \\similarity index 100%
-        \\rename from short
-        \\rename to much-longer-name
+        \\copy from short
+        \\copy to much-longer-name
         \\
     ;
     var skipped: std.ArrayList(SkippedPath) = .empty;
     try collectSkippedPaths(arena.allocator(), diff, &.{}, &skipped);
     try std.testing.expectEqual(@as(usize, 1), skipped.items.len);
     try std.testing.expectEqualStrings("much-longer-name", skipped.items[0].file_path);
-    try std.testing.expectEqual(SkipReason.rename_only, skipped.items[0].reason);
+    try std.testing.expectEqual(SkipReason.copy_only, skipped.items[0].reason);
 }
 
 test "extractPathFromDiffGitLine escaped quote in path" {

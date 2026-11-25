@@ -72,10 +72,16 @@ pub const Hunk = struct {
         return .init(self.raw_lines);
     }
 
+    /// No lines to show or select: the hunk stands for a change its section
+    /// header says in full, such as an empty file or a rename.
+    pub fn isHeaderOnly(self: *const Hunk) bool {
+        return self.raw_lines.len == 0;
+    }
+
     /// The path this hunk's file was renamed from, when the rename is all the
     /// hunk carries: git found no content change to go with it.
     pub fn pureRenameFrom(self: *const Hunk) ?[]const u8 {
-        if (self.raw_lines.len > 0 or self.section.is_binary) return null;
+        if (!self.isHeaderOnly() or self.section.is_binary) return null;
         return self.section.renamed_from_path;
     }
 };

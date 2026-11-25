@@ -637,7 +637,7 @@ check_diff "test 2008" rename --staged b34f350
 pass "test 2008: diff --no-color output pinned for every kind"
 
 # check_error <label> <exit> <stderr> <git-hunk args>: exact exit code and
-# stderr, with nothing on stdout to bury it.
+# stderr. Stdout is not compared: some of these succeed and print there.
 check_error() {
     local label="$1" want_rc="$2" want_err="$3"
     shift 3

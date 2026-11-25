@@ -135,7 +135,7 @@ pub fn printDiffHuman(stdout: *std.Io.Writer, h: Hunk, use_color: bool) !void {
         try stdout.writeAll("    Binary file changed\n\n");
         return;
     }
-    if (h.raw_lines.len == 0) {
+    if (h.isHeaderOnly()) {
         try stdout.writeAll("\n");
         return;
     }
@@ -213,7 +213,7 @@ pub fn printDiffPorcelain(stdout: *std.Io.Writer, h: Hunk) !void {
         try stdout.writeAll("Binary file changed\n\n");
         return;
     }
-    if (h.raw_lines.len == 0) {
+    if (h.isHeaderOnly()) {
         try stdout.writeAll("\n");
         return;
     }
