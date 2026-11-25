@@ -1308,6 +1308,18 @@ git reset -q
     || fail "test 257: --file . at the root should select everything"
 [[ "$("$GIT_HUNK" count --file ./alpha.txt)" -eq 1 ]] \
     || fail "test 257: ./alpha.txt should name alpha.txt"
+# A value that names nothing, or somewhere above the repo, selects nothing:
+# read as the root it would hand `restore --file "$UNSET"` the whole worktree.
+WT257="$(git status --porcelain)"
+for CASE257 in "|--file requires a path, not an empty value" "..|'..' is outside the repository" "pkg256/../../x|'pkg256/../../x' is outside the repository"; do
+    EC257=0
+    ERR257="$("$GIT_HUNK" restore --force --file "${CASE257%%|*}" 2>&1)" || EC257=$?
+    [[ "$EC257" -eq 1 && "$(echo "$ERR257" | head -1)" == "error: ${CASE257##*|}" ]] \
+        || fail "test 257: --file '${CASE257%%|*}' should be refused, got exit $EC257: '$ERR257'"
+done
+[[ "$(git status --porcelain)" == "$WT257" ]] || fail "test 257: a refused --file value changed the worktree"
+[[ "$(cd pkg256/inner && "$GIT_HUNK" count --file ../..)" -eq "$("$GIT_HUNK" count)" ]] \
+    || fail "test 257: a path that climbs to the root exactly should select everything"
 pass "test 257: --file selects a directory's files"
 
 # ============================================================================

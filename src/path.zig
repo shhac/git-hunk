@@ -10,7 +10,8 @@ const defaultIo = types.getIo;
 /// Resolve a path relative to the original cwd into a repo-relative path.
 /// prefix: path components from repo root to original cwd (e.g., "bar/sub")
 /// rel_path: user-provided path relative to original cwd
-/// Returns repo-relative path, empty for the repo root itself. Caller owns the memory.
+/// Returns repo-relative path, empty for the repo root itself, or
+/// error.OutsideRepo for one that climbs above it. Caller owns the memory.
 pub fn resolveToRepoRelative(allocator: Allocator, prefix: []const u8, rel_path: []const u8) ![]const u8 {
     var parts: std.ArrayList([]const u8) = .empty;
     defer parts.deinit(allocator);
@@ -27,7 +28,7 @@ pub fn resolveToRepoRelative(allocator: Allocator, prefix: []const u8, rel_path:
     while (path_iter.next()) |p| {
         if (p.len == 0 or std.mem.eql(u8, p, ".")) continue;
         if (std.mem.eql(u8, p, "..")) {
-            if (parts.items.len > 0) _ = parts.pop();
+            if (parts.pop() == null) return error.OutsideRepo;
         } else {
             try parts.append(allocator, p);
         }
@@ -137,6 +138,16 @@ test "resolveToRepoRelative: a path typed at the root is tidied like any other" 
         defer allocator.free(result);
         try std.testing.expectEqualStrings(case[1], result);
     }
+}
+
+test "resolveToRepoRelative: the root is reachable from below, and nothing above it is" {
+    const allocator = std.testing.allocator;
+    const root = try resolveToRepoRelative(allocator, "src/lib", "../..");
+    defer allocator.free(root);
+    try std.testing.expectEqualStrings("", root);
+    try std.testing.expectError(error.OutsideRepo, resolveToRepoRelative(allocator, "src", "../.."));
+    try std.testing.expectError(error.OutsideRepo, resolveToRepoRelative(allocator, "", "../sibling/f.txt"));
+    try std.testing.expectError(error.OutsideRepo, resolveToRepoRelative(allocator, "", "a/../../f.txt"));
 }
 
 test "resolveToRepoRelative: simple prefix join" {

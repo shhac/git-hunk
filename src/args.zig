@@ -544,7 +544,13 @@ fn appendPathsFromFile(allocator: Allocator, source: []const u8, list: *std.Arra
         const resolved = if (prefix.len == 0 or std.fs.path.isAbsolute(source))
             source
         else
-            try path_mod.resolveToRepoRelative(allocator, prefix, source);
+            path_mod.resolveToRepoRelative(allocator, prefix, source) catch |err| switch (err) {
+                error.OutsideRepo => {
+                    std.debug.print("error: could not read --files-from file '{s}'\n", .{source});
+                    return error.InvalidArgument;
+                },
+                else => return err,
+            };
         defer if (resolved.ptr != source.ptr) allocator.free(resolved);
 
         break :blk std.Io.Dir.cwd().readFileAlloc(io, resolved, allocator, limit) catch {
@@ -566,12 +572,31 @@ fn appendPathsFromFile(allocator: Allocator, source: []const u8, list: *std.Arra
 
 /// Append an owned, repo-relative copy of a path the user typed from their
 /// own directory: the process has already chdir'd to the repo root.
+///
+/// A path that names nothing is refused rather than read as the repo root:
+/// `--file "$UNSET"` must not select everything, least of all for restore.
 fn appendRepoRelative(allocator: Allocator, list: *std.ArrayList([]const u8), path: []const u8) !void {
+    if (path.len == 0) {
+        std.debug.print("error: --file requires a path, not an empty value\n", .{});
+        return error.InvalidArgument;
+    }
+    const selector = ownedFileSelector(allocator, path) catch |err| switch (err) {
+        error.OutsideRepo => {
+            std.debug.print("error: '{s}' is outside the repository\n", .{path});
+            return error.InvalidArgument;
+        },
+        else => return err,
+    };
+    errdefer allocator.free(selector);
+    try list.append(allocator, selector);
+}
+
+/// The --file list's entry for `path`, owned by the caller.
+fn ownedFileSelector(allocator: Allocator, path: []const u8) ![]const u8 {
     const resolved = try path_mod.resolveToRepoRelative(allocator, types.getRepoPrefix(), path);
-    errdefer allocator.free(resolved);
-    if (resolved.len > 0) return list.append(allocator, resolved);
+    if (resolved.len > 0) return resolved;
     allocator.free(resolved);
-    try list.append(allocator, try allocator.dupe(u8, types.repo_root_selector));
+    return allocator.dupe(u8, types.repo_root_selector);
 }
 
 fn looksLikePathArg(arg: []const u8) bool {
