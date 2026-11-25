@@ -36,8 +36,9 @@ The range shows `start_line-end_line` using the stable side:
 A file absent on the stable side (a staged new file is not in HEAD, an
 unstaged deletion is not in the worktree) has no lines there, so its range is
 taken from the side that has them: `1-N`, the file's lines. `empty` means a
-file with no lines on either side. Porcelain's `start_line`/`end_line` keep
-the stable side's numbers, `0` for such a file (see [Line numbers](#line-numbers)).
+file with no lines on either side, and `(rename)` a rename with no content
+change. Porcelain's `start_line`/`end_line` keep the stable side's numbers,
+`0` for such a file or rename (see [Line numbers](#line-numbers)).
 
 ### Summary
 
@@ -45,9 +46,10 @@ Summary is derived in priority order:
 
 1. **`new file`** for new files
 2. **`deleted`** for deleted files
-3. **First changed line** content, with `+`/`-` prefix and leading whitespace stripped
-4. **Function context** from the `@@` header (e.g., `fn main()`) as fallback
-5. Empty string if none of the above apply
+3. **`renamed from <old path>`** for a rename with no content change
+4. **First changed line** content, with `+`/`-` prefix and leading whitespace stripped
+5. **Function context** from the `@@` header (e.g., `fn main()`) as fallback
+6. Empty string if none of the above apply
 
 ## Diff output (default)
 
@@ -437,6 +439,9 @@ error: no hunk matching 'deadbeef'
 error: ambiguous prefix 'a3f7' -- matches multiple hunks
 error: sha prefix too short (minimum 4 chars): 'ab'
 error: patch did not apply cleanly -- re-run 'list' and try again
+error: git stopped before applying the patch, for the reason above -- the hashes are not stale; run the same command again once that is fixed
+error: the selected hunks do not apply to HEAD on their own -- they may build on the staged changes to 'src/main.zig'
+error: 'src/main.zig' looks like a path, not a hunk hash
 no unstaged changes
 no staged changes
 no changes in 'HEAD~1'
@@ -447,6 +452,12 @@ error: --staged compares the index with one commit; 'main..HEAD' is a range
 error: at least one <sha> argument required
 error: unknown command 'badcmd'
 ```
+
+An argument the parser refuses prints its error, then
+`hint: 'git hunk help <command>' shows usage`, and nothing on stdout. An
+unknown command prints the command list first and the error last, with
+`hint: did you mean 'git hunk add'?` when the word is git's for one of them
+(`stage`, `unstage`, `discard`, ...).
 
 ## Exit codes
 

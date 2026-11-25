@@ -131,6 +131,7 @@ git hunk add a3f7 b82e                 # stage multiple (prefix match, min 4 cha
 git hunk add a3f7c21 --file src/main.zig   # restrict match to file
 git hunk add --all                     # stage all unstaged hunks
 git hunk add --file src/main.zig       # stage all hunks in a file
+git hunk add --file src/               # stage all hunks under a directory
 git hunk add a3f7:3-5,8               # stage specific lines from a hunk
 git hunk add a3f7c21 --porcelain      # machine-readable output
 ```
@@ -443,12 +444,12 @@ accepted by all commands.
 - New files (via `git add -N`)
 - Untracked files (shown by default, `--tracked-only`/`--untracked-only` to filter)
 - Deleted files
-- Renamed files (with content changes)
+- Renamed files, with content changes or without (a bare rename is one hunk)
 - Files with C-quoted paths (tabs, backslashes)
 - Files with no trailing newline
 - Prefix matching (minimum 4 hex characters)
 - Ambiguous prefix detection
-- Bulk staging via `--all` or `--file` without SHAs
+- Bulk staging via `--all` or `--file` without SHAs; `--file` takes a file or a directory
 - Per-line staging via `sha:line-spec` syntax
 - Configurable context lines via `-U<n>` / `-U <n>` / `--unified=<n>` / `--unified <n>`
 - Hash validity checking via `check` with `--exclusive` support

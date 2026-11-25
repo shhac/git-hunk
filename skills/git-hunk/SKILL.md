@@ -52,6 +52,7 @@ the first call, so the second still resolves:
 
 ```bash
 git hunk add --file src/parser.zig --file README.md   # whole files
+git hunk add --file src/                              # everything under a directory
 git hunk add a3f7c21 b82e0f4:1-73                     # specific hunks
 ```
 
@@ -259,10 +260,13 @@ All errors go to stderr. Exit 0 on success, 1 on error. Common errors:
 - `error: no hunk matching '<sha>'` -- hash not found
 - `error: ambiguous prefix '<sha>'` -- use longer prefix or `--file`
 - `error: patch did not apply cleanly` -- re-run `list` and try again
+- `error: git stopped before applying the patch` -- git's own failure, printed above it (index lock, permissions); the hashes are fine, so fix that and run the same command again
+- `error: the selected hunks do not apply to HEAD on their own` -- `commit` builds on HEAD, and these hunks build on staged changes; `git hunk add` them too and `git commit`, or commit what is staged first
+- `error: '<arg>' looks like a path, not a hunk hash` -- positional arguments are hashes; pass paths as `--file <path>`
 - `error: changes from '<ref>' do not apply cleanly to the index` (or `worktree`) -- context drifted; retry with `--3way`
 - `error: bad revision '<ref>'` -- git cannot resolve what `--ref` names
 - `no unstaged changes` / `no staged changes` / `no changes in '<ref>'` / `no staged changes relative to '<ref>'` -- nothing to operate on
-- `error: line selection not supported for <binary file|typechange|symlink|empty file> '<file>'` -- use the whole hunk
+- `error: line selection not supported for <binary file|typechange|symlink|rename|empty file> '<file>'` -- use the whole hunk
 - `error: <sha> (<file>) is an untracked file -- restoring it cannot be undone; use --force` -- restore requires `--force` for untracked files (dry-run bypasses this gate)
 - `error: cannot stage '<path>' while it has an unresolved merge conflict` -- resolve it, then `git add <path>`
 - `error: cannot commit selected hunks during a merge` (or cherry-pick, revert) -- conclude it with `git commit` / `--continue` first

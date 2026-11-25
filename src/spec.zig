@@ -131,7 +131,10 @@ pub const f_ref_no_staged: Flag = f_ref.withHelp(ref_desc_base);
 pub const f_file: Flag = .{
     .long = "--file",
     .placeholder = "<path>",
-    .help_desc = &.{"Restrict to hunks in the given file (repeatable)"},
+    .help_desc = &.{
+        "Restrict to hunks in the given file, or in every file",
+        "under the given directory (repeatable)",
+    },
 };
 
 pub const f_files_from: Flag = .{
@@ -220,8 +223,9 @@ pub const commands = [_]CommandSpec{
             f_staged,
             f_ref,
             f_file.withHelp(&.{
-                "Restrict output to hunks in the given file",
-                "(repeatable: pass multiple --file flags to match any of them)",
+                "Restrict output to hunks in the given file, or in every",
+                "file under the given directory (repeatable: pass multiple",
+                "--file flags to match any of them)",
             }),
             f_files_from,
             f_porcelain.withHelp(&.{
@@ -307,7 +311,7 @@ pub const commands = [_]CommandSpec{
                 "On context drift, fall back to a 3-way merge instead of failing",
                 "(passes --3way to git apply; useful with --ref <past-commit>).",
             }),
-            f_file.withHelp(&.{"Stage all hunks in the given file (repeatable)"}),
+            f_file.withHelp(&.{"Stage all hunks in the given file or directory (repeatable)"}),
             f_files_from,
             f_dry_run.withHelp(&.{"Show what would be staged without touching the index"}),
             f_porcelain,
@@ -348,7 +352,7 @@ pub const commands = [_]CommandSpec{
             f_ref_no_staged,
             f_all.withHelp(&.{"Unstage all staged hunks"}),
             f_3way,
-            f_file.withHelp(&.{"Unstage all hunks in the given file (repeatable)"}),
+            f_file.withHelp(&.{"Unstage all hunks in the given file or directory (repeatable)"}),
             f_files_from,
             f_dry_run.withHelp(&.{"Show what would be unstaged without touching the index"}),
             f_porcelain,
@@ -390,7 +394,7 @@ pub const commands = [_]CommandSpec{
                 "On context drift, fall back to a 3-way merge instead of failing",
                 "(useful for \"undo this hunk from history\" when surrounding lines drifted).",
             }),
-            f_file.withHelp(&.{"Restore all hunks in the given file (repeatable)"}),
+            f_file.withHelp(&.{"Restore all hunks in the given file or directory (repeatable)"}),
             f_files_from,
             .{
                 .long = "--force",
@@ -438,7 +442,7 @@ pub const commands = [_]CommandSpec{
         .flags = &.{
             f_staged.withHelp(&.{"Count staged hunks instead of unstaged"}),
             f_ref,
-            f_file.withHelp(&.{"Count hunks in the given file only (repeatable)"}),
+            f_file.withHelp(&.{"Count hunks in the given file or directory only (repeatable)"}),
             f_files_from,
             f_porcelain.withHelp(&.{"No effect (output is already machine-readable)"}).hidden(),
             f_no_color.withHelp(&.{"No effect (output is never colored)"}).hidden(),
@@ -478,7 +482,7 @@ pub const commands = [_]CommandSpec{
                 .long = "--allow-empty",
                 .help_desc = &.{"Allow zero SHA arguments (useful with --exclusive to assert no hunks)"},
             },
-            f_file.withHelp(&.{"Restrict check to hunks in the given file (repeatable)"}),
+            f_file.withHelp(&.{"Restrict check to hunks in the given file or directory (repeatable)"}),
             f_files_from,
             f_porcelain,
             f_no_color,
@@ -534,7 +538,7 @@ pub const commands = [_]CommandSpec{
                 .short = "-u",
                 .help_desc = &.{"Include untracked files (use with --all)"},
             },
-            f_file.withHelp(&.{"Stash all hunks in the given file (repeatable)"}),
+            f_file.withHelp(&.{"Stash all hunks in the given file or directory (repeatable)"}),
             f_files_from,
             .{
                 .long = "--message",
@@ -601,7 +605,7 @@ pub const commands = [_]CommandSpec{
             },
             f_all.withHelp(&.{"Commit all unstaged hunks"}),
             f_3way,
-            f_file.withHelp(&.{"Commit all hunks in a file (repeatable)"}),
+            f_file.withHelp(&.{"Commit all hunks in a file or directory (repeatable)"}),
             f_files_from,
             f_ref_no_staged,
             f_unified,
@@ -644,7 +648,7 @@ pub fn get(comptime name: []const u8) CommandSpec {
 /// summaries, not any single command's wording.
 pub const top_common_options = [_]Flag{
     f_unified.withHelp(&.{"Lines of diff context (default: git's diff.context or 3)"}),
-    f_file.withHelp(&.{"Restrict to hunks in a specific file"}),
+    f_file.withHelp(&.{"Restrict to hunks in a file, or under a directory"}),
     f_tracked_only.withHelp(&.{"Only include hunks from tracked files"}),
     f_untracked_only.withHelp(&.{"Only include hunks from untracked files"}),
     f_porcelain.withHelp(&.{"Machine-readable tab-separated output"}),
@@ -694,7 +698,8 @@ pub const man_global_options = [_]ManOption{
         "Lines of diff context (default: git's \\fBdiff.context\\fR or 3).",
     } },
     .{ .header = ".BI \\-\\-file \" path\"", .lines = &.{
-        "Restrict to hunks in a specific file. May be repeated to match any of several files.",
+        "Restrict to hunks in a specific file, or in every file under a directory.",
+        "May be repeated to match any of several.",
     } },
     .{ .header = ".B \\-\\-porcelain", .lines = &.{
         "Machine\\-readable tab\\-separated output.",
