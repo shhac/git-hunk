@@ -822,10 +822,12 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
 
     const patches = try patch_mod.sortAndBuildPatches(arena, text_matched, .forward);
 
+    const target_paths = try patch_mod.collectUniqueFilePaths(arena, matched);
+
     // Dry-run: validate patches against what the commit would build on and show what would be committed.
     // Checked before the message requirement — a preview has nothing to write a message onto.
     if (opts.dry_run) {
-        checkTempIndexCommit(allocator, patches, opts.common.source.refText()) catch |err| switch (err) {
+        checkTempIndexCommit(allocator, patches, target_paths, opts.common.source.refText()) catch |err| switch (err) {
             error.ReadTreeFailed => std.process.exit(1),
             else => return err,
         };
@@ -841,7 +843,7 @@ pub fn cmdCommit(allocator: Allocator, stdout: *std.Io.Writer, opts: CommitOptio
         .allocator = allocator,
         .patches = patches,
         .binary_paths = binary_paths,
-        .target_paths = try patch_mod.collectUniqueFilePaths(arena, matched),
+        .target_paths = target_paths,
         .message = message,
         .amend = opts.amend,
         .three_way = opts.common.three_way,

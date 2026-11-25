@@ -1293,4 +1293,24 @@ git reset -q
     || fail "test 257: ./alpha.txt should name alpha.txt"
 pass "test 257: --file selects a directory's files"
 
+# ============================================================================
+# Test 258: an index git cannot lock is not a stale hash. git's own failure
+# used to be followed by "re-run 'list' and try again", which cannot help:
+# the hunks are current and the same command works once the lock is gone.
+# ============================================================================
+new_repo
+sed -i.bak '1s/.*/Changed alpha 258./' alpha.txt
+SHA258="$(first_sha --oneline --file alpha.txt)"
+touch .git/index.lock
+EC258=0
+ERR258="$("$GIT_HUNK" add "$SHA258" 2>&1 > /dev/null)" || EC258=$?
+rm -f .git/index.lock
+[[ "$EC258" -eq 1 ]] || fail "test 258: add under a held index lock should exit 1, got $EC258"
+echo "$ERR258" | grep -q "index.lock" || fail "test 258: git's own message should be shown, got: '$ERR258'"
+[[ "$(echo "$ERR258" | tail -1)" == "error: git stopped before applying the patch, for the reason above — the hashes are not stale; run the same command again once that is fixed" ]] \
+    || fail "test 258: should say the hashes are not stale, got: '$ERR258'"
+echo "$ERR258" | grep -q "re-run 'list'" && fail "test 258: should not advise re-listing, got: '$ERR258'"
+"$GIT_HUNK" add "$SHA258" > /dev/null 2>&1 || fail "test 258: the same hash should stage once the lock is gone"
+pass "test 258: a failure of git's own is not reported as a stale hash"
+
 report_results

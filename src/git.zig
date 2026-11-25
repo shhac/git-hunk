@@ -295,6 +295,10 @@ const ApplyOptions = struct {
     /// Follow git's own complaint with ours. Off for a caller whose failure
     /// means something other than a stale or drifted hunk, which says so itself.
     explain_failure: bool = true,
+    /// Paths the patch touches whose staged changes the target index lacks,
+    /// as a commit's does: it is built on HEAD. A hunk that builds on those
+    /// changes cannot apply there, however fresh its hash.
+    staged_paths: []const []const u8 = &.{},
 };
 
 const ApplyResult = enum { applied_clean, applied_with_conflicts };
@@ -436,22 +440,57 @@ fn execGitApply(allocator: Allocator, patch: []const u8, opts: ApplyOptions, fai
     if (result.exit_code != 0) {
         if (failure_report == .silent) return error.PatchFailed;
         if (result.stderr.len > 0) std.debug.print("{s}", .{result.stderr});
-        if (!opts.explain_failure) return error.PatchFailed;
-        const try_3way: []const u8 = if (opts.three_way) "" else " (try --3way)";
-        if (opts.ref) |r| {
-            const target: []const u8 = switch (opts.target) {
-                .index => "the index",
-                .worktree => "the worktree",
-            };
-            std.debug.print("error: changes from '{s}' do not apply cleanly to {s}{s}\n", .{ r, target, try_3way });
-        } else if (opts.check_only) {
-            std.debug.print("error: patch would not apply cleanly — hashes may be stale\n", .{});
-        } else {
-            std.debug.print("error: patch did not apply cleanly — re-run 'list' and try again\n", .{});
-        }
+        if (opts.explain_failure) explainApplyFailure(result.stderr, opts);
         return error.PatchFailed;
     }
     return .applied_clean;
+}
+
+/// Say what a failed `git apply` means for the user, after git's own words.
+fn explainApplyFailure(stderr: []const u8, opts: ApplyOptions) void {
+    if (gitStopped(stderr)) {
+        std.debug.print("error: git stopped before applying the patch, for the reason above — the hashes are not stale; run the same command again once that is fixed\n", .{});
+        return;
+    }
+    const try_3way: []const u8 = if (opts.three_way) "" else " (try --3way)";
+    if (opts.ref) |r| {
+        const target: []const u8 = switch (opts.target) {
+            .index => "the index",
+            .worktree => "the worktree",
+        };
+        std.debug.print("error: changes from '{s}' do not apply cleanly to {s}{s}\n", .{ r, target, try_3way });
+    } else if (opts.staged_paths.len > 0) {
+        std.debug.print("error: the selected hunks do not apply to HEAD on their own — they may build on the staged changes to ", .{});
+        printPathList(opts.staged_paths);
+        std.debug.print(
+            "\nhint: a commit is built on HEAD in an index of its own, the one git names above, without what you have staged. Stage these hunks as well ('git hunk add') and run 'git commit', or commit the staged changes first\n",
+            .{},
+        );
+    } else if (opts.check_only) {
+        std.debug.print("error: patch would not apply cleanly — hashes may be stale\n", .{});
+    } else {
+        std.debug.print("error: patch did not apply cleanly — re-run 'list' and try again\n", .{});
+    }
+}
+
+/// Whether git gave up for a reason of its own (an index it could not lock or
+/// write, say) rather than refusing the patch. It reports the first as
+/// `fatal:` and a patch that does not fit as `error:`.
+fn gitStopped(stderr: []const u8) bool {
+    var lines = std.mem.splitScalar(u8, stderr, '\n');
+    while (lines.next()) |line| {
+        if (std.mem.startsWith(u8, line, "fatal: ")) return true;
+    }
+    return false;
+}
+
+/// `'a', 'b' and 2 more`: enough paths to recognise the set by.
+fn printPathList(paths: []const []const u8) void {
+    const max_named = 3;
+    for (paths[0..@min(paths.len, max_named)], 0..) |p, i| {
+        std.debug.print("{s}'{s}'", .{ if (i == 0) "" else ", ", p });
+    }
+    if (paths.len > max_named) std.debug.print(" and {d} more", .{paths.len - max_named});
 }
 
 /// Build argv as `prefix... -- file_paths...`. Caller frees the returned

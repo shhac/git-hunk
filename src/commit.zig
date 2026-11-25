@@ -103,10 +103,25 @@ fn seedTempIndex(allocator: Allocator) !git.TempIndex {
 /// same HEAD-seeded index the real commit builds on, so a preview can never
 /// pass where the commit then fails. `--3way` is not passed: git rejects it
 /// alongside `--check`.
-pub fn checkTempIndexCommit(allocator: Allocator, patches: []const []const u8, ref: ?[]const u8) !void {
+pub fn checkTempIndexCommit(allocator: Allocator, patches: []const []const u8, target_paths: []const []const u8, ref: ?[]const u8) !void {
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
     var tmp = try seedTempIndex(allocator);
     defer tmp.deinit();
-    _ = try git.applyPatches(allocator, patches, .{ .target = .index, .check_only = true, .ref = ref, .env_map = &tmp.env_map });
+    const user_staged_raw: ?[]u8 = git.runGitDiffCachedNames(allocator) catch null;
+    defer if (user_staged_raw) |raw| allocator.free(raw);
+    const staged_targets = try stagedTargetPaths(arena_state.allocator(), target_paths, user_staged_raw);
+    _ = try git.applyPatches(allocator, patches, .{ .target = .index, .check_only = true, .ref = ref, .env_map = &tmp.env_map, .staged_paths = staged_targets });
+}
+
+/// The target paths the user also has staged changes to. The commit is built
+/// without those changes, so a hunk that builds on them cannot apply.
+fn stagedTargetPaths(arena: Allocator, target_paths: []const []const u8, user_staged_raw: ?[]const u8) ![]const []const u8 {
+    var staged: std.ArrayList([]const u8) = .empty;
+    for (target_paths) |path| {
+        if (isUserStaged(path, user_staged_raw)) try staged.append(arena, path);
+    }
+    return staged.items;
 }
 
 /// Commit the target hunks through a throwaway GIT_INDEX_FILE index: build
@@ -126,11 +141,18 @@ pub fn runTempIndexCommit(ctx: CommitContext) ![]const u8 {
     var tmp = try seedTempIndex(ctx.allocator);
     defer tmp.deinit();
 
+    // Snapshot the user's staged paths before HEAD moves: a failed apply is
+    // explained by them, and the hook-path cleanup below must never touch
+    // anything the user had staged.
+    const user_staged_raw: ?[]u8 = git.runGitDiffCachedNames(ctx.allocator) catch null;
+    defer if (user_staged_raw) |raw| ctx.allocator.free(raw);
+    const staged_targets = try stagedTargetPaths(arena, ctx.target_paths, user_staged_raw);
+
     // 2. Stage target hunks into the temp index (text via patch, binary via
     // git add). A --3way conflict would leave unmerged temp-index entries
     // that `git commit` refuses; abort early with a clear instruction.
     for (ctx.patches) |p| {
-        const result = try git.runGitApply(ctx.allocator, p, .{ .target = .index, .three_way = ctx.three_way, .ref = ctx.ref, .env_map = &tmp.env_map });
+        const result = try git.runGitApply(ctx.allocator, p, .{ .target = .index, .three_way = ctx.three_way, .ref = ctx.ref, .env_map = &tmp.env_map, .staged_paths = staged_targets });
         if (result == .applied_with_conflicts) {
             std.debug.print("error: --3way produced conflicts; cannot commit. Use `git hunk restore --ref <X> --3way <sha>` then resolve and `git commit` normally.\n", .{});
             return error.PatchFailed;
@@ -139,11 +161,6 @@ pub fn runTempIndexCommit(ctx: CommitContext) ![]const u8 {
     if (ctx.binary_paths.len > 0) {
         try git.runGitAddFilesLenient(ctx.allocator, ctx.binary_paths, &tmp.env_map);
     }
-
-    // Snapshot the user's staged paths before HEAD moves: the hook-path
-    // cleanup below must never touch anything the user had staged.
-    const user_staged_raw: ?[]u8 = git.runGitDiffCachedNames(ctx.allocator) catch null;
-    defer if (user_staged_raw) |raw| ctx.allocator.free(raw);
 
     // 3. Commit from the temp index.
     const commit_output = try git.runGitCommit(ctx.allocator, .{ .message = ctx.message, .amend = ctx.amend, .env_map = &tmp.env_map });
@@ -207,11 +224,14 @@ fn isTargetOrUserStaged(path: []const u8, target_paths: []const []const u8, user
     for (target_paths) |tp| {
         if (std.mem.eql(u8, tp, path)) return true;
     }
-    if (user_staged_raw) |raw| {
-        var it = std.mem.splitScalar(u8, raw, 0);
-        while (it.next()) |staged| {
-            if (staged.len > 0 and std.mem.eql(u8, staged, path)) return true;
-        }
+    return isUserStaged(path, user_staged_raw);
+}
+
+/// Whether `path` is in the NUL-separated listing of what the user had staged.
+fn isUserStaged(path: []const u8, user_staged_raw: ?[]const u8) bool {
+    var it = std.mem.splitScalar(u8, user_staged_raw orelse return false, 0);
+    while (it.next()) |staged| {
+        if (staged.len > 0 and std.mem.eql(u8, staged, path)) return true;
     }
     return false;
 }
@@ -264,6 +284,17 @@ test "firstPatchPath path containing ' b/' splits symmetrically" {
 
 test "firstPatchPath non-header returns null" {
     try std.testing.expect(firstPatchPath("not a patch") == null);
+}
+
+test "stagedTargetPaths: only the targets the user has staged changes to" {
+    var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const staged = try stagedTargetPaths(arena, &.{ "a.txt", "b.txt", "c.txt" }, "c.txt\x00other.txt\x00a.txt\x00");
+    try std.testing.expectEqual(@as(usize, 2), staged.len);
+    try std.testing.expectEqualStrings("a.txt", staged[0]);
+    try std.testing.expectEqualStrings("c.txt", staged[1]);
+    try std.testing.expectEqual(@as(usize, 0), (try stagedTargetPaths(arena, &.{"a.txt"}, null)).len);
 }
 
 test "computeHookCreatedPaths: hook-added path is a candidate" {

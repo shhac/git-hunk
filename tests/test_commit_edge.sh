@@ -35,8 +35,8 @@ ERR1100="$("$GIT_HUNK" commit "$SHA1100" -m "s2 overlap" 2>&1)" || EC1100=$?
     || fail "test 1100: index backup left behind after abort"
 [[ "$(cat alpha.txt)" == "$WT1100" ]] \
     || fail "test 1100: worktree file changed despite abort"
-echo "$ERR1100" | grep -q "did not apply cleanly" \
-    || fail "test 1100: expected 'did not apply cleanly' on stderr, got: '$ERR1100'"
+echo "$ERR1100" | grep -q "do not apply to HEAD on their own — they may build on the staged changes to 'alpha.txt'" \
+    || fail "test 1100: expected the staged changes to be named on stderr, got: '$ERR1100'"
 pass "test 1100: S2 same-region staged+unstaged overlap aborts cleanly"
 
 # ============================================================================
@@ -128,8 +128,8 @@ ERR1103="$("$GIT_HUNK" commit "$SHA1103" -m "s6 delete" 2>&1)" || EC1103=$?
     || fail "test 1103: index backup left behind after abort"
 [[ ! -f alpha.txt ]] \
     || fail "test 1103: worktree deletion should be untouched by abort"
-echo "$ERR1103" | grep -q "did not apply cleanly" \
-    || fail "test 1103: expected 'did not apply cleanly' on stderr, got: '$ERR1103'"
+echo "$ERR1103" | grep -q "do not apply to HEAD on their own — they may build on the staged changes to 'alpha.txt'" \
+    || fail "test 1103: expected the staged changes to be named on stderr, got: '$ERR1103'"
 pass "test 1103: S6 staged-mod + worktree-delete aborts cleanly"
 
 # ============================================================================
@@ -631,5 +631,39 @@ for MODE1119 in split intent-to-add; do
         || fail "test 1119 ($MODE1119): only beta.txt should be left, staged, got: '$STATUS1119'"
     pass "test 1119: a committed rename ($MODE1119) stays clean through hook cleanup"
 done
+
+# ============================================================================
+# Test 1120: hunks that build on staged changes say so. The commit is built
+# on HEAD, so an edit to a line already staged differently, or to a file that
+# is only staged, cannot apply. The failure used to advise re-running list,
+# which returns the same hashes, and git's "does not exist in index" read as
+# a claim about the user's own index.
+# ============================================================================
+new_repo
+echo "first 1120" > staged-new1120.txt
+sed -i.bak '5s/.*/staged five 1120/' alpha.txt
+git add staged-new1120.txt alpha.txt
+echo "second 1120" >> staged-new1120.txt
+sed -i.bak '5s/.*/unstaged five 1120/' alpha.txt
+sed -i.bak '1s/.*/unstaged beta 1120/' beta.txt
+STAGED1120="$(git diff --cached)"
+HEAD1120="$(git rev-parse HEAD)"
+for FLAGS1120 in "-m build-on-staged" "--dry-run"; do
+    EC1120=0
+    # shellcheck disable=SC2086
+    ERR1120="$("$GIT_HUNK" commit --all $FLAGS1120 2>&1 > /dev/null)" || EC1120=$?
+    [[ "$EC1120" -eq 1 ]] || fail "test 1120 ($FLAGS1120): should exit 1, got $EC1120"
+    echo "$ERR1120" | grep -q "^error: the selected hunks do not apply to HEAD on their own — they may build on the staged changes to 'alpha.txt', 'staged-new1120.txt'$" \
+        || fail "test 1120 ($FLAGS1120): should name the staged files the hunks build on, got: '$ERR1120'"
+    echo "$ERR1120" | grep -q "^hint: a commit is built on HEAD .* commit the staged changes first$" \
+        || fail "test 1120 ($FLAGS1120): should say how to proceed, got: '$ERR1120'"
+    echo "$ERR1120" | grep -q "re-run 'list'\|hashes may be stale" \
+        && fail "test 1120 ($FLAGS1120): should not blame stale hashes, got: '$ERR1120'"
+done
+[[ "$(git rev-parse HEAD)" == "$HEAD1120" && "$(git diff --cached)" == "$STAGED1120" ]] \
+    || fail "test 1120: a refused commit changed HEAD or the index"
+"$GIT_HUNK" commit --file beta.txt -m "independent 1120" > /dev/null 2>&1 \
+    || fail "test 1120: a hunk in a file with nothing staged should still commit"
+pass "test 1120: hunks that build on staged changes are refused with the reason"
 
 report_results
