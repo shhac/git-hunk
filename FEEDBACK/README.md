@@ -28,4 +28,28 @@ per session and append further entries to it.
 - **Happened:** what git-hunk did or said instead, quoting the relevant output
 - **Workaround:** what you did instead, or "none"
 - **Suggestion:** optional — what would have helped
+- **Evidence:** the captured output described below
 ```
+
+## Make it reproducible
+
+An entry that cannot be reproduced cannot be fixed, and the repository's state
+is gone once the session moves on. So before working around the problem:
+
+- Run the failing command once more and copy what it printed, exactly. Give
+  the whole command as typed, with every flag, and the directory it ran in
+  relative to the repository root.
+- Capture the state it ran against: `git status --porcelain=v2 --branch`,
+  `git hunk list --oneline`, and `git version`. Add the `--staged` listing
+  when the index is involved.
+- Record any Git configuration that is not default and could matter:
+  `git config --show-origin --list`, trimmed to the keys that look related,
+  with anything private removed.
+- Say whether the problem happens every time or only sometimes.
+- If you can, reduce it: the fewest commands that show the problem in a new
+  repository (`git init` in a temporary directory) are worth more than
+  everything else in the entry.
+
+Report what you saw yourself. When another agent reported the problem to you,
+run the command again before writing it up, and if you cannot, say the entry
+is second-hand and unverified.
