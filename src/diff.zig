@@ -170,8 +170,13 @@ fn binaryShaPayload(arena: Allocator, index_line: ?[]const u8) ![]const u8 {
 /// What stands in for the lines of a section that is all header, or null for
 /// one with nothing a hunk can carry (a mode change, a copy). A rename is
 /// told from the path's other changes by the path it came from.
+///
+/// A rename that also changes mode stays without a hunk: patches carry no
+/// mode lines, so taking the rename back out would leave the new mode on the
+/// old path.
 fn headerOnlyShaPayload(arena: Allocator, state: FileHeaderState) !?[]const u8 {
     if (state.is_new_file or state.is_deleted_file) return "";
+    if (state.has_mode_change) return null;
     const from = state.rename_from orelse return null;
     return try std.mem.concat(arena, u8, &.{ "rename from ", from });
 }
@@ -1507,6 +1512,12 @@ test "parseDiff: a rename with no content change is one hunk, hashed by where it
         \\diff --git a/mode.sh b/mode.sh
         \\old mode 100644
         \\new mode 100755
+        \\diff --git a/plain.txt b/now.sh
+        \\old mode 100644
+        \\new mode 100755
+        \\similarity index 100%
+        \\rename from plain.txt
+        \\rename to now.sh
         \\
     ;
     var arena_state = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -1523,8 +1534,10 @@ test "parseDiff: a rename with no content change is one hunk, hashed by where it
 
     var skipped: std.ArrayList(SkippedPath) = .empty;
     try collectSkippedPaths(arena, diff, hunks.items, &skipped);
-    try std.testing.expectEqual(@as(usize, 1), skipped.items.len);
+    try std.testing.expectEqual(@as(usize, 2), skipped.items.len);
     try std.testing.expectEqualStrings("mode.sh", skipped.items[0].file_path);
+    try std.testing.expectEqualStrings("now.sh", skipped.items[1].file_path);
+    try std.testing.expectEqual(SkipReason.mode_only, skipped.items[1].reason);
 }
 
 test "parseDiff binary rename takes the new path from rename to" {

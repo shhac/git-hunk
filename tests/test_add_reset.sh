@@ -1246,6 +1246,23 @@ STAGED255="$(first_sha --staged --oneline --file moved255/alpha.txt)"
 pass "test 255: a rename with no content change lists, stages and unstages as a hunk"
 
 # ============================================================================
+# Test 259: a rename that also changes mode is not a hunk. A patch carries no
+# mode lines, so unstaging the rename alone left the new mode staged on the
+# old path, where list --staged could not show it and git commit took it.
+# ============================================================================
+new_repo
+git mv alpha.txt moved259.sh
+chmod +x moved259.sh
+git add moved259.sh
+[[ "$("$GIT_HUNK" count --staged)" -eq 0 ]] || fail "test 259: a rename with a mode change should have no hunk"
+"$GIT_HUNK" list --staged -v 2>&1 | grep -q "^note: moved259.sh: mode change has no hunk$" \
+    || fail "test 259: verbose list should name the path left out, got: '$("$GIT_HUNK" list --staged -v 2>&1)'"
+STAGED259="$(git diff --cached -M --raw)"
+"$GIT_HUNK" reset --all > /dev/null 2>&1 && fail "test 259: reset --all has nothing to unstage and should say so"
+[[ "$(git diff --cached -M --raw)" == "$STAGED259" ]] || fail "test 259: reset changed the index: '$(git diff --cached -M --raw)'"
+pass "test 259: a rename with a mode change is left to git, as a mode change is"
+
+# ============================================================================
 # Test 256: an argument error is the last thing printed. A path given where a
 # hash belongs used to be followed by the usage of every command, so
 # `2>&1 | tail` showed only the usage's closing note and nothing was staged.
